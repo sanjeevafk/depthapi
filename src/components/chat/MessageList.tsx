@@ -46,10 +46,10 @@ export default function MessageList() {
                                             : 'bg-dark-700 text-gray-100 border-white/5'
                                     }`}
                                 >
-                                    <ReactMarkdown
-                                        remarkPlugins={[remarkGfm]}
-                                        className="text-sm leading-relaxed"
-                                        components={{
+                                    <div className="text-sm leading-relaxed">
+                                        <ReactMarkdown
+                                            remarkPlugins={[remarkGfm]}
+                                            components={{
                                             code({ inline, className, children, ...props }: any) {
                                                 const match = /language-(\w+)/.exec(className || '')
                                                 const codeStr = String(children).replace(/\n$/, '')
@@ -87,10 +87,11 @@ export default function MessageList() {
                                                     />
                                                 )
                                             },
-                                        }}
-                                    >
-                                        {message.content}
-                                    </ReactMarkdown>
+                                            }}
+                                        >
+                                            {message.content}
+                                        </ReactMarkdown>
+                                    </div>
                                     {message.isStreaming && (
                                         <div className="mt-2 flex items-center gap-2 text-xs text-cyan-200">
                                             <span className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
