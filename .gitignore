@@ -1,0 +1,21 @@
+# Agent configuration
+.agent/
+__pycache__/
+.pytest_cache/
+*.pyc
+node_modules/
+.env
+.env.local
+.env.*.local
+.venv/
+venv/
+dist/
+build/
+.DS_Store
+.local-files/
+render.yaml
+
+# Build info files
+tsconfig.tsbuildinfo
+tsconfig.node.tsbuildinfo
+vite.config.d.ts

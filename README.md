@@ -1,0 +1,121 @@
+# KnowBear – Layered AI Knowledge Engine
+
+**KnowBear** is an AI-powered tool that delivers explanations at **exactly the right depth** for any topic — from ELI5 (explain like I'm 5) to technical deep-dives, meme-style breakdowns, structured reasoning, and more.
+
+It intelligently routes queries across multiple frontier models, combines their outputs via an ensemble judge, caches frequent requests, and offers clean exports — all wrapped in a minimalist, space-themed dark UI.
+
+Live demo: https://knowbear.vercel.app/ (link when deployed)  
+Documentation: (add later if you create one)
+
+## ✨ Core Features
+
+- **Layered explanation system** — switch between 5–7 distinct explanation styles  
+  - ELI5 / ELI10 / ELI15  
+  - Meme & analogy heavy  
+  - Structured academic style  
+  - Technical deep-dive (math, proofs, code)  
+  - First-principles reasoning  
+- **Intelligent model routing & ensemble**  
+  - DeepSeek-R1 → strongest logical & first-principles reasoning  
+  - Qwen models → best code & implementation explanations  
+  - Groq-hosted Llama variants → speed + general knowledge  
+  - Gemini → multimodal context & visual intuition (when needed)  
+  - Judge model selects / merges / ranks the best parts of parallel generations  
+- **Ultra-fast repeat queries** via Redis caching (Upstash)  
+- **Export formats**: .txt, .json, .md, .pdf (with clean typography)  
+- **Pinned & trending topics** — discoverability without search  
+- **Authentication & Pro tier** (optional, gated features)  
+- **Dark-only, space/minimalist UI** with smooth Framer Motion animations  
+
+## 🏗 Architecture Overview
+
+```
+KnowBear monorepo
+├── api/                      # FastAPI backend ── serverless-ready
+│   ├── main.py               # uvicorn entrypoint
+│   ├── routers/              # FastAPI APIRouter modules
+│   │   ├── query.py
+│   │   ├── export.py
+│   │   ├── pinned.py
+│   │   └── health.py
+│   ├── services/
+│   │   ├── inference.py      # model routing + parallel calls + judge
+│   │   ├── cache.py          # Redis abstraction
+│   │   ├── auth.py           # Supabase / JWT verification
+│   │   └── rate_limit.py     # per-user / global limits
+│   └── schemas/              # Pydantic models
+├── src/                      # React + Vite frontend
+│   ├── components/           # atomic → molecule → organism
+│   ├── pages/                # route-based pages
+│   ├── hooks/                # useQuery, useModelRouter, etc.
+│   ├── lib/                  # utils, constants, api client
+│   └── styles/               # tailwind + global css
+├── public/                   # static files, favicon, manifest
+├── tests/                    # pytest (backend) + vitest (frontend) — expanding
+├── .github/workflows/        # CI (lint, test, deploy preview)
+├── vercel.json               # monorepo build config for Vercel
+└── README.md
+```
+
+## 🚀 API Endpoints (public)
+
+| Method | Path                | Description                                    | Auth? | Rate-limited? |
+|--------|---------------------|------------------------------------------------|-------|---------------|
+| GET    | `/api/health`       | Redis, model providers, auth status            | No    | No            |
+| GET    | `/api/pinned`       | Curated & trending topics                      | No    | Light         |
+| POST   | `/api/query`        | Main query endpoint — returns layered output   | Optional | Yes        |
+| POST   | `/api/export`       | Convert result to file (txt/md/pdf/json)       | No    | Yes           |
+| GET    | `/api/usage`        | Current user quota & usage (Pro users)         | Yes   | No            |
+
+## 🛠 Tech Stack
+
+| Layer         | Technologies                                                                 |
+|---------------|------------------------------------------------------------------------------|
+| Frontend      | React 18, TypeScript, Vite, Tailwind CSS, Framer Motion, Zustand, React Query |
+| Backend       | FastAPI, Python 3.11+, Pydantic v2, Structlog, fastapi-limiter               |
+| AI Inference  | Groq (Llama, DeepSeek, Qwen), Google Gemini 1.5 / 2.0 Flash                 |
+| Auth          | Supabase Auth (JWT + OAuth)                                                 |
+| Cache / Queue | Redis (Upstash)                                                             |
+| Deployment    | Vercel (frontend + serverless backend), Render / Railway (alternative)      |
+| Testing       | pytest, vitest, Playwright (planned)                                        |
+| License       | Apache License 2.0                                                          |
+
+
+## 🛤️ Development Journey
+
+- **v0.x** — chaotic prototype, many deployment experiments (Vercel, Render, path hell, 500s)  
+- **v1.0** — stable product with auth, payments (in progress), multi-model routing, Redis caching, clean exports  
+- **v2.0** (current focus) — major refactor: better dependency injection, comprehensive test suite, OpenTelemetry tracing, more robust error handling, usage analytics
+
+## 🚀 Quick Start (Local)
+
+```bash
+# Backend
+cd api
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env          # edit with your keys
+uvicorn main:app --reload
+
+# Frontend (separate terminal)
+cd ../src
+pnpm install
+pnpm dev
+```
+
+## Contributing
+
+Contributions welcome — especially:
+
+- Better judge/ensemble logic
+- Additional explanation styles
+- Frontend animations & UX polish
+- Test coverage (both FE + BE)
+
+Please open an issue first for larger changes.
+
+## License
+
+This project is licensed under the **Apache License 2.0**
+

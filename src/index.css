@@ -1,0 +1,101 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background-color: #000000;
+  color: #f5f5f5;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+.stars {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(1px 1px at 20px 30px, #fff 0%, rgba(255, 255, 255, 0.6) 40%, transparent 70%),
+    radial-gradient(1px 1px at 40px 70px, #fff 0%, rgba(255, 255, 255, 0.5) 40%, transparent 70%),
+    radial-gradient(1.5px 1.5px at 90px 40px, #fff 0%, rgba(255, 255, 255, 0.8) 40%, transparent 70%),
+    radial-gradient(1px 1px at 150px 150px, #fff 0%, rgba(255, 255, 255, 0.4) 40%, transparent 70%),
+    radial-gradient(1px 1px at 120px 10px, #fff 0%, rgba(255, 255, 255, 0.5) 40%, transparent 70%),
+    radial-gradient(1.5px 1.5px at 50px 150px, #fff 0%, rgba(255, 255, 255, 0.7) 40%, transparent 70%);
+  background-size: 150px 150px;
+  animation: stars 100s linear infinite;
+  opacity: 0.8;
+  filter: brightness(1.5);
+  z-index: 0;
+}
+
+.stars-2 {
+  background-size: 300px 300px;
+  animation: stars 150s linear infinite;
+  opacity: 0.5;
+}
+
+@keyframes stars {
+  from {
+    transform: translateY(0);
+  }
+
+  to {
+    transform: translateY(-1000px);
+  }
+}
+
+.level-eli5 {
+  border-left-color: #22c55e;
+}
+
+.level-eli10 {
+  border-left-color: #14b8a6;
+}
+
+.level-eli12 {
+  border-left-color: #06b6d4;
+}
+
+.level-eli15 {
+  border-left-color: #3b82f6;
+}
+
+.level-meme {
+  border-left-color: #a855f7;
+}
+
+.level-technical {
+  border-left-color: #f97316;
+}
+
+.level-systemic {
+  border-left-color: #ef4444;
+}
+
+.level-diagram {
+  border-left-color: #ec4899;
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-shimmer {
+  animation: shimmer 2.5s infinite;
+}
