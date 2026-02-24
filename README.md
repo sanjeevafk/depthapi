@@ -142,6 +142,45 @@ Then add to root `package.json` scripts:
 
 Run with `pnpm dev`.
 
+## Database Migrations (Supabase)
+
+Before running any migrations, back up your Supabase database.
+
+If this repo does not already have a `supabase/` folder, initialize it:
+
+```bash
+npx supabase init
+```
+
+Apply the v2 conversation schema migration:
+
+```bash
+npx supabase migration up
+```
+
+If you use the db-push workflow instead:
+
+```bash
+npx supabase db push
+```
+
+Run the v1 history → v2 conversations/messages data migration (dry-run by default):
+
+```bash
+python scripts/migrate_v1_to_v2_history.py
+```
+
+To write data:
+
+```bash
+python scripts/migrate_v1_to_v2_history.py --dry-run=false
+```
+
+Required environment variables for the migration script:
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY` (preferred for bypassing RLS) or `SUPABASE_ANON_KEY`
+
 
 
 ## Contributing
