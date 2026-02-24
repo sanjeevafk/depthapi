@@ -13,7 +13,7 @@ try:
 except Exception:
     FastAPILimiter = None
 from fastapi_limiter.depends import RateLimiter
-from routers import pinned, query, export, history, webhooks, payments
+from routers import pinned, query, export, history, webhooks, payments, messages
 from services.cache import close_redis, get_redis
 from services.inference import close_client
 from services.model_provider import ModelProvider, ModelError, RequiresPro, ModelUnavailable
@@ -204,9 +204,14 @@ async def conditional_rate_limit(request: Request, response: Response):
 
 app.include_router(pinned.router, prefix="/api")
 app.include_router(
-    query.router, 
+    messages.router,
     prefix="/api",
-    dependencies=[Depends(conditional_rate_limit)]
+    dependencies=[Depends(conditional_rate_limit)],
+)
+app.include_router(
+    query.router,
+    prefix="/api",
+    dependencies=[Depends(conditional_rate_limit)],
 )
 app.include_router(export.router, prefix="/api")
 app.include_router(history.router, prefix="/api")

@@ -1,14 +1,27 @@
 import { useState } from 'react'
 import { Send } from 'lucide-react'
 import { useChatStore } from '../../stores/useChatStore'
+import { isModeGated } from '../../lib/chatModes'
 
 export default function ChatInput() {
     const [value, setValue] = useState('')
     const sendMessage = useChatStore(state => state.sendMessage)
     const isLoading = useChatStore(state => state.isLoading)
+    const currentMode = useChatStore(state => state.currentMode)
+    const isPro = useChatStore(state => state.isPro)
+    const gatedModes = useChatStore(state => state.gatedModes)
+    const openUpgradeModal = useChatStore(state => state.openUpgradeModal)
+
+    const isGated = isModeGated(currentMode, isPro, gatedModes)
+    const isSendDisabled = isLoading || (!value.trim() && !isGated)
 
     const handleSend = async () => {
-        if (!value.trim() || isLoading) return
+        if (isLoading) return
+        if (isGated) {
+            openUpgradeModal()
+            return
+        }
+        if (!value.trim()) return
         const content = value
         setValue('')
         await sendMessage(content)
@@ -32,8 +45,13 @@ export default function ChatInput() {
                 />
                 <button
                     onClick={() => void handleSend()}
-                    disabled={isLoading || !value.trim()}
-                    className="h-12 w-12 rounded-2xl bg-accent-primary text-white flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed hover:bg-accent-primary/90 transition"
+                    aria-disabled={isSendDisabled}
+                    title={isGated ? 'This mode requires Pro.' : undefined}
+                    className={`h-12 w-12 rounded-2xl flex items-center justify-center transition ${
+                        isGated
+                            ? 'bg-white/10 text-gray-400 cursor-not-allowed'
+                            : 'bg-accent-primary text-white hover:bg-accent-primary/90'
+                    } ${isSendDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                     aria-label="Send message"
                 >
                     {isLoading ? (

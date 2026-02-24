@@ -36,8 +36,13 @@ Explain {topic} for a 15-year-old. Use accurate terms and explain them clearly. 
 
 Output ONLY the final explanation in plain text. No thinking, no markdown, no bold, no headers.""" ,
 
-    # ====================== FUN / SPECIAL MODES ======================
+    # ====================== FUN / SPECIAL MODES =====================
+
     "meme": """Explain {topic} as a single punchy, shareable meme-style one-liner or short paragraph with a hilarious but accurate analogy. Make it extremely relatable and funny. Maximum 2-3 sentences.
+
+Output ONLY the meme explanation. No labels, no hashtags, no thinking.""" ,
+
+    "meme-style": """Explain {topic} as a single punchy, shareable meme-style one-liner or short paragraph with a hilarious but accurate analogy. Make it extremely relatable and funny. Maximum 2-3 sentences.
 
 Output ONLY the meme explanation. No labels, no hashtags, no thinking.""" ,
 
