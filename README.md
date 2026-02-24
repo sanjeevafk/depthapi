@@ -86,22 +86,63 @@ KnowBear monorepo
 - **v1.0** — stable product with auth, payments (in progress), multi-model routing, Redis caching, clean exports  
 - **v2.0** (current focus) — major refactor: better dependency injection, comprehensive test suite, OpenTelemetry tracing, more robust error handling, usage analytics
 
-## 🚀 Quick Start (Local)
+## Local Development
 
+**Prerequisites**
+- Node.js 18+ (for frontend)
+- Python 3.11+ (for backend)
+- pnpm (recommended package manager for frontend)
+
+From the repository root:
+
+### Backend (FastAPI)
 ```bash
-# Backend
 cd api
 python -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env          # edit with your keys
-uvicorn main:app --reload
+cp ../.env.example .env            # or adjust path if .env.example is elsewhere
+# Edit .env with your real keys:
+#   GROQ_API_KEY=...
+#   GEMINI_API_KEY=... (if used)
+#   SUPABASE_URL=...
+#   SUPABASE_ANON_KEY=...
+#   UPSTASH_REDIS_REST_URL=...
+#   etc.
+```bash
+uvicorn main:app --reload --port 8000
+```
 
-# Frontend (separate terminal)
-cd ../src
+Open http://localhost:8000/docs to see the Swagger UI.
+
+### Frontend (React + Vite)
+
+In a separate terminal, from repo root:
+
+```bash
 pnpm install
 pnpm dev
 ```
+
+Open http://localhost:5173 (it should proxy `/api` calls to the backend at http://localhost:8000/api — verify in `vite.config.ts` if needed).
+
+### One-command dev (optional)
+
+Install `concurrently` globally or as dev dep:
+
+```bash
+pnpm add -D concurrently
+```
+
+Then add to root `package.json` scripts:
+
+```json
+"dev": "concurrently \"pnpm dev\" \"cd api && uvicorn main:app --reload --port 8000\""
+```
+
+Run with `pnpm dev`.
+
+
 
 ## Contributing
 
