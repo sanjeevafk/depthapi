@@ -1,11 +1,25 @@
 import ConversationList from '../components/chat/ConversationList'
 import MessageList from '../components/chat/MessageList'
 import ChatInput from '../components/chat/ChatInput'
+import ModeToggleBar from '../components/chat/ModeToggleBar'
+import { UpgradeModal } from '../components/UpgradeModal'
 import { useMessages } from '../hooks/useMessages'
 import { useAuth } from '../context/AuthContext'
+import { useChatStore } from '../stores/useChatStore'
+import { notifyToast } from '../lib/toast'
 
 export default function ChatPage() {
     const { user, signInWithGoogle } = useAuth()
+    const upgradeModalOpen = useChatStore(state => state.upgradeModalOpen)
+    const closeUpgradeModal = useChatStore(state => state.closeUpgradeModal)
+    const handleUpgrade = () => {
+        notifyToast('Upgrade flow coming soon.', 'info')
+        closeUpgradeModal()
+    }
+    const handleUseByok = () => {
+        notifyToast('BYOK setup coming soon.', 'info')
+        closeUpgradeModal()
+    }
 
     useMessages()
 
@@ -33,8 +47,17 @@ export default function ChatPage() {
             <ConversationList />
             <div className="flex-1 flex flex-col min-h-0">
                 <MessageList />
+                <div className="border-t border-white/5 bg-dark-800 px-6 py-3">
+                    <ModeToggleBar />
+                </div>
                 <ChatInput />
             </div>
+            <UpgradeModal
+                isOpen={upgradeModalOpen}
+                onClose={closeUpgradeModal}
+                onUpgrade={handleUpgrade}
+                onUseByok={handleUseByok}
+            />
         </div>
     )
 }

@@ -1,0 +1,44 @@
+{
+  "chat_modes": [
+    "eli5",
+    "eli10",
+    "eli12",
+    "eli15",
+    "meme-style",
+    "classic60",
+    "gentle70",
+    "warm80",
+    "ensemble",
+    "technical-depth",
+    "socratic"
+  ],
+  "free_modes": [
+    "eli5",
+    "eli10",
+    "eli12",
+    "eli15",
+    "meme-style",
+    "ensemble",
+    "technical-depth",
+    "socratic"
+  ],
+  "prompt_modes": [
+    "eli5",
+    "eli10",
+    "eli12",
+    "eli15",
+    "meme-style",
+    "classic60",
+    "gentle70",
+    "warm80"
+  ],
+  "pro_modes": [
+    "classic60",
+    "gentle70",
+    "warm80"
+  ],
+  "legacy_modes": [
+    "technical",
+    "meme"
+  ]
+}

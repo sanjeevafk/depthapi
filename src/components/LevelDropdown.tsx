@@ -14,6 +14,7 @@ const LEVEL_LABELS: Record<Level, string> = {
     eli10: 'Like I\'m 10',
     eli12: 'Like I\'m 12',
     eli15: 'Like I\'m 15',
+    'meme-style': 'Meme Style',
     meme: 'Meme Style',
     classic60: 'Classic (80s/90s)',
     gentle70: 'Gentle & Kind',

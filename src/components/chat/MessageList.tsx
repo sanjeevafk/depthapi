@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm'
 import Mermaid from '../Mermaid'
 import SafeImage from '../SafeImage'
 import { useChatStore } from '../../stores/useChatStore'
+import { formatModeLabel } from '../../lib/chatModes'
 
 export default function MessageList() {
     const messages = useChatStore(state => state.messages)
@@ -12,7 +13,6 @@ export default function MessageList() {
     const scrollRef = useRef<HTMLDivElement>(null)
 
     const lastContent = useMemo(() => messages[messages.length - 1]?.content, [messages])
-
     useEffect(() => {
         if (!scrollRef.current) return
         scrollRef.current.scrollTo({
@@ -30,6 +30,8 @@ export default function MessageList() {
                     {messages.map(message => {
                         const isUser = message.role === 'user'
                         const key = message.clientGeneratedId || message.id
+                        const assistantMode = !isUser ? message.metadata?.mode : undefined
+                        const assistantLabel = assistantMode ? formatModeLabel(assistantMode) : undefined
                         return (
                             <motion.div
                                 key={key}
@@ -46,6 +48,13 @@ export default function MessageList() {
                                             : 'bg-dark-700 text-gray-100 border-white/5'
                                     }`}
                                 >
+                                    {assistantLabel && (
+                                        <div className="mb-2">
+                                            <span className="text-[10px] uppercase tracking-[0.2em] px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-gray-300">
+                                                {assistantLabel}
+                                            </span>
+                                        </div>
+                                    )}
                                     <div className="text-sm leading-relaxed">
                                         <ReactMarkdown
                                             remarkPlugins={[remarkGfm]}

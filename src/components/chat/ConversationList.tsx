@@ -1,13 +1,7 @@
 import { motion } from 'framer-motion'
 import { useConversations } from '../../hooks/useConversations'
 import { useChatStore } from '../../stores/useChatStore'
-
-const modeStyles: Record<string, string> = {
-    eli5: 'bg-green-500/10 text-green-300 border border-green-500/20',
-    ensemble: 'bg-cyan-500/10 text-cyan-300 border border-cyan-500/20',
-    technical: 'bg-blue-500/10 text-blue-300 border border-blue-500/20',
-    socratic: 'bg-purple-500/10 text-purple-300 border border-purple-500/20',
-}
+import { CHAT_MODE_STYLES, formatModeLabel } from '../../lib/chatModes'
 
 export default function ConversationList() {
     const { conversations, lastMessageByConversationId } = useConversations()
@@ -54,10 +48,10 @@ export default function ConversationList() {
                                         </h3>
                                         <span
                                             className={`text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full ${
-                                                modeStyles[conversation.mode] || 'bg-white/5 text-gray-300 border border-white/10'
+                                                CHAT_MODE_STYLES[conversation.mode] || 'bg-white/5 text-gray-300 border border-white/10'
                                             }`}
                                         >
-                                            {conversation.mode}
+                                            {formatModeLabel(conversation.mode)}
                                         </span>
                                     </div>
                                     <p className="text-xs text-gray-500 mt-2 truncate">

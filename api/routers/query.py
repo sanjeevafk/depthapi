@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from fastapi_limiter.depends import RateLimiter
-from utils import sanitize_topic, topic_cache_key, FREE_LEVELS, PREMIUM_LEVELS
+from utils import sanitize_topic, topic_cache_key, FREE_LEVELS, PREMIUM_LEVELS, PROMPT_MODE_ALIASES
 from services.cache import cache_get, cache_set
 from services.ensemble import ensemble_generate
 from services.inference import generate_stream_explanation
@@ -25,6 +25,13 @@ class QueryRequest(BaseModel):
     bypass_cache: bool = False
     temperature: float = 0.7
     regenerate: bool = False
+
+
+def _normalize_levels(levels: list[str]) -> list[str]:
+    normalized = []
+    for lvl in levels or []:
+        normalized.append(PROMPT_MODE_ALIASES.get(lvl, lvl))
+    return normalized
 
 
 class QueryResponse(BaseModel):
@@ -65,8 +72,7 @@ async def query_topic(
         raise HTTPException(400, str(e))
 
     allowed_levels = FREE_LEVELS + (PREMIUM_LEVELS if req.premium else [])
-    
-    levels = [l for l in req.levels if l in allowed_levels]
+    levels = [l for l in _normalize_levels(req.levels) if l in allowed_levels]
     
     # If no valid levels remain (e.g. user requested only premium levels but is free), default to eli5
     if not levels:
@@ -149,7 +155,9 @@ async def query_topic_stream(
         raise HTTPException(400, str(e))
 
     # For streaming, we usually handle one level at a time
-    level = req.levels[0] if req.levels else "eli5"
+    allowed_levels = FREE_LEVELS + (PREMIUM_LEVELS if req.premium else [])
+    _normalized = [l for l in _normalize_levels(req.levels) if l in allowed_levels]
+    level = _normalized[0] if _normalized else "eli5"
 
     async def event_generator():
         full_content = ""

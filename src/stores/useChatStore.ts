@@ -1,22 +1,43 @@
 import { create } from 'zustand'
 import { supabase } from '../lib/supabase'
 import { splitSseEvents, extractSseData } from '../lib/sse'
-import type { Conversation, Message } from '../types/chat'
+import type { ChatMode, Conversation, Message, PromptMode } from '../types/chat'
+import {
+    CHAT_DEFAULT_MODE,
+    CHAT_PREMIUM_MODES,
+    resolveChatMode,
+    resolvePromptMode,
+    isModeGated,
+    isPromptMode,
+    toQueryLevel,
+} from '../lib/chatModes'
 
 interface ChatState {
     conversations: Conversation[]
     currentConversationId: string | null
+    currentMode: ChatMode
+    currentPromptMode: PromptMode
     messages: Message[]
     isLoading: boolean
+    isPro: boolean
+    gatedModes: ChatMode[]
+    upgradeModalOpen: boolean
     fetchConversations: () => Promise<void>
     selectConversation: (id: string) => Promise<void>
     sendMessage: (content: string) => Promise<void>
+    setMode: (mode: ChatMode) => void
+    setPromptMode: (mode: PromptMode) => void
+    setIsPro: (isPro: boolean) => void
+    openUpgradeModal: () => void
+    closeUpgradeModal: () => void
     addMessage: (msg: Message) => void
     updateMessageByClientId: (clientId: string, updater: (msg: Message) => Message) => void
     removeMessageByClientId: (clientId: string) => void
 }
 
 const supabaseConfigured = Boolean(import.meta.env.VITE_SUPABASE_URL) && Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY)
+const defaultIsProEnv = import.meta.env.VITE_DEFAULT_IS_PRO
+const defaultIsPro = defaultIsProEnv ? defaultIsProEnv === 'true' : true
 const API_URL = import.meta.env.VITE_API_URL || ''
 
 const makeLocalId = () => {
@@ -50,8 +71,80 @@ const notifyError = (message: string) => {
 export const useChatStore = create<ChatState>((set, get) => ({
     conversations: [],
     currentConversationId: null,
+    currentMode: CHAT_DEFAULT_MODE,
+    currentPromptMode: CHAT_DEFAULT_MODE,
     messages: [],
     isLoading: false,
+    isPro: defaultIsPro,
+    gatedModes: [...CHAT_PREMIUM_MODES],
+    upgradeModalOpen: false,
+
+    setMode: (mode: ChatMode) => {
+        const { currentConversationId, conversations } = get()
+        const conversation = conversations.find(item => item.id === currentConversationId)
+        const nextPromptMode = isPromptMode(mode) ? mode : get().currentPromptMode
+        const nextSettings = conversation?.settings
+            ? { ...conversation.settings, mode, prompt_mode: nextPromptMode }
+            : conversation
+                ? { mode, prompt_mode: nextPromptMode }
+                : undefined
+
+        set(state => ({
+            currentMode: mode,
+            currentPromptMode: nextPromptMode,
+            conversations: currentConversationId
+                ? state.conversations.map(item =>
+                    item.id === currentConversationId
+                        ? { ...item, mode, settings: nextSettings ?? item.settings }
+                        : item
+                )
+                : state.conversations,
+        }))
+
+        if (!supabaseConfigured || !currentConversationId || !conversation || currentConversationId.startsWith('local-')) {
+            return
+        }
+
+        void supabase
+            .from('conversations')
+            .update({ mode, settings: nextSettings ?? conversation.settings })
+            .eq('id', currentConversationId)
+    },
+
+    setPromptMode: (mode: PromptMode) => {
+        const { currentConversationId, conversations } = get()
+        const conversation = conversations.find(item => item.id === currentConversationId)
+        const nextSettings = conversation?.settings
+            ? { ...conversation.settings, prompt_mode: mode }
+            : conversation
+                ? { prompt_mode: mode }
+                : undefined
+
+        set(state => ({
+            currentPromptMode: mode,
+            conversations: currentConversationId
+                ? state.conversations.map(item =>
+                    item.id === currentConversationId
+                        ? { ...item, settings: nextSettings ?? item.settings }
+                        : item
+                )
+                : state.conversations,
+        }))
+
+        if (!supabaseConfigured || !currentConversationId || !conversation || currentConversationId.startsWith('local-')) {
+            return
+        }
+
+        void supabase
+            .from('conversations')
+            .update({ settings: nextSettings ?? conversation.settings })
+            .eq('id', currentConversationId)
+    },
+
+    setIsPro: (isPro: boolean) => set({ isPro }),
+
+    openUpgradeModal: () => set({ upgradeModalOpen: true }),
+    closeUpgradeModal: () => set({ upgradeModalOpen: false }),
 
     fetchConversations: async () => {
         if (!supabaseConfigured) {
@@ -75,10 +168,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
             if (error) throw error
 
             const conversations = (data ?? []) as Conversation[]
-            set(state => ({
-                conversations,
-                currentConversationId: state.currentConversationId ?? conversations[0]?.id ?? null,
-            }))
+            set(state => {
+                const nextConversationId = state.currentConversationId ?? conversations[0]?.id ?? null
+                const activeConversation = conversations.find(item => item.id === nextConversationId)
+                const conversationMode = activeConversation?.mode || activeConversation?.settings?.mode
+                const conversationPrompt = activeConversation?.settings?.prompt_mode
+                    || activeConversation?.settings?.mode
+                    || activeConversation?.mode
+                    || state.currentPromptMode
+                const nextMode = resolveChatMode(conversationMode)
+                const nextPromptMode = resolvePromptMode(conversationPrompt)
+                return {
+                    conversations,
+                    currentConversationId: nextConversationId,
+                    currentMode: nextMode,
+                    currentPromptMode: nextPromptMode,
+                }
+            })
         } catch (error) {
             console.error('Failed to fetch conversations:', error)
         } finally {
@@ -94,7 +200,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
             return
         }
 
-        set({ currentConversationId: id, messages: [], isLoading: true })
+        const activeConversation = state.conversations.find(item => item.id === id)
+        const conversationMode = activeConversation?.mode || activeConversation?.settings?.mode || state.currentMode
+        const conversationPrompt = activeConversation?.settings?.prompt_mode
+            || activeConversation?.settings?.mode
+            || activeConversation?.mode
+            || state.currentPromptMode
+        const nextMode = resolveChatMode(conversationMode)
+        const nextPromptMode = resolvePromptMode(conversationPrompt)
+        set({
+            currentConversationId: id,
+            messages: [],
+            isLoading: true,
+            currentMode: nextMode,
+            currentPromptMode: nextPromptMode,
+        })
 
         if (!supabaseConfigured) {
             set({ isLoading: false })
@@ -178,10 +298,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const trimmed = content.trim()
         if (!trimmed) return
 
+        const { currentMode, currentPromptMode, isPro, gatedModes } = get()
+        if (isModeGated(currentMode, isPro, gatedModes)) {
+            get().openUpgradeModal()
+            return
+        }
+
         const now = new Date().toISOString()
         const localUserId = makeLocalId()
         let conversationId = get().currentConversationId
         let conversation = get().conversations.find(item => item.id === conversationId)
+        const effectivePromptMode = isPromptMode(currentMode) ? currentMode : currentPromptMode
 
         set({ isLoading: true })
 
@@ -196,8 +323,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                             .insert({
                                 user_id: authData.user.id,
                                 title,
-                                mode: 'eli5',
-                                settings: {},
+                                mode: currentMode,
+                                settings: { mode: currentMode, prompt_mode: effectivePromptMode },
                             })
                             .select('id, title, mode, settings, created_at, updated_at')
                             .single()
@@ -223,8 +350,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 conversation = {
                     id: conversationId,
                     title,
-                    mode: 'eli5',
-                    settings: {},
+                    mode: currentMode,
+                    settings: { mode: currentMode, prompt_mode: effectivePromptMode },
                     created_at: now,
                     updated_at: now,
                 }
@@ -239,7 +366,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             id: localUserId,
             role: 'user',
             content: trimmed,
-            metadata: { client_id: localUserId },
+            metadata: { client_id: localUserId, mode: currentMode, prompt_mode: effectivePromptMode },
             created_at: now,
             clientGeneratedId: localUserId,
         }
@@ -263,6 +390,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             created_at: new Date().toISOString(),
             clientGeneratedId: assistantClientId,
             isStreaming: true,
+            metadata: { mode: currentMode, prompt_mode: effectivePromptMode, assistant_client_id: assistantClientId },
         }
 
         get().addMessage(assistantPlaceholder)
@@ -354,18 +482,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     content: trimmed,
                     client_generated_id: localUserId,
                     assistant_client_id: assistantClientId,
+                    mode: currentMode,
+                    prompt_mode: effectivePromptMode,
                 }),
             })
 
-            if (response.status === 404 || response.status === 405) {
+            const shouldFallback = response.status === 404 || response.status === 405
+            if (shouldFallback) {
+                const fallbackLevel = toQueryLevel(effectivePromptMode)
                 response = await fetch(`${API_URL}/api/query/stream`, {
                     method: 'POST',
                     headers,
                     body: JSON.stringify({
                         topic: trimmed,
-                        levels: ['eli5'],
+                        levels: [fallbackLevel],
                         mode: 'fast',
-                        premium: false,
+                        premium: isPro,
                     }),
                 })
 
