@@ -4,8 +4,7 @@
 
 It intelligently routes queries across multiple frontier models, combines their outputs via an ensemble judge, caches frequent requests, and offers clean exports — all wrapped in a minimalist, space-themed dark UI.
 
-Live demo: https://knowbear.vercel.app/ (link when deployed)  
-Documentation: (add later if you create one)
+Live demo: https://knowbear.vercel.app
 
 ## ✨ Core Features
 
