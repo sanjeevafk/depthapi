@@ -278,7 +278,75 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 headers['Authorization'] = `Bearer ${session.access_token}`
             }
 
-            const response = await fetch(`${API_URL}/api/messages`, {
+            const streamFromResponse = async (response: Response, handler: (payload: any) => void) => {
+                if (!response.body) {
+                    throw new Error('Streaming not supported in this environment')
+                }
+
+                const contentType = response.headers.get('content-type')
+                if (contentType && !contentType.includes('text/event-stream')) {
+                    throw new Error(`Unexpected content-type: ${contentType}`)
+                }
+
+                const reader = response.body.getReader()
+                const decoder = new TextDecoder()
+                let buffer = ''
+                const READ_TIMEOUT_MS = 20000
+
+                while (true) {
+                    const { value, done } = await Promise.race([
+                        reader.read(),
+                        new Promise<ReadableStreamReadResult<Uint8Array>>((_, reject) =>
+                            setTimeout(() => reject(new Error('Stream read timed out')), READ_TIMEOUT_MS)
+                        ),
+                    ])
+                    if (done) break
+
+                    buffer += decoder.decode(value, { stream: true })
+
+                    const { events, remainder } = splitSseEvents(buffer)
+                    buffer = remainder
+
+                    for (const eventBlock of events) {
+                        const dataPayload = extractSseData(eventBlock)
+                        if (!dataPayload) continue
+                        if (dataPayload === '[DONE]') continue
+
+                        let payload: any = null
+                        try {
+                            payload = JSON.parse(dataPayload)
+                        } catch {
+                            payload = { delta: dataPayload }
+                        }
+
+                        handler(payload)
+                    }
+                }
+            }
+
+            const handleStreamingPayload = (payload: any, chunkKey: 'delta' | 'chunk') => {
+                const chunk = payload?.[chunkKey]
+                if (chunk) {
+                    get().updateMessageByClientId(assistantClientId, message => ({
+                        ...message,
+                        content: `${message.content}${chunk}`,
+                    }))
+                }
+
+                const serverMessageId = payload?.assistant_message_id || payload?.message_id
+                if (serverMessageId) {
+                    get().updateMessageByClientId(assistantClientId, message => ({
+                        ...message,
+                        serverMessageId,
+                    }))
+                }
+
+                if (payload?.error) {
+                    throw new Error(payload.error)
+                }
+            }
+
+            let response = await fetch(`${API_URL}/api/messages`, {
                 method: 'POST',
                 headers,
                 body: JSON.stringify({
@@ -289,69 +357,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 }),
             })
 
-            if (!response.ok) {
-                throw new Error(`Request failed with status ${response.status}`)
-            }
+            if (response.status === 404 || response.status === 405) {
+                response = await fetch(`${API_URL}/api/query/stream`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({
+                        topic: trimmed,
+                        levels: ['eli5'],
+                        mode: 'fast',
+                        premium: false,
+                    }),
+                })
 
-            if (!response.body) {
-                throw new Error('Streaming not supported in this environment')
-            }
-
-            const contentType = response.headers.get('content-type')
-            if (contentType && !contentType.includes('text/event-stream')) {
-                throw new Error(`Unexpected content-type: ${contentType}`)
-            }
-
-            const reader = response.body.getReader()
-            const decoder = new TextDecoder()
-            let buffer = ''
-            const READ_TIMEOUT_MS = 20000
-
-            while (true) {
-                const { value, done } = await Promise.race([
-                    reader.read(),
-                    new Promise<ReadableStreamReadResult<Uint8Array>>((_, reject) =>
-                        setTimeout(() => reject(new Error('Stream read timed out')), READ_TIMEOUT_MS)
-                    ),
-                ])
-                if (done) break
-
-                buffer += decoder.decode(value, { stream: true })
-
-                const { events, remainder } = splitSseEvents(buffer)
-                buffer = remainder
-
-                for (const eventBlock of events) {
-                    const dataPayload = extractSseData(eventBlock)
-                    if (!dataPayload) continue
-                    if (dataPayload === '[DONE]') continue
-
-                    let payload: any = null
-                    try {
-                        payload = JSON.parse(dataPayload)
-                    } catch {
-                        payload = { delta: dataPayload }
-                    }
-
-                    if (payload?.delta) {
-                        get().updateMessageByClientId(assistantClientId, message => ({
-                            ...message,
-                            content: `${message.content}${payload.delta}`,
-                        }))
-                    }
-
-                    const serverMessageId = payload?.assistant_message_id || payload?.message_id
-                    if (serverMessageId) {
-                        get().updateMessageByClientId(assistantClientId, message => ({
-                            ...message,
-                            serverMessageId,
-                        }))
-                    }
-
-                    if (payload?.error) {
-                        throw new Error(payload.error)
-                    }
+                if (!response.ok) {
+                    throw new Error(`Request failed with status ${response.status}`)
                 }
+
+                await streamFromResponse(response, payload => handleStreamingPayload(payload, 'chunk'))
+            } else {
+                if (!response.ok) {
+                    throw new Error(`Request failed with status ${response.status}`)
+                }
+
+                await streamFromResponse(response, payload => handleStreamingPayload(payload, 'delta'))
             }
 
             get().updateMessageByClientId(assistantClientId, message => ({
