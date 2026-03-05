@@ -3,7 +3,7 @@ export const CHAT_MODES = [
     'eli10',
     'eli12',
     'eli15',
-    'meme-style',
+    'meme',
     'classic60',
     'gentle70',
     'warm80',
@@ -17,7 +17,7 @@ export const CHAT_FREE_MODES = [
     'eli10',
     'eli12',
     'eli15',
-    'meme-style',
+    'meme',
     'ensemble',
     'technical-depth',
     'socratic',
@@ -34,7 +34,7 @@ export const CHAT_PROMPT_MODES = [
     'eli10',
     'eli12',
     'eli15',
-    'meme-style',
+    'meme',
     'classic60',
     'gentle70',
     'warm80',
@@ -42,7 +42,7 @@ export const CHAT_PROMPT_MODES = [
 
 export const LEGACY_CHAT_MODES = [
     'technical',
-    'meme',
+    'meme-style',
 ] as const
 
 export type ChatMode = (typeof CHAT_MODES)[number]

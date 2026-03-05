@@ -29,7 +29,7 @@ def topic_cache_key(topic: str, level: str) -> str:
     return f"knowbear:{safe}:{level}"
 
 
-FREE_LEVELS = ["eli5", "eli10", "eli12", "eli15", "meme-style"]
+FREE_LEVELS = ["eli5", "eli10", "eli12", "eli15", "meme"]
 PREMIUM_LEVELS = ["classic60", "gentle70", "warm80"]
 
 _DEFAULT_CHAT_MODE_DATA = {
@@ -38,7 +38,7 @@ _DEFAULT_CHAT_MODE_DATA = {
         "eli10",
         "eli12",
         "eli15",
-        "meme-style",
+        "meme",
         "classic60",
         "gentle70",
         "warm80",
@@ -46,10 +46,10 @@ _DEFAULT_CHAT_MODE_DATA = {
         "technical-depth",
         "socratic",
     ],
-    "free_modes": ["eli5", "eli10", "eli12", "eli15", "meme-style", "ensemble", "technical-depth", "socratic"],
+    "free_modes": ["eli5", "eli10", "eli12", "eli15", "meme", "ensemble", "technical-depth", "socratic"],
     "pro_modes": ["classic60", "gentle70", "warm80"],
-    "prompt_modes": ["eli5", "eli10", "eli12", "eli15", "meme-style", "classic60", "gentle70", "warm80"],
-    "legacy_modes": ["technical", "meme"],
+    "prompt_modes": ["eli5", "eli10", "eli12", "eli15", "meme", "classic60", "gentle70", "warm80"],
+    "legacy_modes": ["technical", "meme-style"],
 }
 
 
@@ -74,7 +74,7 @@ CHAT_PROMPT_MODES = _CHAT_MODE_DATA.get("prompt_modes") or []
 CHAT_LEGACY_MODES = _CHAT_MODE_DATA.get("legacy_modes") or []
 
 SUPPORTED_CHAT_MODES = set(CHAT_MODES + CHAT_LEGACY_MODES)
-SUPPORTED_PROMPT_MODES = set(CHAT_PROMPT_MODES + ["meme"])
+SUPPORTED_PROMPT_MODES = set(CHAT_PROMPT_MODES + ["meme-style"])
 DEFAULT_CHAT_MODE = "eli5"
 
 CHAT_MODE_ALIASES = {
@@ -92,5 +92,5 @@ CHAT_INFERENCE_MODE_ALIASES = {
 }
 
 PROMPT_MODE_ALIASES = {
-    "meme": "meme-style",
+    "meme-style": "meme",
 }
