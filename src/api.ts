@@ -75,6 +75,7 @@ export async function queryTopicStream(
 
     let retries = 0
     const maxRetries = 2
+    const baseDelay = 750
 
     const fallbackToNonStream = async (reason: string): Promise<void> => {
         try {
@@ -181,19 +182,12 @@ export async function queryTopicStream(
                 return
             }
 
-            if (err.message === 'Stream read timed out') {
-                try {
-                    return await fallbackToNonStream(err.message)
-                } catch {
-                    // fall through to error handling
-                }
-            }
-
             // Retry on network errors if not aborted
             if (retries < maxRetries && !signal?.aborted) {
                 retries++
-                console.warn(`Stream failed, retry ${retries}/${maxRetries}:`, err.message)
-                await new Promise(r => setTimeout(r, 1000 * retries))
+                const delay = Math.min(8000, baseDelay * 2 ** (retries - 1)) + Math.random() * 250
+                console.warn(`Stream failed, retry ${retries}/${maxRetries} in ${Math.round(delay)}ms:`, err.message)
+                await new Promise(r => setTimeout(r, delay))
                 return attemptStream()
             }
 

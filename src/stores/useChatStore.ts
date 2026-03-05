@@ -23,6 +23,7 @@ interface ChatState {
     isSidebarOpen: boolean
     messagesById: Record<string, Message>
     messageIds: string[]
+    streamControllers: Record<string, AbortController>
     isLoading: boolean
     isPro: boolean
     gatedModes: ChatMode[]
@@ -43,6 +44,8 @@ interface ChatState {
     closeUpgradeModal: () => void
     openRegenerationModal: (messageId: string) => void
     closeRegenerationModal: () => void
+    abortStream: (clientId: string) => void
+    abortAllStreams: () => void
     addMessage: (msg: Message) => void
     updateMessageByClientId: (clientId: string, updater: (msg: Message) => Message) => void
     removeMessageByClientId: (clientId: string) => void
@@ -153,6 +156,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     isSidebarOpen: true,
     messagesById: {},
     messageIds: [],
+    streamControllers: {},
     isLoading: false,
     isPro: defaultIsPro,
     gatedModes: [...CHAT_PREMIUM_MODES],
@@ -232,6 +236,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
     closeUpgradeModal: () => set({ upgradeModalOpen: false }),
     openRegenerationModal: (messageId: string) => set({ regenerationModalOpen: true, regenerationTargetId: messageId }),
     closeRegenerationModal: () => set({ regenerationModalOpen: false, regenerationTargetId: null }),
+    abortStream: (clientId: string) => {
+        const controller = get().streamControllers[clientId]
+        if (controller) controller.abort()
+        set(state => {
+            const { [clientId]: _removed, ...rest } = state.streamControllers
+            return { streamControllers: rest }
+        })
+        get().updateMessageByClientId(clientId, message => ({ ...message, isStreaming: false, error: 'Canceled' }))
+        const stillStreaming = get().messageIds.some(id => get().messagesById[id]?.isStreaming)
+        set({ isLoading: stillStreaming })
+    },
+    abortAllStreams: () => {
+        const controllers = get().streamControllers
+        Object.values(controllers).forEach(controller => controller.abort())
+        set({ streamControllers: {} })
+        set(state => {
+            const messagesById = { ...state.messagesById }
+            for (const id of state.messageIds) {
+                const message = messagesById[id]
+                if (message?.isStreaming) {
+                    messagesById[id] = { ...message, isStreaming: false, error: 'Canceled' }
+                }
+            }
+            return { messagesById }
+        })
+        set({ isLoading: false })
+    },
 
     syncConversations: (conversations: Conversation[]) => {
         set(state => {
@@ -496,6 +527,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
         get().addMessage(assistantPlaceholder)
 
+        const controller = new AbortController()
+        set(state => ({
+            streamControllers: { ...state.streamControllers, [assistantClientId]: controller },
+        }))
+
         try {
             const { data: { session } } = supabaseConfigured
                 ? await supabase.auth.getSession()
@@ -582,41 +618,46 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 }
             }
 
-            let response = await fetch(`${API_URL}/api/messages`, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify({
-                    conversation_id: conversationId,
-                    content: trimmed,
-                    client_generated_id: localUserId,
-                    assistant_client_id: assistantClientId,
-                    mode: requestedMode,
-                    prompt_mode: effectivePromptMode,
-                }),
-            })
-
-            const shouldFallback = response.status === 404 || response.status === 405
-            if (shouldFallback) {
-                const fallbackLevel = toQueryLevel(effectivePromptMode)
-                response = await fetch(`${API_URL}/api/query/stream`, {
+            const executeStream = async () => {
+                let response = await fetch(`${API_URL}/api/messages`, {
                     method: 'POST',
                     headers,
+                    signal: controller.signal,
                     body: JSON.stringify({
-                        topic: trimmed,
-                        levels: [fallbackLevel],
-                        mode: requestedMode === 'ensemble' ? 'ensemble' : 'fast',
-                        premium: isPro,
-                        regenerate: Boolean(options?.isRegeneration),
-                        bypass_cache: Boolean(options?.isRegeneration),
+                        conversation_id: conversationId,
+                        content: trimmed,
+                        client_generated_id: localUserId,
+                        assistant_client_id: assistantClientId,
+                        mode: requestedMode,
+                        prompt_mode: effectivePromptMode,
                     }),
                 })
 
-                if (!response.ok) {
-                    throw new Error(`Request failed with status ${response.status}`)
+                const shouldFallback = response.status === 404 || response.status === 405
+                if (shouldFallback) {
+                    const fallbackLevel = toQueryLevel(effectivePromptMode)
+                    response = await fetch(`${API_URL}/api/query/stream`, {
+                        method: 'POST',
+                        headers,
+                        signal: controller.signal,
+                        body: JSON.stringify({
+                            topic: trimmed,
+                            levels: [fallbackLevel],
+                            mode: requestedMode === 'ensemble' ? 'ensemble' : 'fast',
+                            premium: isPro,
+                            regenerate: Boolean(options?.isRegeneration),
+                            bypass_cache: Boolean(options?.isRegeneration),
+                        }),
+                    })
+
+                    if (!response.ok) {
+                        throw new Error(`Request failed with status ${response.status}`)
+                    }
+
+                    await streamFromResponse(response, payload => handleStreamingPayload(payload, 'chunk'))
+                    return
                 }
 
-                await streamFromResponse(response, payload => handleStreamingPayload(payload, 'chunk'))
-            } else {
                 if (!response.ok) {
                     throw new Error(`Request failed with status ${response.status}`)
                 }
@@ -624,11 +665,45 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 await streamFromResponse(response, payload => handleStreamingPayload(payload, 'delta'))
             }
 
+            const maxRetries = 2
+            let attempt = 0
+            const retryStream = async () => {
+                while (true) {
+                    try {
+                        await executeStream()
+                        return
+                    } catch (error: any) {
+                        if (controller.signal.aborted) throw error
+                        if (attempt >= maxRetries) throw error
+                        attempt += 1
+                        const backoff = Math.min(8000, 1000 * 2 ** attempt) + Math.random() * 250
+                        get().updateMessageByClientId(assistantClientId, message => ({
+                            ...message,
+                            content: '',
+                            isStreaming: true,
+                            error: undefined,
+                        }))
+                        await new Promise(resolve => setTimeout(resolve, backoff))
+                    }
+                }
+            }
+
+            await retryStream()
+
             get().updateMessageByClientId(assistantClientId, message => ({
                 ...message,
                 isStreaming: false,
             }))
         } catch (error: any) {
+            if (error?.name === 'AbortError' || controller.signal.aborted) {
+                get().updateMessageByClientId(assistantClientId, message => ({
+                    ...message,
+                    isStreaming: false,
+                    error: 'Canceled',
+                }))
+                return
+            }
+
             get().removeMessageByClientId(assistantClientId)
             notifyError(error?.message || 'Failed to send message')
 
@@ -640,6 +715,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 error: error?.message || 'Failed to send message',
             })
         } finally {
+            set(state => {
+                const { [assistantClientId]: _removed, ...rest } = state.streamControllers
+                return { streamControllers: rest }
+            })
             const stillStreaming = get().messageIds.some(id => get().messagesById[id]?.isStreaming)
             set({ isLoading: stillStreaming })
         }
@@ -666,6 +745,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
             notifyError('No user prompt found to regenerate.')
             return
         }
+
+        get().abortAllStreams()
 
         const nextMode = mode ?? currentMode
         const nextPromptMode = isPromptMode(nextMode) ? nextMode : currentPromptMode
