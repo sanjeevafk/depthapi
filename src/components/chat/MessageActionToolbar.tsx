@@ -55,21 +55,27 @@ export default function MessageActionToolbar({ content, onRegenerate, onShare, d
             <button
                 onClick={handleCopy}
                 title={copied ? 'Copied' : 'Copy'}
-                className="h-7 w-7 rounded-lg border border-white/10 bg-dark-900/70 text-gray-300 hover:text-white flex items-center justify-center"
+                aria-label={copied ? 'Copied' : 'Copy'}
+                disabled={disabled}
+                className="h-7 w-7 rounded-lg border border-white/10 bg-dark-900/70 text-gray-300 hover:text-white flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
             >
                 {copied ? <Check className="h-3.5 w-3.5 text-cyan-300" /> : <Copy className="h-3.5 w-3.5" />}
             </button>
             <button
                 onClick={handleRegenerate}
                 title="Regenerate"
-                className="h-7 w-7 rounded-lg border border-white/10 bg-dark-900/70 text-gray-300 hover:text-white flex items-center justify-center"
+                aria-label="Regenerate"
+                disabled={disabled}
+                className="h-7 w-7 rounded-lg border border-white/10 bg-dark-900/70 text-gray-300 hover:text-white flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
             >
                 <RefreshCcw className="h-3.5 w-3.5" />
             </button>
             <button
                 onClick={handleShare}
                 title="Share"
-                className="h-7 w-7 rounded-lg border border-white/10 bg-dark-900/70 text-gray-300 hover:text-white flex items-center justify-center"
+                aria-label="Share"
+                disabled={disabled}
+                className="h-7 w-7 rounded-lg border border-white/10 bg-dark-900/70 text-gray-300 hover:text-white flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
             >
                 <Share2 className="h-3.5 w-3.5" />
             </button>

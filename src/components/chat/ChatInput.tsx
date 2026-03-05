@@ -87,7 +87,7 @@ export default function ChatInput() {
                             <div className="relative" ref={dropdownRef}>
                                 <button
                                     type="button"
-                                    onClick={() => setModeOpen(value => !value)}
+                                    onClick={() => setModeOpen(prev => !prev)}
                                     className="h-12 rounded-2xl border border-white/10 bg-dark-900/60 px-3 text-xs text-gray-200 flex items-center gap-2 hover:border-white/20"
                                 >
                                     <span className="font-semibold">{formatModeLabel(currentMode)}</span>

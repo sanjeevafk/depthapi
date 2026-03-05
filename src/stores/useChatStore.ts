@@ -802,11 +802,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
     },
 
     retrySync: async (messageId: string) => {
-        const message = get().messagesById[messageId]
-        if (!message?.retryPayload) return
+    const state = get()
+        const messageKey = state.messageIds.find(id => {
+            const msg = state.messagesById[id]
+            return msg?.clientGeneratedId === messageId || id === messageId
+        })
+       const message = messageKey ? state.messagesById[messageKey] : undefined        
+       if (!message?.retryPayload) return
 
         removePendingSync(messageId)
-        get().updateMessageByClientId(messageId, current => ({ ...current, syncStatus: 'pending', error: undefined }))
+        get().updateMessageByClientId(message.clientGeneratedId || messageId, current => ({
+            ...current,
+            syncStatus: 'pending',
+            error: undefined,
+        }))
 
         await get().sendMessage(message.retryPayload.content, {
             mode: message.retryPayload.mode as ChatMode,

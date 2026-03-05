@@ -4,7 +4,7 @@ import asyncio
 import json
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Dict, Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -60,7 +60,7 @@ async def send_message(req: MessageRequest, auth_data: dict = Depends(verify_tok
         )
         if not getattr(conversation_resp, "data", None):
             raise HTTPException(status_code=404, detail="Conversation not found")
-        conversation = conversation_resp.data
+        conversation = cast(Dict[str, Any], conversation_resp.data)
     except HTTPException:
         raise
     except Exception as e:
@@ -74,8 +74,11 @@ async def send_message(req: MessageRequest, auth_data: dict = Depends(verify_tok
     if requested_prompt_mode and requested_prompt_mode not in SUPPORTED_PROMPT_MODES:
         raise HTTPException(status_code=400, detail="Unsupported prompt_mode")
 
-    settings = conversation.get("settings") or {}
-    selected_mode = requested_mode or conversation.get("mode") or settings.get("mode") or DEFAULT_CHAT_MODE
+    settings: Dict[str, Any] = conversation.get("settings") or {}
+    selected_mode: str = cast(
+        str,
+        requested_mode or conversation.get("mode") or settings.get("mode") or DEFAULT_CHAT_MODE,
+    )
     if selected_mode not in SUPPORTED_CHAT_MODES:
         selected_mode = DEFAULT_CHAT_MODE
 
@@ -84,17 +87,20 @@ async def send_message(req: MessageRequest, auth_data: dict = Depends(verify_tok
         selected_mode = DEFAULT_CHAT_MODE
 
     if selected_mode == "ensemble":
-        raw_prompt_mode = requested_prompt_mode or settings.get("prompt_mode") or settings.get("mode") or conversation.get("mode")
+        raw_prompt_mode = cast(
+            Optional[str],
+            requested_prompt_mode or settings.get("prompt_mode") or settings.get("mode") or conversation.get("mode"),
+        )
         if raw_prompt_mode in PROMPT_MODE_ALIASES:
             raw_prompt_mode = PROMPT_MODE_ALIASES[raw_prompt_mode]
-        prompt_mode = raw_prompt_mode if raw_prompt_mode in CHAT_PROMPT_MODES else DEFAULT_CHAT_MODE
+        prompt_mode: str = raw_prompt_mode if raw_prompt_mode in CHAT_PROMPT_MODES else DEFAULT_CHAT_MODE
         if prompt_mode in CHAT_PREMIUM_MODES and not is_pro:
             prompt_mode = DEFAULT_CHAT_MODE
     else:
-        raw_prompt_mode = requested_prompt_mode or selected_mode
+        raw_prompt_mode = cast(Optional[str], requested_prompt_mode or selected_mode)
         if raw_prompt_mode in PROMPT_MODE_ALIASES:
             raw_prompt_mode = PROMPT_MODE_ALIASES[raw_prompt_mode]
-        prompt_mode = raw_prompt_mode if raw_prompt_mode in CHAT_PROMPT_MODES else DEFAULT_CHAT_MODE
+        prompt_mode: str = raw_prompt_mode if raw_prompt_mode in CHAT_PROMPT_MODES else DEFAULT_CHAT_MODE
         if prompt_mode in CHAT_PREMIUM_MODES and not is_pro:
             prompt_mode = DEFAULT_CHAT_MODE
     inference_mode = CHAT_INFERENCE_MODE_ALIASES.get(selected_mode, "ensemble")
@@ -154,7 +160,8 @@ async def send_message(req: MessageRequest, auth_data: dict = Depends(verify_tok
                 }
             ).execute
         )
-        assistant_message_id = assistant_resp.data[0]["id"] if assistant_resp.data else None
+        assistant_data = cast(list[Dict[str, Any]], assistant_resp.data) if assistant_resp.data else []
+        assistant_message_id = assistant_data[0]["id"] if assistant_data else None
     except Exception as e:
         logger.error("messages_assistant_insert_failed", error=str(e), conversation_id=req.conversation_id)
         raise HTTPException(status_code=500, detail="Failed to start assistant message")

@@ -147,15 +147,15 @@ export default function ConversationList() {
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
                             <div className="w-8 h-8 rounded-full bg-cyan-600 flex items-center justify-center text-white overflow-hidden ring-2 ring-cyan-500/20">
-                                {user.user_metadata.avatar_url ? (
-                                    <img src={user.user_metadata.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
+                                {user.user_metadata?.avatar_url ? (
+                                    <img src={user.user_metadata?.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
                                 ) : (
                                     <UserIcon size={16} />
                                 )}
                             </div>
                             <div className="flex flex-col">
                                 <span className="text-sm text-white font-medium truncate max-w-[140px]">
-                                    {user.user_metadata.full_name || user.email?.split('@')[0]}
+                                    {user.user_metadata?.full_name || user.email?.split('@')[0] || 'User'}
                                 </span>
                                 <span className="text-[10px] text-gray-500">
                                     {profile?.is_pro ? 'Pro plan' : 'Free plan'}
