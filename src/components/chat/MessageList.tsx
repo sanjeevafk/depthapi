@@ -86,6 +86,7 @@ export default function MessageList() {
 function MessageItem({ messageId }: { messageId: string }) {
     const message = useChatStore(state => state.messagesById[messageId])
     const openRegenerationModal = useChatStore(state => state.openRegenerationModal)
+    const retrySync = useChatStore(state => state.retrySync)
 
     if (!message) return null
 
@@ -135,6 +136,14 @@ function MessageItem({ messageId }: { messageId: string }) {
                     <div className="mt-2 text-xs text-red-400">
                         {message.error}
                     </div>
+                )}
+                {message.syncStatus === 'failed' && message.retryPayload && (
+                    <button
+                        onClick={() => void retrySync(messageId)}
+                        className="mt-2 text-[11px] text-cyan-300 border border-cyan-500/30 rounded-full px-3 py-1 hover:bg-cyan-500/10 transition"
+                    >
+                        Retry Sync
+                    </button>
                 )}
             </div>
         </motion.div>

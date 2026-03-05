@@ -163,7 +163,7 @@ Description: Per-message abort controllers and reconnect/backoff on SSE drop.
 Relevant files/modules: `src/stores/useChatStore.ts`, `src/api.ts`.  
 Suggested implementation steps: (1) Track AbortControllers per message; (2) Add retry/backoff on stream errors; (3) Surface status in UI.
 
-[ ] Add persistence error recovery UI  
+[x] Add persistence error recovery UI  
 Description: Cache unsaved responses locally and show “Retry Sync” action.  
 Relevant files/modules: `src/stores/useChatStore.ts`, new UI component.  
 Suggested implementation steps: (1) Cache failed assistant responses in localStorage; (2) Mark messages with retry state; (3) Add retry action to re-sync.
