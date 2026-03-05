@@ -8,7 +8,10 @@ export default function ConversationList() {
     const currentConversationId = useChatStore(state => state.currentConversationId)
     const selectConversation = useChatStore(state => state.selectConversation)
     const isLoading = useChatStore(state => state.isLoading)
-    const messages = useChatStore(state => state.messages)
+    const lastActiveMessage = useChatStore(state => {
+        const lastId = state.messageIds[state.messageIds.length - 1]
+        return lastId ? state.messagesById[lastId] : undefined
+    })
 
     return (
         <aside className="w-full md:w-80 md:shrink-0 border-r border-white/5 bg-dark-800 flex flex-col border-b md:border-b-0">
@@ -28,7 +31,7 @@ export default function ConversationList() {
                     <div className="space-y-2 p-3">
                         {conversations.map(conversation => {
                             const isActive = conversation.id === currentConversationId
-                            const activePreview = isActive ? messages[messages.length - 1]?.content : undefined
+                            const activePreview = isActive ? lastActiveMessage?.content : undefined
                             const preview = activePreview || lastMessageByConversationId[conversation.id]?.content || 'No messages yet'
                             return (
                                 <motion.button

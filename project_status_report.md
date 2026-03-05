@@ -103,7 +103,7 @@ Description: Add `will-change` hints or convert any remaining static effects to 
 Relevant files/modules: `src/index.css`, `src/pages/LandingPage.tsx`.  
 Suggested implementation steps: (1) Add `will-change: transform` to animated layers; (2) Audit Framer Motion use for static background effects; (3) Remove or downgrade unnecessary motion where possible.
 
-[ ] Refactor message storage to registry pattern  
+[x] Refactor message storage to registry pattern  
 Description: Store messages by id and render `MessageItem` per id to avoid O(N) re-rendering.  
 Relevant files/modules: `src/stores/useChatStore.ts`, `src/components/chat/MessageList.tsx`.  
 Suggested implementation steps: (1) Change store shape to `messagesById` + `messageIds`; (2) Create `MessageItem` that subscribes by id; (3) Update insertion/update logic accordingly.

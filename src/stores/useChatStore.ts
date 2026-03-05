@@ -17,7 +17,8 @@ interface ChatState {
     currentConversationId: string | null
     currentMode: ChatMode
     currentPromptMode: PromptMode
-    messages: Message[]
+    messagesById: Record<string, Message>
+    messageIds: string[]
     isLoading: boolean
     isPro: boolean
     gatedModes: ChatMode[]
@@ -67,13 +68,77 @@ const notifyError = (message: string) => {
     }
 }
 
+const resolveMessageKey = (message: Message) => {
+    return (
+        message.clientGeneratedId ||
+        message.metadata?.assistant_client_id ||
+        message.metadata?.client_id ||
+        message.serverMessageId ||
+        message.id
+    )
+}
+
+const messagesMatch = (existing: Message, incoming: Message) => {
+    if (existing.id === incoming.id) return true
+    if (existing.clientGeneratedId && incoming.clientGeneratedId && existing.clientGeneratedId === incoming.clientGeneratedId) {
+        return true
+    }
+    if (incoming.metadata?.assistant_client_id && existing.clientGeneratedId === incoming.metadata.assistant_client_id) {
+        return true
+    }
+    if (existing.metadata?.assistant_client_id && incoming.clientGeneratedId && existing.metadata.assistant_client_id === incoming.clientGeneratedId) {
+        return true
+    }
+    if (existing.serverMessageId && incoming.id && existing.serverMessageId === incoming.id) return true
+    if (incoming.serverMessageId && existing.id && incoming.serverMessageId === existing.id) return true
+    if (incoming.metadata?.client_id && existing.id === incoming.metadata.client_id) return true
+    if (existing.metadata?.client_id && existing.metadata.client_id === incoming.id) return true
+    if (incoming.metadata?.client_id && existing.clientGeneratedId === incoming.metadata.client_id) return true
+    if (existing.metadata?.client_id && incoming.clientGeneratedId && existing.metadata.client_id === incoming.clientGeneratedId) {
+        return true
+    }
+    if (incoming.metadata?.client_id && existing.metadata?.client_id && existing.metadata.client_id === incoming.metadata.client_id) {
+        return true
+    }
+    return false
+}
+
+const findExistingMessageKey = (state: Pick<ChatState, 'messagesById' | 'messageIds'>, incoming: Message) => {
+    for (const messageKey of state.messageIds) {
+        const existing = state.messagesById[messageKey]
+        if (!existing) continue
+        if (messagesMatch(existing, incoming)) {
+            return messageKey
+        }
+    }
+    return null
+}
+
+const buildMessageRegistry = (messages: Message[]) => {
+    const messagesById: Record<string, Message> = {}
+    const messageIds: string[] = []
+
+    for (const message of messages) {
+        const key = resolveMessageKey(message)
+        if (messagesById[key]) {
+            messagesById[key] = { ...messagesById[key], ...message }
+            continue
+        }
+        messagesById[key] = message
+        messageIds.push(key)
+    }
+
+    return { messagesById, messageIds }
+}
+
 
 export const useChatStore = create<ChatState>((set, get) => ({
     conversations: [],
     currentConversationId: null,
     currentMode: CHAT_DEFAULT_MODE,
     currentPromptMode: CHAT_DEFAULT_MODE,
-    messages: [],
+    messagesById: {},
+    messageIds: [],
     isLoading: false,
     isPro: defaultIsPro,
     gatedModes: [...CHAT_PREMIUM_MODES],
@@ -156,7 +221,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         try {
             const { data: authData, error: authError } = await supabase.auth.getUser()
             if (authError || !authData?.user) {
-                set({ conversations: [], currentConversationId: null, messages: [] })
+                set({ conversations: [], currentConversationId: null, messagesById: {}, messageIds: [] })
                 return
             }
 
@@ -196,7 +261,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (!id) return
         const state = get()
 
-        if (state.currentConversationId === id && (state.isLoading || state.messages.length > 0)) {
+        if (state.currentConversationId === id && (state.isLoading || state.messageIds.length > 0)) {
             return
         }
 
@@ -210,7 +275,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const nextPromptMode = resolvePromptMode(conversationPrompt)
         set({
             currentConversationId: id,
-            messages: [],
+            messagesById: {},
+            messageIds: [],
             isLoading: true,
             currentMode: nextMode,
             currentPromptMode: nextPromptMode,
@@ -230,7 +296,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
             if (error) throw error
 
-            set({ messages: (data ?? []) as Message[] })
+            const { messagesById, messageIds } = buildMessageRegistry((data ?? []) as Message[])
+            set({ messagesById, messageIds })
         } catch (error) {
             console.error('Failed to fetch messages:', error)
         } finally {
@@ -240,58 +307,71 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     addMessage: (msg: Message) => {
         set(state => {
-            const existingIndex = state.messages.findIndex(item => {
-                if (item.id === msg.id) return true
-                if (item.clientGeneratedId && msg.clientGeneratedId && item.clientGeneratedId === msg.clientGeneratedId) {
-                    return true
-                }
-                if (msg.metadata?.assistant_client_id && item.clientGeneratedId === msg.metadata.assistant_client_id) {
-                    return true
-                }
-                if (item.metadata?.assistant_client_id && msg.clientGeneratedId && item.metadata.assistant_client_id === msg.clientGeneratedId) {
-                    return true
-                }
-                if (item.serverMessageId && msg.id && item.serverMessageId === msg.id) return true
-                if (msg.serverMessageId && item.id && msg.serverMessageId === item.id) return true
-                if (msg.metadata?.client_id && item.id === msg.metadata.client_id) return true
-                if (item.metadata?.client_id && item.metadata.client_id === msg.id) return true
-                if (msg.metadata?.client_id && item.clientGeneratedId === msg.metadata.client_id) return true
-                if (item.metadata?.client_id && msg.clientGeneratedId && item.metadata.client_id === msg.clientGeneratedId) return true
-                if (item.metadata?.client_id && msg.metadata?.client_id && item.metadata.client_id === msg.metadata.client_id) {
-                    return true
-                }
-                return false
-            })
+            const resolvedKey = resolveMessageKey(msg)
+            const directMatch = state.messagesById[resolvedKey] ? resolvedKey : null
+            const existingKey = directMatch || findExistingMessageKey(state, msg)
 
-            if (existingIndex >= 0) {
-                const updated = [...state.messages]
-                updated[existingIndex] = { ...updated[existingIndex], ...msg }
-                return { messages: updated }
+            if (existingKey) {
+                const nextMessagesById = {
+                    ...state.messagesById,
+                    [existingKey]: { ...state.messagesById[existingKey], ...msg },
+                }
+                if (!state.messageIds.includes(existingKey)) {
+                    return { messagesById: nextMessagesById, messageIds: [...state.messageIds, existingKey] }
+                }
+                return { messagesById: nextMessagesById }
             }
 
-            return { messages: [...state.messages, msg] }
+            return {
+                messagesById: { ...state.messagesById, [resolvedKey]: msg },
+                messageIds: [...state.messageIds, resolvedKey],
+            }
         })
     },
 
     updateMessageByClientId: (clientId: string, updater: (msg: Message) => Message) => {
         set(state => {
-            let updated = false
-            const messages = state.messages.map(message => {
-                if (message.clientGeneratedId === clientId) {
-                    updated = true
-                    return updater(message)
-                }
-                return message
+            const messageKey = state.messageIds.find(id => {
+                const message = state.messagesById[id]
+                if (!message) return false
+                return (
+                    message.clientGeneratedId === clientId ||
+                    message.metadata?.assistant_client_id === clientId ||
+                    message.metadata?.client_id === clientId
+                )
             })
 
-            return updated ? { messages } : state
+            if (!messageKey) return state
+            const message = state.messagesById[messageKey]
+            return {
+                messagesById: {
+                    ...state.messagesById,
+                    [messageKey]: updater(message),
+                },
+            }
         })
     },
 
     removeMessageByClientId: (clientId: string) => {
-        set(state => ({
-            messages: state.messages.filter(message => message.clientGeneratedId !== clientId),
-        }))
+        set(state => {
+            const messageKey = state.messageIds.find(id => {
+                const message = state.messagesById[id]
+                if (!message) return false
+                return (
+                    message.clientGeneratedId === clientId ||
+                    message.metadata?.assistant_client_id === clientId ||
+                    message.metadata?.client_id === clientId
+                )
+            })
+
+            if (!messageKey) return state
+
+            const { [messageKey]: _removed, ...rest } = state.messagesById
+            return {
+                messagesById: rest,
+                messageIds: state.messageIds.filter(id => id !== messageKey),
+            }
+        })
     },
 
     sendMessage: async (content: string) => {
@@ -530,7 +610,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 error: error?.message || 'Failed to send message',
             })
         } finally {
-            const stillStreaming = get().messages.some(message => message.isStreaming)
+            const stillStreaming = get().messageIds.some(id => get().messagesById[id]?.isStreaming)
             set({ isLoading: stillStreaming })
         }
     },
