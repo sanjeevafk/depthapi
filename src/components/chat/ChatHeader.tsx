@@ -28,8 +28,13 @@ export default function ChatHeader() {
             setIsEditing(false)
             return
         }
-        await renameConversation(currentConversationId, nextTitle)
-        setIsEditing(false)
+        try {
+            await renameConversation(currentConversationId, nextTitle)
+            setIsEditing(false)
+        } catch (error) {
+            console.error('Failed to rename conversation:', error)
+            // Optionally show a toast/notification to the user
+        }
     }
 
     return (

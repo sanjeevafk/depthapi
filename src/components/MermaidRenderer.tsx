@@ -4,7 +4,7 @@ import mermaid from 'mermaid'
 mermaid.initialize({
     startOnLoad: false,
     theme: 'dark',
-    securityLevel: 'loose',
+    securityLevel: 'strict',
 })
 
 export interface MermaidProps {
@@ -26,6 +26,8 @@ export default function MermaidRenderer({ chart }: MermaidProps) {
     }, [chart])
 
     useEffect(() => {
+        let cancelled = false
+
         const renderDiagram = async () => {
             if (!ref.current || !normalizedChart) return
 
@@ -57,27 +59,34 @@ export default function MermaidRenderer({ chart }: MermaidProps) {
                 ]
 
                 if (!allowed.some(prefix => directive.startsWith(prefix))) {
+                    if (cancelled) return
                     setHasError(true)
                     return
                 }
 
                 await mermaid.parse(normalizedChart)
 
+                if (cancelled) return
                 // Clear existing content
                 ref.current.innerHTML = ''
                 setHasError(false)
 
                 const { svg } = await mermaid.render(id, normalizedChart)
-                if (ref.current) {
+                if (ref.current && !cancelled) {
                     ref.current.innerHTML = svg
                 }
             } catch (err) {
                 console.error('Mermaid render failure:', err)
+                if (cancelled) return
                 setHasError(true)
             }
         }
 
         renderDiagram()
+
+        return () => {
+            cancelled = true
+        }
     }, [normalizedChart])
 
     if (hasError) {

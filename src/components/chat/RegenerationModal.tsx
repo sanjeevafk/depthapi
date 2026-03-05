@@ -107,15 +107,10 @@ export default function RegenerationModal() {
                     </button>
                     <button
                         onClick={() => void handleConfirm()}
-                        className={`px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 ${
-                            gated
-                                ? 'bg-white/10 text-gray-400 cursor-not-allowed'
-                                : 'bg-cyan-600 text-white hover:bg-cyan-500'
-                        }`}
-                        disabled={gated}
+                        className="px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 bg-cyan-600 text-white hover:bg-cyan-500"
                     >
                         <RefreshCcw className="h-4 w-4" />
-                        Regenerate
+                        {gated ? 'Upgrade to Unlock' : 'Regenerate'}
                     </button>
                 </div>
             </div>

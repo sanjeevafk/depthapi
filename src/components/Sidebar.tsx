@@ -70,8 +70,8 @@ export default function Sidebar({ onSelectTopic, refreshTrigger, isOpen, onToggl
 
     useEffect(() => {
         if (!user) return
-        queryClient.invalidateQueries({ queryKey: historyKey })
-    }, [refreshTrigger, user, queryClient])
+        queryClient.invalidateQueries({ queryKey: ['history', user.id] })
+    }, [refreshTrigger, user?.id, queryClient])
 
     const handleDelete = async (e: React.MouseEvent, id: string) => {
         e.stopPropagation()
