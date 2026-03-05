@@ -113,7 +113,7 @@ Description: Use `React.memo` and a comparison function to avoid re-render unles
 Relevant files/modules: `src/components/chat/MessageList.tsx`.  
 Suggested implementation steps: (1) Extract a `MessageContent` component; (2) Wrap with `React.memo` and custom compare; (3) Replace inline `ReactMarkdown` in list.
 
-[ ] Add Zod schema validation for SSE payloads  
+[x] Add Zod schema validation for SSE payloads  
 Description: Validate streamed JSON chunks and gracefully ignore malformed data.  
 Relevant files/modules: `src/api.ts`, `src/stores/useChatStore.ts`, `package.json`.  
 Suggested implementation steps: (1) Add `zod` dependency; (2) Define `MessageChunkSchema`; (3) Use `safeParse` before applying updates.
