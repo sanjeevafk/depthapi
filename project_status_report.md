@@ -128,7 +128,7 @@ Description: Use React Query for conversations/history caching and invalidation.
 Relevant files/modules: `src/stores/useChatStore.ts`, `src/hooks/useConversations.ts`, `package.json`.  
 Suggested implementation steps: (1) Add `@tanstack/react-query`; (2) Replace `fetchConversations` and history loading with queries; (3) Add query invalidation on mutations.
 
-[ ] Replace responseCache with TanStack Query persister  
+[x] Replace responseCache with TanStack Query persister  
 Description: Centralize persistence using React Query’s storage persister.  
 Relevant files/modules: `src/lib/responseCache.ts`, legacy flow components.  
 Suggested implementation steps: (1) Add persister plugin; (2) Remove LZ-string cache usage; (3) Migrate read/write logic to query cache.

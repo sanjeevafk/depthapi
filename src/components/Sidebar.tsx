@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../context/AuthContext'
 import { getHistory, deleteHistoryItem, clearHistory } from '../api'
-import { responseCache } from '../lib/responseCache'
+import { QUERY_PERSIST_KEY } from '../lib/queryPersistence'
 import {
     Clock,
     LogOut,
@@ -213,13 +213,6 @@ export default function Sidebar({ onSelectTopic, refreshTrigger, isOpen, onToggl
                                             key={item.id}
                                             onClick={() => {
                                                 const effectiveMode = item.mode === 'ensemble' ? 'ensemble' : 'fast'
-                                                // Check if response is cached before triggering search
-                                                const cached = responseCache.get(item.topic, effectiveMode)
-                                                if (cached) {
-                                                    console.log('✅ History click: using cached response for', item.topic, effectiveMode)
-                                                } else {
-                                                    console.log('⏳ History click: cache miss, will fetch', item.topic, effectiveMode)
-                                                }
                                                 onSelectTopic(item.topic, effectiveMode, item.levels?.[0] as Level)
                                             }}
                                             className="group flex items-center justify-between p-2.5 rounded-lg hover:bg-dark-800 cursor-pointer transition-all border border-transparent hover:border-dark-700"
@@ -270,13 +263,12 @@ export default function Sidebar({ onSelectTopic, refreshTrigger, isOpen, onToggl
                             <span className="text-[10px] text-gray-600 font-mono">v2.0.0-beta</span>
                             <button
                                 onClick={() => {
-                                    const stats = responseCache.getStats()
-                                    console.log('📦 Cache stats before clear:', stats)
-                                    responseCache.clear()
-                                    console.log('🗑️ Cache cleared')
+                                    queryClient.clear()
+                                    localStorage.removeItem(QUERY_PERSIST_KEY)
+                                    console.log('🗑️ Query cache cleared')
                                 }}
                                 className="text-[10px] text-gray-600 hover:text-cyan-400 font-mono transition-colors"
-                                title="Clear response cache"
+                                title="Clear query cache"
                             >
                                 Clear Cache
                             </button>
