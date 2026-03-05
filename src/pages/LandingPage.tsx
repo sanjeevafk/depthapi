@@ -142,7 +142,7 @@ export default function LandingPage() {
                             </div>
                         </div>
                         <div className="relative group perspective-1000">
-                            <div className="absolute -inset-4 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-3xl blur-2xl opacity-20 group-hover:opacity-40 transition-opacity"></div>
+                            <div className="glow-layer absolute -inset-4 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-3xl blur-2xl opacity-20 group-hover:opacity-40 transition-opacity"></div>
                             <div className="relative">
                                 <LivePreviewCard />
                             </div>

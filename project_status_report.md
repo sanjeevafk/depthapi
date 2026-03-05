@@ -98,7 +98,7 @@ Description: Move Mermaid to `React.lazy` and ensure any export-heavy libs load 
 Relevant files/modules: `src/components/Mermaid.tsx`, `src/components/MermaidDiagram.tsx`, `src/components/ExportDropdown.tsx`.  
 Suggested implementation steps: (1) Wrap Mermaid component in `React.lazy` and load via `Suspense`; (2) Replace any static export lib imports with `await import()` in handler; (3) Confirm bundle no longer includes heavy libs at startup.
 
-[ ] Optimize global animations (stars/glow) for perf  
+[x] Optimize global animations (stars/glow) for perf  
 Description: Add `will-change` hints or convert any remaining static effects to pure CSS.  
 Relevant files/modules: `src/index.css`, `src/pages/LandingPage.tsx`.  
 Suggested implementation steps: (1) Add `will-change: transform` to animated layers; (2) Audit Framer Motion use for static background effects; (3) Remove or downgrade unnecessary motion where possible.
