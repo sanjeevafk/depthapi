@@ -148,7 +148,7 @@ Description: On hover, show actions for assistant messages.
 Relevant files/modules: `src/components/chat/MessageList.tsx`.  
 Suggested implementation steps: (1) Add `MessageActionToolbar`; (2) Implement copy; (3) Stub regenerate/share actions.
 
-[ ] Implement regeneration modal and flow  
+[x] Implement regeneration modal and flow  
 Description: Allow mode-specific regeneration from assistant messages with abort + new stream.  
 Relevant files/modules: `src/stores/useChatStore.ts`, new modal component, `src/components/chat/MessageList.tsx`.  
 Suggested implementation steps: (1) Add UI state to open modal with target id; (2) Implement regeneration request with abort; (3) Insert placeholder and stream new response.

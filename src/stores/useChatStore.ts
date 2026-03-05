@@ -27,10 +27,13 @@ interface ChatState {
     isPro: boolean
     gatedModes: ChatMode[]
     upgradeModalOpen: boolean
+    regenerationModalOpen: boolean
+    regenerationTargetId: string | null
     syncConversations: (conversations: Conversation[]) => void
     selectConversation: (id: string) => Promise<void>
     renameConversation: (id: string, title: string) => Promise<void>
-    sendMessage: (content: string) => Promise<void>
+    sendMessage: (content: string, options?: { mode?: ChatMode; promptMode?: PromptMode; isRegeneration?: boolean }) => Promise<void>
+    regenerateMessage: (messageId: string, mode?: ChatMode) => Promise<void>
     setMode: (mode: ChatMode) => void
     setPromptMode: (mode: PromptMode) => void
     setSelectedLevel: (level: Level) => void
@@ -38,6 +41,8 @@ interface ChatState {
     setIsPro: (isPro: boolean) => void
     openUpgradeModal: () => void
     closeUpgradeModal: () => void
+    openRegenerationModal: (messageId: string) => void
+    closeRegenerationModal: () => void
     addMessage: (msg: Message) => void
     updateMessageByClientId: (clientId: string, updater: (msg: Message) => Message) => void
     removeMessageByClientId: (clientId: string) => void
@@ -152,6 +157,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     isPro: defaultIsPro,
     gatedModes: [...CHAT_PREMIUM_MODES],
     upgradeModalOpen: false,
+    regenerationModalOpen: false,
+    regenerationTargetId: null,
 
     setMode: (mode: ChatMode) => {
         const { currentConversationId, conversations } = get()
@@ -223,6 +230,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     openUpgradeModal: () => set({ upgradeModalOpen: true }),
     closeUpgradeModal: () => set({ upgradeModalOpen: false }),
+    openRegenerationModal: (messageId: string) => set({ regenerationModalOpen: true, regenerationTargetId: messageId }),
+    closeRegenerationModal: () => set({ regenerationModalOpen: false, regenerationTargetId: null }),
 
     syncConversations: (conversations: Conversation[]) => {
         set(state => {
@@ -384,12 +393,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         })
     },
 
-    sendMessage: async (content: string) => {
+    sendMessage: async (content: string, options?: { mode?: ChatMode; promptMode?: PromptMode; isRegeneration?: boolean }) => {
         const trimmed = content.trim()
         if (!trimmed) return
 
         const { currentMode, currentPromptMode, isPro, gatedModes } = get()
-        if (isModeGated(currentMode, isPro, gatedModes)) {
+        const requestedMode = options?.mode ?? currentMode
+        const requestedPromptMode = options?.promptMode ?? currentPromptMode
+        if (isModeGated(requestedMode, isPro, gatedModes)) {
             get().openUpgradeModal()
             return
         }
@@ -398,7 +409,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const localUserId = makeLocalId()
         let conversationId = get().currentConversationId
         let conversation = get().conversations.find(item => item.id === conversationId)
-        const effectivePromptMode = isPromptMode(currentMode) ? currentMode : currentPromptMode
+        const effectivePromptMode = isPromptMode(requestedMode) ? requestedMode : requestedPromptMode
 
         set({ isLoading: true })
 
@@ -413,8 +424,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                             .insert({
                                 user_id: authData.user.id,
                                 title,
-                                mode: currentMode,
-                                settings: { mode: currentMode, prompt_mode: effectivePromptMode },
+                                mode: requestedMode,
+                                settings: { mode: requestedMode, prompt_mode: effectivePromptMode },
                             })
                             .select('id, title, mode, settings, created_at, updated_at')
                             .single()
@@ -440,8 +451,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 conversation = {
                     id: conversationId,
                     title,
-                    mode: currentMode,
-                    settings: { mode: currentMode, prompt_mode: effectivePromptMode },
+                    mode: requestedMode,
+                    settings: { mode: requestedMode, prompt_mode: effectivePromptMode },
                     created_at: now,
                     updated_at: now,
                 }
@@ -456,7 +467,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             id: localUserId,
             role: 'user',
             content: trimmed,
-            metadata: { client_id: localUserId, mode: currentMode, prompt_mode: effectivePromptMode },
+            metadata: { client_id: localUserId, mode: requestedMode, prompt_mode: effectivePromptMode },
             created_at: now,
             clientGeneratedId: localUserId,
         }
@@ -480,7 +491,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             created_at: new Date().toISOString(),
             clientGeneratedId: assistantClientId,
             isStreaming: true,
-            metadata: { mode: currentMode, prompt_mode: effectivePromptMode, assistant_client_id: assistantClientId },
+            metadata: { mode: requestedMode, prompt_mode: effectivePromptMode, assistant_client_id: assistantClientId },
         }
 
         get().addMessage(assistantPlaceholder)
@@ -579,7 +590,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     content: trimmed,
                     client_generated_id: localUserId,
                     assistant_client_id: assistantClientId,
-                    mode: currentMode,
+                    mode: requestedMode,
                     prompt_mode: effectivePromptMode,
                 }),
             })
@@ -593,8 +604,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     body: JSON.stringify({
                         topic: trimmed,
                         levels: [fallbackLevel],
-                        mode: 'fast',
+                        mode: requestedMode === 'ensemble' ? 'ensemble' : 'fast',
                         premium: isPro,
+                        regenerate: Boolean(options?.isRegeneration),
+                        bypass_cache: Boolean(options?.isRegeneration),
                     }),
                 })
 
@@ -630,5 +643,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
             const stillStreaming = get().messageIds.some(id => get().messagesById[id]?.isStreaming)
             set({ isLoading: stillStreaming })
         }
+    },
+
+    regenerateMessage: async (messageId: string, mode?: ChatMode) => {
+        const { messageIds, messagesById, currentMode, currentPromptMode } = get()
+        const targetIndex = messageIds.indexOf(messageId)
+        if (targetIndex < 0) {
+            notifyError('Unable to find the selected message.')
+            return
+        }
+
+        let userMessage: Message | undefined
+        for (let i = targetIndex - 1; i >= 0; i -= 1) {
+            const candidate = messagesById[messageIds[i]]
+            if (candidate?.role === 'user') {
+                userMessage = candidate
+                break
+            }
+        }
+
+        if (!userMessage) {
+            notifyError('No user prompt found to regenerate.')
+            return
+        }
+
+        const nextMode = mode ?? currentMode
+        const nextPromptMode = isPromptMode(nextMode) ? nextMode : currentPromptMode
+        await get().sendMessage(userMessage.content, { mode: nextMode, promptMode: nextPromptMode, isRegeneration: true })
     },
 }))

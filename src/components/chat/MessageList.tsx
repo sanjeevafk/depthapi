@@ -85,6 +85,7 @@ export default function MessageList() {
 
 function MessageItem({ messageId }: { messageId: string }) {
     const message = useChatStore(state => state.messagesById[messageId])
+    const openRegenerationModal = useChatStore(state => state.openRegenerationModal)
 
     if (!message) return null
 
@@ -108,7 +109,11 @@ function MessageItem({ messageId }: { messageId: string }) {
                 }`}
             >
                 {!isUser && (
-                    <MessageActionToolbar content={message.content} disabled={message.isStreaming} />
+                    <MessageActionToolbar
+                        content={message.content}
+                        disabled={message.isStreaming}
+                        onRegenerate={() => openRegenerationModal(messageId)}
+                    />
                 )}
                 {assistantLabel && (
                     <div className="mb-2">
