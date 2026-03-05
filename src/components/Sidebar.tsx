@@ -25,6 +25,13 @@ interface SidebarProps {
     onToggle: () => void
 }
 
+type HistoryItem = {
+    id: string
+    topic: string
+    mode?: string
+    levels?: Level[]
+}
+
 export default function Sidebar({ onSelectTopic, refreshTrigger, isOpen, onToggle }: SidebarProps) {
     const [showDeleteModal, setShowDeleteModal] = useState(false)
     const [isDeletingAll, setIsDeletingAll] = useState(false)
@@ -33,12 +40,16 @@ export default function Sidebar({ onSelectTopic, refreshTrigger, isOpen, onToggl
     const queryClient = useQueryClient()
 
     const cachedHistory = useMemo(() => {
-        const cached = localStorage.getItem('kb_history_cache')
-        return cached ? JSON.parse(cached) : []
+        try {
+            const cached = localStorage.getItem('kb_history_cache')
+            return cached ? JSON.parse(cached) : []
+        } catch {
+            return []
+        }
     }, [])
 
     const historyKey = ['history', user?.id]
-    const historyQuery = useQuery({
+    const historyQuery = useQuery<HistoryItem[]>({
         queryKey: historyKey,
         enabled: Boolean(user),
         queryFn: getHistory,
