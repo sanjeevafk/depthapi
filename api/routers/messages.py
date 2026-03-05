@@ -58,13 +58,14 @@ async def send_message(req: MessageRequest, auth_data: dict = Depends(verify_tok
             .single()
             .execute
         )
+        if not getattr(conversation_resp, "data", None):
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        conversation = conversation_resp.data
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("messages_conversation_fetch_failed", error=str(e), conversation_id=req.conversation_id)
         raise HTTPException(status_code=500, detail="Failed to load conversation")
-
-    if not getattr(conversation_resp, "data", None):
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    conversation = conversation_resp.data
 
     requested_mode = req.mode
     requested_prompt_mode = req.prompt_mode
