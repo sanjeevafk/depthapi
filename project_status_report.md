@@ -108,7 +108,7 @@ Description: Store messages by id and render `MessageItem` per id to avoid O(N) 
 Relevant files/modules: `src/stores/useChatStore.ts`, `src/components/chat/MessageList.tsx`.  
 Suggested implementation steps: (1) Change store shape to `messagesById` + `messageIds`; (2) Create `MessageItem` that subscribes by id; (3) Update insertion/update logic accordingly.
 
-[ ] Memoize Markdown rendering per message  
+[x] Memoize Markdown rendering per message  
 Description: Use `React.memo` and a comparison function to avoid re-render unless content or streaming state changes.  
 Relevant files/modules: `src/components/chat/MessageList.tsx`.  
 Suggested implementation steps: (1) Extract a `MessageContent` component; (2) Wrap with `React.memo` and custom compare; (3) Replace inline `ReactMarkdown` in list.

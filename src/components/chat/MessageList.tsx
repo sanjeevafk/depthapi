@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { memo, useEffect, useMemo, useRef } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -6,6 +6,46 @@ import Mermaid from '../Mermaid'
 import SafeImage from '../SafeImage'
 import { useChatStore } from '../../stores/useChatStore'
 import { formatModeLabel } from '../../lib/chatModes'
+
+const markdownComponents = {
+    code({ inline, className, children, ...props }: any) {
+        const match = /language-(\w+)/.exec(className || '')
+        const codeStr = String(children).replace(/\n$/, '')
+
+        if (!inline && match && match[1] === 'mermaid') {
+            return <Mermaid chart={codeStr} />
+        }
+
+        return (
+            <code
+                className={`${className} bg-black/40 rounded px-1.5 py-0.5 text-xs font-mono`}
+                {...props}
+            >
+                {children}
+            </code>
+        )
+    },
+    pre({ children }: any) {
+        return (
+            <pre className="bg-black/40 p-4 rounded-xl border border-white/10 overflow-x-auto my-3">
+                {children}
+            </pre>
+        )
+    },
+    img({ src, alt }: any) {
+        return <SafeImage src={src} alt={alt || 'Image'} />
+    },
+    a({ node, ...props }: any) {
+        return (
+            <a
+                {...props}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline decoration-cyan-500/40 underline-offset-4 hover:decoration-cyan-300"
+            />
+        )
+    },
+}
 
 export default function MessageList() {
     const messageIds = useChatStore(state => state.messageIds)
@@ -74,50 +114,7 @@ function MessageItem({ messageId }: { messageId: string }) {
                     </div>
                 )}
                 <div className="text-sm leading-relaxed">
-                    <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        components={{
-                        code({ inline, className, children, ...props }: any) {
-                            const match = /language-(\w+)/.exec(className || '')
-                            const codeStr = String(children).replace(/\n$/, '')
-
-                            if (!inline && match && match[1] === 'mermaid') {
-                                return <Mermaid chart={codeStr} />
-                            }
-
-                            return (
-                                <code
-                                    className={`${className} bg-black/40 rounded px-1.5 py-0.5 text-xs font-mono`}
-                                    {...props}
-                                >
-                                    {children}
-                                </code>
-                            )
-                        },
-                        pre({ children }) {
-                            return (
-                                <pre className="bg-black/40 p-4 rounded-xl border border-white/10 overflow-x-auto my-3">
-                                    {children}
-                                </pre>
-                            )
-                        },
-                        img({ src, alt }: any) {
-                            return <SafeImage src={src} alt={alt || 'Image'} />
-                        },
-                        a({ node, ...props }: any) {
-                            return (
-                                <a
-                                    {...props}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="underline decoration-cyan-500/40 underline-offset-4 hover:decoration-cyan-300"
-                                />
-                            )
-                        },
-                        }}
-                    >
-                        {message.content}
-                    </ReactMarkdown>
+                    <MessageContent content={message.content} isStreaming={message.isStreaming} />
                 </div>
                 {message.isStreaming && (
                     <div className="mt-2 flex items-center gap-2 text-xs text-cyan-200">
@@ -134,3 +131,16 @@ function MessageItem({ messageId }: { messageId: string }) {
         </motion.div>
     )
 }
+
+const MessageContent = memo(
+    function MessageContent({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
+        return (
+            <div data-streaming={isStreaming ? 'true' : 'false'}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                    {content}
+                </ReactMarkdown>
+            </div>
+        )
+    },
+    (prev, next) => prev.content === next.content && prev.isStreaming === next.isStreaming
+)
