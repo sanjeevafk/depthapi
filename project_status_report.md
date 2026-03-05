@@ -153,7 +153,7 @@ Description: Allow mode-specific regeneration from assistant messages with abort
 Relevant files/modules: `src/stores/useChatStore.ts`, new modal component, `src/components/chat/MessageList.tsx`.  
 Suggested implementation steps: (1) Add UI state to open modal with target id; (2) Implement regeneration request with abort; (3) Insert placeholder and stream new response.
 
-[ ] Improve input UX (floating bar, quick switcher, skeleton)  
+[x] Improve input UX (floating bar, quick switcher, skeleton)  
 Description: Match proposed layout and better loading feedback.  
 Relevant files/modules: `src/components/chat/ChatInput.tsx`, `src/components/chat/ModeToggleBar.tsx`.  
 Suggested implementation steps: (1) Update layout styling to floating bar; (2) Add inline mode dropdown near send; (3) Replace input with skeleton when streaming.
