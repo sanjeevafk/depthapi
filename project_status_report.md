@@ -158,7 +158,7 @@ Description: Match proposed layout and better loading feedback.
 Relevant files/modules: `src/components/chat/ChatInput.tsx`, `src/components/chat/ModeToggleBar.tsx`.  
 Suggested implementation steps: (1) Update layout styling to floating bar; (2) Add inline mode dropdown near send; (3) Replace input with skeleton when streaming.
 
-[ ] Add robust streaming resilience (abort + backoff)  
+[x] Add robust streaming resilience (abort + backoff)  
 Description: Per-message abort controllers and reconnect/backoff on SSE drop.  
 Relevant files/modules: `src/stores/useChatStore.ts`, `src/api.ts`.  
 Suggested implementation steps: (1) Track AbortControllers per message; (2) Add retry/backoff on stream errors; (3) Surface status in UI.
