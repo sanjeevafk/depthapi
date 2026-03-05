@@ -35,6 +35,7 @@ interface ChatState {
     renameConversation: (id: string, title: string) => Promise<void>
     sendMessage: (content: string, options?: { mode?: ChatMode; promptMode?: PromptMode; isRegeneration?: boolean }) => Promise<void>
     regenerateMessage: (messageId: string, mode?: ChatMode) => Promise<void>
+    retrySync: (messageId: string) => Promise<void>
     setMode: (mode: ChatMode) => void
     setPromptMode: (mode: PromptMode) => void
     setSelectedLevel: (level: Level) => void
@@ -81,6 +82,43 @@ const notifyError = (message: string) => {
     if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('kb-toast', { detail: { type: 'error', message } }))
     }
+}
+
+const PENDING_SYNC_KEY = 'kb_pending_sync_v1'
+
+interface PendingSyncEntry {
+    id: string
+    content: string
+    mode: ChatMode
+    promptMode?: PromptMode
+    createdAt: string
+}
+
+const loadPendingSyncs = (): PendingSyncEntry[] => {
+    if (typeof window === 'undefined') return []
+    try {
+        const raw = window.localStorage.getItem(PENDING_SYNC_KEY)
+        return raw ? (JSON.parse(raw) as PendingSyncEntry[]) : []
+    } catch {
+        return []
+    }
+}
+
+const savePendingSyncs = (entries: PendingSyncEntry[]) => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(PENDING_SYNC_KEY, JSON.stringify(entries))
+}
+
+const cachePendingSync = (entry: PendingSyncEntry) => {
+    const existing = loadPendingSyncs()
+    const next = [entry, ...existing.filter(item => item.id !== entry.id)].slice(0, 50)
+    savePendingSyncs(next)
+}
+
+const removePendingSync = (id: string) => {
+    const existing = loadPendingSyncs()
+    const next = existing.filter(item => item.id !== id)
+    savePendingSyncs(next)
 }
 
 const resolveMessageKey = (message: Message) => {
@@ -522,6 +560,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             created_at: new Date().toISOString(),
             clientGeneratedId: assistantClientId,
             isStreaming: true,
+            syncStatus: 'pending',
             metadata: { mode: requestedMode, prompt_mode: effectivePromptMode, assistant_client_id: assistantClientId },
         }
 
@@ -682,6 +721,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                             content: '',
                             isStreaming: true,
                             error: undefined,
+                            syncStatus: 'pending',
                         }))
                         await new Promise(resolve => setTimeout(resolve, backoff))
                     }
@@ -693,6 +733,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             get().updateMessageByClientId(assistantClientId, message => ({
                 ...message,
                 isStreaming: false,
+                syncStatus: 'synced',
             }))
         } catch (error: any) {
             if (error?.name === 'AbortError' || controller.signal.aborted) {
@@ -704,16 +745,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 return
             }
 
-            get().removeMessageByClientId(assistantClientId)
             notifyError(error?.message || 'Failed to send message')
-
-            get().addMessage({
-                id: makeLocalId(),
-                role: 'assistant',
-                content: 'Message failed to send. Please try again.',
-                created_at: new Date().toISOString(),
-                error: error?.message || 'Failed to send message',
+            const retryPayload = { content: trimmed, mode: requestedMode, promptMode: effectivePromptMode }
+            cachePendingSync({
+                id: assistantClientId,
+                content: trimmed,
+                mode: requestedMode,
+                promptMode: effectivePromptMode,
+                createdAt: new Date().toISOString(),
             })
+
+            get().updateMessageByClientId(assistantClientId, message => ({
+                ...message,
+                isStreaming: false,
+                error: error?.message || 'Failed to sync message',
+                syncStatus: 'failed',
+                retryPayload,
+            }))
         } finally {
             set(state => {
                 const { [assistantClientId]: _removed, ...rest } = state.streamControllers
@@ -751,5 +799,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const nextMode = mode ?? currentMode
         const nextPromptMode = isPromptMode(nextMode) ? nextMode : currentPromptMode
         await get().sendMessage(userMessage.content, { mode: nextMode, promptMode: nextPromptMode, isRegeneration: true })
+    },
+
+    retrySync: async (messageId: string) => {
+        const message = get().messagesById[messageId]
+        if (!message?.retryPayload) return
+
+        removePendingSync(messageId)
+        get().updateMessageByClientId(messageId, current => ({ ...current, syncStatus: 'pending', error: undefined }))
+
+        await get().sendMessage(message.retryPayload.content, {
+            mode: message.retryPayload.mode as ChatMode,
+            promptMode: message.retryPayload.promptMode,
+        })
     },
 }))

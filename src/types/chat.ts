@@ -78,4 +78,10 @@ export interface Message {
     serverMessageId?: string
     isStreaming?: boolean
     error?: string
+    syncStatus?: 'pending' | 'failed' | 'synced'
+    retryPayload?: {
+        content: string
+        mode: ConversationMode
+        promptMode?: PromptMode
+    }
 }
