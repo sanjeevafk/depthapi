@@ -3,6 +3,7 @@ import ChatHeader from '../components/chat/ChatHeader'
 import MessageList from '../components/chat/MessageList'
 import ChatInput from '../components/chat/ChatInput'
 import ModeToggleBar from '../components/chat/ModeToggleBar'
+import RegenerationModal from '../components/chat/RegenerationModal'
 import { UpgradeModal } from '../components/UpgradeModal'
 import { useMessages } from '../hooks/useMessages'
 import { useAuth } from '../context/AuthContext'
@@ -60,6 +61,7 @@ export default function ChatPage() {
                 onUpgrade={handleUpgrade}
                 onUseByok={handleUseByok}
             />
+            <RegenerationModal />
         </div>
     )
 }
