@@ -133,7 +133,7 @@ Description: Centralize persistence using React Query’s storage persister.
 Relevant files/modules: `src/lib/responseCache.ts`, legacy flow components.  
 Suggested implementation steps: (1) Add persister plugin; (2) Remove LZ-string cache usage; (3) Migrate read/write logic to query cache.
 
-[ ] Build full chat sidebar (search, pins, profile)  
+[x] Build full chat sidebar (search, pins, profile)  
 Description: Implement the proposed sidebar UX for chat, optionally reusing legacy components.  
 Relevant files/modules: `src/components/chat/ConversationList.tsx`, `src/components/SearchBar.tsx`, `src/components/PinnedTopics.tsx`, `src/components/Sidebar.tsx`.  
 Suggested implementation steps: (1) Add search input and filter; (2) Add pinned items section; (3) Add profile/settings area.
