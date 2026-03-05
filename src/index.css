@@ -20,6 +20,9 @@ body {
   position: fixed;
   inset: 0;
   pointer-events: none;
+  will-change: transform;
+  transform: translateZ(0);
+  contain: paint;
   background:
     radial-gradient(1px 1px at 20px 30px, #fff 0%, rgba(255, 255, 255, 0.6) 40%, transparent 70%),
     radial-gradient(1px 1px at 40px 70px, #fff 0%, rgba(255, 255, 255, 0.5) 40%, transparent 70%),
@@ -38,6 +41,7 @@ body {
   background-size: 300px 300px;
   animation: stars 150s linear infinite;
   opacity: 0.5;
+  will-change: transform;
 }
 
 @keyframes stars {
@@ -99,4 +103,9 @@ body {
 
 .animate-shimmer {
   animation: shimmer 2.5s infinite;
+}
+
+.glow-layer {
+  will-change: opacity, transform;
+  transform: translateZ(0);
 }
