@@ -93,14 +93,20 @@ async def send_message(req: MessageRequest, auth_data: dict = Depends(verify_tok
         )
         if raw_prompt_mode in PROMPT_MODE_ALIASES:
             raw_prompt_mode = PROMPT_MODE_ALIASES[raw_prompt_mode]
-        prompt_mode: str = raw_prompt_mode if raw_prompt_mode in CHAT_PROMPT_MODES else DEFAULT_CHAT_MODE
+        if raw_prompt_mode in CHAT_PROMPT_MODES:
+            prompt_mode = cast(str, raw_prompt_mode)
+        else:
+            prompt_mode = DEFAULT_CHAT_MODE
         if prompt_mode in CHAT_PREMIUM_MODES and not is_pro:
             prompt_mode = DEFAULT_CHAT_MODE
     else:
         raw_prompt_mode = cast(Optional[str], requested_prompt_mode or selected_mode)
         if raw_prompt_mode in PROMPT_MODE_ALIASES:
             raw_prompt_mode = PROMPT_MODE_ALIASES[raw_prompt_mode]
-        prompt_mode: str = raw_prompt_mode if raw_prompt_mode in CHAT_PROMPT_MODES else DEFAULT_CHAT_MODE
+        if raw_prompt_mode in CHAT_PROMPT_MODES:
+            prompt_mode = cast(str, raw_prompt_mode)
+        else:
+            prompt_mode = DEFAULT_CHAT_MODE
         if prompt_mode in CHAT_PREMIUM_MODES and not is_pro:
             prompt_mode = DEFAULT_CHAT_MODE
     inference_mode = CHAT_INFERENCE_MODE_ALIASES.get(selected_mode, "ensemble")
