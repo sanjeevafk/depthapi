@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { supabase } from '../lib/supabase'
 import { splitSseEvents, extractSseData } from '../lib/sse'
 import { ChatStreamChunkSchema } from '../lib/sseSchemas'
+import type { Level } from '../types'
 import type { ChatMode, Conversation, Message, PromptMode } from '../types/chat'
 import {
     CHAT_DEFAULT_MODE,
@@ -18,6 +19,8 @@ interface ChatState {
     currentConversationId: string | null
     currentMode: ChatMode
     currentPromptMode: PromptMode
+    selectedLevel: Level
+    isSidebarOpen: boolean
     messagesById: Record<string, Message>
     messageIds: string[]
     isLoading: boolean
@@ -29,6 +32,8 @@ interface ChatState {
     sendMessage: (content: string) => Promise<void>
     setMode: (mode: ChatMode) => void
     setPromptMode: (mode: PromptMode) => void
+    setSelectedLevel: (level: Level) => void
+    setIsSidebarOpen: (open: boolean) => void
     setIsPro: (isPro: boolean) => void
     openUpgradeModal: () => void
     closeUpgradeModal: () => void
@@ -138,6 +143,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     currentConversationId: null,
     currentMode: CHAT_DEFAULT_MODE,
     currentPromptMode: CHAT_DEFAULT_MODE,
+    selectedLevel: 'eli5' as Level,
+    isSidebarOpen: true,
     messagesById: {},
     messageIds: [],
     isLoading: false,
@@ -206,6 +213,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             .update({ settings: nextSettings ?? conversation.settings })
             .eq('id', currentConversationId)
     },
+
+    setSelectedLevel: (selectedLevel: Level) => set({ selectedLevel }),
+
+    setIsSidebarOpen: (isSidebarOpen: boolean) => set({ isSidebarOpen }),
 
     setIsPro: (isPro: boolean) => set({ isPro }),
 

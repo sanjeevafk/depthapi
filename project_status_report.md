@@ -118,7 +118,7 @@ Description: Validate streamed JSON chunks and gracefully ignore malformed data.
 Relevant files/modules: `src/api.ts`, `src/stores/useChatStore.ts`, `package.json`.  
 Suggested implementation steps: (1) Add `zod` dependency; (2) Define `MessageChunkSchema`; (3) Use `safeParse` before applying updates.
 
-[ ] Unify legacy and chat stores  
+[x] Unify legacy and chat stores  
 Description: Merge `useKnowBearStore` preferences into `useChatStore` and remove redundant state.  
 Relevant files/modules: `src/store/useKnowBearStore.ts`, `src/stores/useChatStore.ts`.  
 Suggested implementation steps: (1) Identify shared fields (mode, selectedLevel, sidebar state); (2) Port necessary actions; (3) Remove or isolate legacy store if no longer used.
