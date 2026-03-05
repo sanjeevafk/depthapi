@@ -1,38 +1,20 @@
-import { useEffect, useRef } from 'react'
-import mermaid from 'mermaid'
+import { Suspense, lazy } from 'react'
+import type { MermaidDiagramProps } from './MermaidDiagramRenderer'
 
-interface MermaidDiagramProps {
-    code: string
-}
+const MermaidDiagramRenderer = lazy(() => import('./MermaidDiagramRenderer'))
 
-mermaid.initialize({
-    startOnLoad: false,
-    theme: 'dark',
-    themeVariables: {
-        primaryColor: '#22c55e',
-        primaryTextColor: '#fff',
-        primaryBorderColor: '#14b8a6',
-        lineColor: '#6b7280',
-        secondaryColor: '#1a1a1a',
-        tertiaryColor: '#242424',
-    },
-})
+export type { MermaidDiagramProps }
 
-export default function MermaidDiagram({ code }: MermaidDiagramProps) {
-    const ref = useRef<HTMLDivElement>(null)
-
-    useEffect(() => {
-        if (!ref.current || !code) return
-        const render = async () => {
-            try {
-                const { svg } = await mermaid.render('mermaid-' + Date.now(), code)
-                if (ref.current) ref.current.innerHTML = svg
-            } catch {
-                if (ref.current) ref.current.innerHTML = '<p class="text-red-400">Invalid diagram</p>'
+export default function MermaidDiagram(props: MermaidDiagramProps) {
+    return (
+        <Suspense
+            fallback={
+                <div className="rounded-lg border border-white/5 bg-dark-900/40 p-4 text-xs text-gray-500">
+                    Rendering diagram...
+                </div>
             }
-        }
-        render()
-    }, [code])
-
-    return <div ref={ref} className="bg-dark-800 p-4 rounded-lg overflow-auto" />
+        >
+            <MermaidDiagramRenderer {...props} />
+        </Suspense>
+    )
 }
