@@ -143,7 +143,7 @@ Description: Provide a header showing conversation title and current mode.
 Relevant files/modules: `src/pages/ChatPage.tsx`, new `ChatHeader` component.  
 Suggested implementation steps: (1) Create header component; (2) Enable inline title editing with persistence; (3) Display mode pills.
 
-[ ] Add per-message action toolbar (copy, regenerate, share)  
+[x] Add per-message action toolbar (copy, regenerate, share)  
 Description: On hover, show actions for assistant messages.  
 Relevant files/modules: `src/components/chat/MessageList.tsx`.  
 Suggested implementation steps: (1) Add `MessageActionToolbar`; (2) Implement copy; (3) Stub regenerate/share actions.

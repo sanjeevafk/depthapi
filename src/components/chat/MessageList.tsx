@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import Mermaid from '../Mermaid'
 import SafeImage from '../SafeImage'
+import MessageActionToolbar from './MessageActionToolbar'
 import { useChatStore } from '../../stores/useChatStore'
 import { formatModeLabel } from '../../lib/chatModes'
 
@@ -100,12 +101,15 @@ function MessageItem({ messageId }: { messageId: string }) {
             className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}
         >
             <div
-                className={`max-w-[75%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-lg border ${
+                className={`max-w-[75%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-lg border relative ${!isUser ? 'group' : ''} ${
                     isUser
                         ? 'bg-accent-primary text-white border-accent-primary/30'
                         : 'bg-dark-700 text-gray-100 border-white/5'
                 }`}
             >
+                {!isUser && (
+                    <MessageActionToolbar content={message.content} disabled={message.isStreaming} />
+                )}
                 {assistantLabel && (
                     <div className="mb-2">
                         <span className="text-[10px] uppercase tracking-[0.2em] px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-gray-300">
