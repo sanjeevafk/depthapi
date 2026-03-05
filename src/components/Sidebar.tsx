@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../context/AuthContext'
 import { getHistory, deleteHistoryItem, clearHistory } from '../api'
 import { responseCache } from '../lib/responseCache'
@@ -25,45 +26,47 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ onSelectTopic, refreshTrigger, isOpen, onToggle }: SidebarProps) {
-    const [history, setHistory] = useState<any[]>(() => {
-        // Instant load from cache to prevent flicker
-        const cached = localStorage.getItem('kb_history_cache')
-        return cached ? JSON.parse(cached) : []
-    })
-    const [isLoading, setIsLoading] = useState(false)
     const [showDeleteModal, setShowDeleteModal] = useState(false)
     const [isDeletingAll, setIsDeletingAll] = useState(false)
     const { user, profile, signOut, signInWithGoogle } = useAuth()
     const navigate = useNavigate()
+    const queryClient = useQueryClient()
+
+    const cachedHistory = useMemo(() => {
+        const cached = localStorage.getItem('kb_history_cache')
+        return cached ? JSON.parse(cached) : []
+    }, [])
+
+    const historyKey = ['history', user?.id]
+    const historyQuery = useQuery({
+        queryKey: historyKey,
+        enabled: Boolean(user),
+        queryFn: getHistory,
+        initialData: cachedHistory,
+        staleTime: 30_000,
+    })
+
+    const history = historyQuery.data ?? []
+    const isLoading = historyQuery.isLoading
 
     useEffect(() => {
         if (user) {
-            loadHistory()
+            localStorage.setItem('kb_history_cache', JSON.stringify(history))
         } else {
-            setHistory([])
             localStorage.removeItem('kb_history_cache')
         }
-    }, [user, refreshTrigger])
+    }, [user, history])
 
-    const loadHistory = async () => {
-        if (history.length === 0) setIsLoading(true)
-        try {
-            const data = await getHistory()
-            setHistory(data)
-            // Update cache for next reload
-            localStorage.setItem('kb_history_cache', JSON.stringify(data))
-        } catch (err) {
-            console.error('Failed to load history:', err)
-        } finally {
-            setIsLoading(false)
-        }
-    }
+    useEffect(() => {
+        if (!user) return
+        queryClient.invalidateQueries({ queryKey: historyKey })
+    }, [refreshTrigger, user, queryClient])
 
     const handleDelete = async (e: React.MouseEvent, id: string) => {
         e.stopPropagation()
         try {
             await deleteHistoryItem(id)
-            setHistory(prev => prev.filter(item => item.id !== id))
+            queryClient.setQueryData(historyKey, (prev: any[] = []) => prev.filter(item => item.id !== id))
         } catch (err) {
             console.error('Failed to delete history item:', err)
         }
@@ -73,7 +76,7 @@ export default function Sidebar({ onSelectTopic, refreshTrigger, isOpen, onToggl
         setIsDeletingAll(true)
         // Optimistic update
         const previousHistory = [...history]
-        setHistory([])
+        queryClient.setQueryData(historyKey, [])
         localStorage.removeItem('kb_history_cache')
         setShowDeleteModal(false)
 
@@ -82,7 +85,7 @@ export default function Sidebar({ onSelectTopic, refreshTrigger, isOpen, onToggl
         } catch (err) {
             console.error('Failed to clear history:', err)
             // Rollback on error
-            setHistory(previousHistory)
+            queryClient.setQueryData(historyKey, previousHistory)
             localStorage.setItem('kb_history_cache', JSON.stringify(previousHistory))
             alert('Failed to clear history. Please try again.')
         } finally {

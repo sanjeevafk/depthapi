@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { useChatStore } from '../stores/useChatStore'
-import type { Message } from '../types/chat'
+import type { Conversation, Message } from '../types/chat'
 
 const supabaseConfigured = Boolean(import.meta.env.VITE_SUPABASE_URL) && Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY)
 
@@ -15,56 +16,71 @@ const mapMessage = (record: any): Message => ({
     created_at: record.created_at,
 })
 
+const fetchConversations = async (): Promise<Conversation[]> => {
+    const { data, error } = await supabase
+        .from('conversations')
+        .select('id, title, mode, settings, created_at, updated_at')
+        .order('updated_at', { ascending: false })
+
+    if (error) throw error
+    return (data ?? []) as Conversation[]
+}
+
+const fetchLastMessages = async (conversationIds: string[]): Promise<Record<string, Message | null>> => {
+    if (conversationIds.length === 0) return {}
+
+    const { data, error } = await supabase
+        .from('messages')
+        .select('id, conversation_id, role, content, attachments, metadata, created_at')
+        .in('conversation_id', conversationIds)
+        .order('created_at', { ascending: false })
+
+    if (error) throw error
+
+    const next: Record<string, Message | null> = {}
+    for (const message of data ?? []) {
+        if (!next[message.conversation_id]) {
+            next[message.conversation_id] = mapMessage(message)
+        }
+    }
+
+    return next
+}
+
 export const useConversations = () => {
     const { user } = useAuth()
+    const syncConversations = useChatStore(state => state.syncConversations)
     const conversations = useChatStore(state => state.conversations)
-    const fetchConversations = useChatStore(state => state.fetchConversations)
-    const [lastMessageByConversationId, setLastMessageByConversationId] = useState<Record<string, Message | null>>({})
+    const queryClient = useQueryClient()
+
+    const conversationsQuery = useQuery({
+        queryKey: ['conversations', user?.id],
+        enabled: Boolean(user && supabaseConfigured),
+        queryFn: fetchConversations,
+        staleTime: 30_000,
+    })
 
     useEffect(() => {
-        if (!user || !supabaseConfigured) return
-        fetchConversations()
-    }, [user?.id, fetchConversations])
-
-    useEffect(() => {
-        if (!supabaseConfigured) return
-        if (conversations.length === 0) {
-            setLastMessageByConversationId({})
+        if (!user || !supabaseConfigured) {
+            syncConversations([])
             return
         }
-
-        const conversationIds = conversations.map(item => item.id)
-        let isMounted = true
-
-        const loadLastMessages = async () => {
-            try {
-                const { data, error } = await supabase
-                    .from('messages')
-                    .select('id, conversation_id, role, content, attachments, metadata, created_at')
-                    .in('conversation_id', conversationIds)
-                    .order('created_at', { ascending: false })
-
-                if (error) throw error
-
-                const next: Record<string, Message | null> = {}
-                for (const message of data ?? []) {
-                    if (!next[message.conversation_id]) {
-                        next[message.conversation_id] = mapMessage(message)
-                    }
-                }
-
-                if (isMounted) setLastMessageByConversationId(next)
-            } catch (error) {
-                console.error('Failed to load last messages:', error)
-            }
+        if (conversationsQuery.data) {
+            syncConversations(conversationsQuery.data)
         }
+    }, [user, syncConversations, conversationsQuery.data])
 
-        loadLastMessages()
+    const conversationIds = useMemo(
+        () => (conversationsQuery.data ?? conversations).map(item => item.id),
+        [conversations, conversationsQuery.data]
+    )
 
-        return () => {
-            isMounted = false
-        }
-    }, [conversations])
+    const lastMessagesQuery = useQuery({
+        queryKey: ['conversation-last-messages', conversationIds],
+        enabled: supabaseConfigured && conversationIds.length > 0,
+        queryFn: () => fetchLastMessages(conversationIds),
+        staleTime: 15_000,
+    })
 
     useEffect(() => {
         if (!user || !supabaseConfigured) return
@@ -75,7 +91,7 @@ export const useConversations = () => {
                 'postgres_changes',
                 { event: '*', schema: 'public', table: 'conversations', filter: `user_id=eq.${user.id}` },
                 () => {
-                    fetchConversations()
+                    queryClient.invalidateQueries({ queryKey: ['conversations', user.id] })
                 }
             )
             .subscribe()
@@ -83,10 +99,11 @@ export const useConversations = () => {
         return () => {
             supabase.removeChannel(channel)
         }
-    }, [user?.id, fetchConversations])
+    }, [user, queryClient])
 
     return {
         conversations,
-        lastMessageByConversationId,
+        lastMessageByConversationId: lastMessagesQuery.data ?? {},
+        isLoading: conversationsQuery.isLoading,
     }
 }

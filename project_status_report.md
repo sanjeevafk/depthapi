@@ -123,7 +123,7 @@ Description: Merge `useKnowBearStore` preferences into `useChatStore` and remove
 Relevant files/modules: `src/store/useKnowBearStore.ts`, `src/stores/useChatStore.ts`.  
 Suggested implementation steps: (1) Identify shared fields (mode, selectedLevel, sidebar state); (2) Port necessary actions; (3) Remove or isolate legacy store if no longer used.
 
-[ ] Migrate server state to TanStack Query  
+[x] Migrate server state to TanStack Query  
 Description: Use React Query for conversations/history caching and invalidation.  
 Relevant files/modules: `src/stores/useChatStore.ts`, `src/hooks/useConversations.ts`, `package.json`.  
 Suggested implementation steps: (1) Add `@tanstack/react-query`; (2) Replace `fetchConversations` and history loading with queries; (3) Add query invalidation on mutations.

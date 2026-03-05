@@ -27,7 +27,7 @@ interface ChatState {
     isPro: boolean
     gatedModes: ChatMode[]
     upgradeModalOpen: boolean
-    fetchConversations: () => Promise<void>
+    syncConversations: (conversations: Conversation[]) => void
     selectConversation: (id: string) => Promise<void>
     sendMessage: (content: string) => Promise<void>
     setMode: (mode: ChatMode) => void
@@ -223,50 +223,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
     openUpgradeModal: () => set({ upgradeModalOpen: true }),
     closeUpgradeModal: () => set({ upgradeModalOpen: false }),
 
-    fetchConversations: async () => {
-        if (!supabaseConfigured) {
-            set({ conversations: [], currentConversationId: null })
-            return
-        }
-
-        set({ isLoading: true })
-        try {
-            const { data: authData, error: authError } = await supabase.auth.getUser()
-            if (authError || !authData?.user) {
-                set({ conversations: [], currentConversationId: null, messagesById: {}, messageIds: [] })
-                return
+    syncConversations: (conversations: Conversation[]) => {
+        set(state => {
+            const preferredId = state.currentConversationId
+            const hasPreferred = preferredId ? conversations.some(item => item.id === preferredId) : false
+            const nextConversationId = hasPreferred ? preferredId : conversations[0]?.id ?? null
+            const activeConversation = conversations.find(item => item.id === nextConversationId)
+            const conversationMode = activeConversation?.mode || activeConversation?.settings?.mode
+            const conversationPrompt = activeConversation?.settings?.prompt_mode
+                || activeConversation?.settings?.mode
+                || activeConversation?.mode
+                || state.currentPromptMode
+            const nextMode = resolveChatMode(conversationMode)
+            const nextPromptMode = resolvePromptMode(conversationPrompt)
+            return {
+                conversations,
+                currentConversationId: nextConversationId,
+                currentMode: nextMode,
+                currentPromptMode: nextPromptMode,
             }
-
-            const { data, error } = await supabase
-                .from('conversations')
-                .select('id, title, mode, settings, created_at, updated_at')
-                .order('updated_at', { ascending: false })
-
-            if (error) throw error
-
-            const conversations = (data ?? []) as Conversation[]
-            set(state => {
-                const nextConversationId = state.currentConversationId ?? conversations[0]?.id ?? null
-                const activeConversation = conversations.find(item => item.id === nextConversationId)
-                const conversationMode = activeConversation?.mode || activeConversation?.settings?.mode
-                const conversationPrompt = activeConversation?.settings?.prompt_mode
-                    || activeConversation?.settings?.mode
-                    || activeConversation?.mode
-                    || state.currentPromptMode
-                const nextMode = resolveChatMode(conversationMode)
-                const nextPromptMode = resolvePromptMode(conversationPrompt)
-                return {
-                    conversations,
-                    currentConversationId: nextConversationId,
-                    currentMode: nextMode,
-                    currentPromptMode: nextPromptMode,
-                }
-            })
-        } catch (error) {
-            console.error('Failed to fetch conversations:', error)
-        } finally {
-            set({ isLoading: false })
-        }
+        })
     },
 
     selectConversation: async (id: string) => {
