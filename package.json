@@ -15,14 +15,15 @@
         "test": "vitest"
     },
     "dependencies": {
+        "@tanstack/query-sync-storage-persister": "^5.69.0",
         "@tanstack/react-query": "^5.69.0",
+        "@tanstack/react-query-persist-client": "^5.69.0",
         "@supabase/supabase-js": "^2.91.0",
         "framer-motion": "^12.28.1",
         "html-to-pdfmake": "^2.5.32",
         "html2canvas": "^1.4.1",
         "jspdf": "^4.0.0",
         "lucide-react": "^0.562.0",
-        "lz-string": "^1.5.0",
         "marked": "^17.0.1",
         "mermaid": "^10.6.1",
         "pdfmake": "^0.3.3",
