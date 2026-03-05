@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { supabase } from '../lib/supabase'
 import { splitSseEvents, extractSseData } from '../lib/sse'
+import { ChatStreamChunkSchema } from '../lib/sseSchemas'
 import type { ChatMode, Conversation, Message, PromptMode } from '../types/chat'
 import {
     CHAT_DEFAULT_MODE,
@@ -532,8 +533,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 }
             }
 
-            const handleStreamingPayload = (payload: any, chunkKey: 'delta' | 'chunk') => {
-                const chunk = payload?.[chunkKey]
+            const handleStreamingPayload = (rawPayload: unknown, chunkKey: 'delta' | 'chunk') => {
+                const parsed = ChatStreamChunkSchema.safeParse(rawPayload)
+                if (!parsed.success) {
+                    console.warn('Skipping invalid SSE payload:', parsed.error)
+                    return
+                }
+
+                const payload = parsed.data
+                const chunk = payload?.[chunkKey] ?? payload?.delta ?? payload?.chunk
                 if (chunk) {
                     get().updateMessageByClientId(assistantClientId, message => ({
                         ...message,

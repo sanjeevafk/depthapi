@@ -1,4 +1,5 @@
 import type { PinnedTopic, QueryRequest, QueryResponse, ExportRequest } from './types'
+import { LegacyStreamChunkSchema } from './lib/sseSchemas'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 const SUPABASE_CONFIGURED = Boolean(import.meta.env.VITE_SUPABASE_URL) && Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY)
@@ -142,20 +143,28 @@ export async function queryTopicStream(
                             onDone({})
                             return
                         }
+                        let parsed: unknown
                         try {
-                            const parsed = JSON.parse(data)
-                            if (parsed.chunk) {
-                                onChunk(parsed.chunk)
-                            } else if (parsed.warning) {
-                                // Display warning as part of the response
-                                onChunk(`\n\n${parsed.warning}`)
-                            } else if (parsed.error) {
-                                onError(new Error(parsed.error))
-                                return
-                            }
+                            parsed = JSON.parse(data)
                         } catch (e) {
                             console.warn('Failed to parse SSE chunk:', data.substring(0, 100), e)
-                            // Don't fail entire stream on one bad chunk
+                            continue
+                        }
+
+                        const validated = LegacyStreamChunkSchema.safeParse(parsed)
+                        if (!validated.success) {
+                            console.warn('Skipping invalid SSE chunk:', validated.error)
+                            continue
+                        }
+
+                        if (validated.data.chunk) {
+                            onChunk(validated.data.chunk)
+                        } else if (validated.data.warning) {
+                            // Display warning as part of the response
+                            onChunk(`\n\n${validated.data.warning}`)
+                        } else if (validated.data.error) {
+                            onError(new Error(validated.data.error))
+                            return
                         }
                     }
                 }
