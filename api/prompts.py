@@ -42,10 +42,6 @@ Output ONLY the final explanation in plain text. No thinking, no markdown, no bo
 
 Output ONLY the meme explanation. No labels, no hashtags, no thinking.""" ,
 
-    "meme-style": """Explain {topic} as a single punchy, shareable meme-style one-liner or short paragraph with a hilarious but accurate analogy. Make it extremely relatable and funny. Maximum 2-3 sentences.
-
-Output ONLY the meme explanation. No labels, no hashtags, no thinking.""" ,
-
     # ====================== ELDERLY / GENTLE MODES ======================
     "classic60": """You are explaining to a thoughtful person in their 60s who reads the newspaper and balances a checkbook.
 Think step-by-step: 1. Use familiar, classic metaphors. 2. Speak slowly and respectfully. 3. Take time to explain.

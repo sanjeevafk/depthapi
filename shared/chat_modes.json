@@ -4,7 +4,7 @@
     "eli10",
     "eli12",
     "eli15",
-    "meme-style",
+    "meme",
     "classic60",
     "gentle70",
     "warm80",
@@ -17,7 +17,7 @@
     "eli10",
     "eli12",
     "eli15",
-    "meme-style",
+    "meme",
     "ensemble",
     "technical-depth",
     "socratic"
@@ -27,7 +27,7 @@
     "eli10",
     "eli12",
     "eli15",
-    "meme-style",
+    "meme",
     "classic60",
     "gentle70",
     "warm80"
@@ -39,6 +39,6 @@
   ],
   "legacy_modes": [
     "technical",
-    "meme"
+    "meme-style"
   ]
 }

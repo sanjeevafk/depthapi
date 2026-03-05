@@ -30,7 +30,7 @@ const MODE_ICONS: Record<ChatMode, typeof BookOpen> = {
     eli10: School,
     eli12: LibraryBig,
     eli15: GraduationCap,
-    'meme-style': Laugh,
+    meme: Laugh,
     classic60: Sparkles,
     gentle70: HeartHandshake,
     warm80: Crown,

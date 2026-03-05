@@ -11,7 +11,7 @@ ALTER TABLE conversations
       'eli10',
       'eli12',
       'eli15',
-      'meme-style',
+      'meme',
       'classic60',
       'gentle70',
       'warm80',
