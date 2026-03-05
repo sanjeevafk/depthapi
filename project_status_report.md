@@ -138,7 +138,7 @@ Description: Implement the proposed sidebar UX for chat, optionally reusing lega
 Relevant files/modules: `src/components/chat/ConversationList.tsx`, `src/components/SearchBar.tsx`, `src/components/PinnedTopics.tsx`, `src/components/Sidebar.tsx`.  
 Suggested implementation steps: (1) Add search input and filter; (2) Add pinned items section; (3) Add profile/settings area.
 
-[ ] Add chat header with editable title + status pills  
+[x] Add chat header with editable title + status pills  
 Description: Provide a header showing conversation title and current mode.  
 Relevant files/modules: `src/pages/ChatPage.tsx`, new `ChatHeader` component.  
 Suggested implementation steps: (1) Create header component; (2) Enable inline title editing with persistence; (3) Display mode pills.

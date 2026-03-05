@@ -1,4 +1,5 @@
 import ConversationList from '../components/chat/ConversationList'
+import ChatHeader from '../components/chat/ChatHeader'
 import MessageList from '../components/chat/MessageList'
 import ChatInput from '../components/chat/ChatInput'
 import ModeToggleBar from '../components/chat/ModeToggleBar'
@@ -46,6 +47,7 @@ export default function ChatPage() {
         <div className="flex flex-col md:flex-row h-screen bg-dark-900 text-white">
             <ConversationList />
             <div className="flex-1 flex flex-col min-h-0">
+                <ChatHeader />
                 <MessageList />
                 <div className="border-t border-white/5 bg-dark-800 px-6 py-3">
                     <ModeToggleBar />

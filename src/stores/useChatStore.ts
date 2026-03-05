@@ -29,6 +29,7 @@ interface ChatState {
     upgradeModalOpen: boolean
     syncConversations: (conversations: Conversation[]) => void
     selectConversation: (id: string) => Promise<void>
+    renameConversation: (id: string, title: string) => Promise<void>
     sendMessage: (content: string) => Promise<void>
     setMode: (mode: ChatMode) => void
     setPromptMode: (mode: PromptMode) => void
@@ -290,6 +291,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
             console.error('Failed to fetch messages:', error)
         } finally {
             set({ isLoading: false })
+        }
+    },
+
+    renameConversation: async (id: string, title: string) => {
+        if (!id) return
+        const trimmed = title.trim()
+        if (!trimmed) return
+
+        const now = new Date().toISOString()
+        set(state => ({
+            conversations: state.conversations
+                .map(item => (item.id === id ? { ...item, title: trimmed, updated_at: now } : item))
+                .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1)),
+        }))
+
+        if (!supabaseConfigured || id.startsWith('local-')) return
+
+        try {
+            await supabase.from('conversations').update({ title: trimmed, updated_at: now }).eq('id', id)
+        } catch (error) {
+            console.error('Failed to rename conversation:', error)
         }
     },
 
