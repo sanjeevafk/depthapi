@@ -66,13 +66,14 @@ export default function WorkspaceSidebar({
       <div className="flex h-full flex-col">
         <div className="border-b border-slate-200 px-4 py-5 dark:border-white/10">
           <div className="flex items-center gap-2">
-            <span
-              className="inline-block h-4 w-4 rounded-full border-2 border-teal-600"
-              aria-hidden="true"
+            <img
+              src="/favicon.svg"
+              alt="KnowBear logo"
+              className="h-8 w-8 drop-shadow-[0_0_8px_rgba(6,182,212,0.45)]"
             />
-            <h1 className="text-2xl font-semibold text-teal-700 dark:text-teal-300">
-              KnowBear
-            </h1>
+            <span className="text-lg font-black tracking-tight leading-none text-slate-900 dark:text-slate-100">
+              Know<span className="text-cyan-500">Bear</span>
+            </span>
           </div>
           <button
             ref={newThreadButtonRef}
