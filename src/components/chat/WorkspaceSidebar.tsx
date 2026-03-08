@@ -180,7 +180,7 @@ export default function WorkspaceSidebar({
                 className="h-full w-full object-cover"
               />
             ) : (
-              userName.charAt(0).toUpperCase()
+              (userName.charAt(0) || "?").toUpperCase()
             )}
           </div>
           <div className="min-w-0">
