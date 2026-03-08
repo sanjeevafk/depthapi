@@ -1,14 +1,19 @@
 import { useEffect, useMemo, useRef } from "react";
-import { BookOpen, CircleHelp, Code2, MessageCircle, Plus } from "lucide-react";
-import type { Conversation, Message } from "../../types/chat";
+import {
+  BookOpen,
+  CircleHelp,
+  Code2,
+  MessageCircle,
+  Plus,
+  Trash2,
+} from "lucide-react";
+import type { Conversation } from "../../types/chat";
 import type { Workspace } from "../../stores/useChatStore";
 
 interface WorkspaceSidebarProps {
   workspace: Workspace;
   conversations: Conversation[];
   currentConversationId: string | null;
-  activeConversationPreview?: string;
-  lastMessageByConversationId: Record<string, Message | null>;
   isOpen: boolean;
   userName: string;
   avatarUrl?: string | null;
@@ -16,6 +21,7 @@ interface WorkspaceSidebarProps {
   onNewThread: () => void;
   onWorkspaceChange: (workspace: Workspace) => void;
   onSelectConversation: (id: string) => void;
+  onDeleteConversation: (id: string) => void;
 }
 
 interface WorkspaceOption {
@@ -34,8 +40,6 @@ export default function WorkspaceSidebar({
   workspace,
   conversations,
   currentConversationId,
-  activeConversationPreview,
-  lastMessageByConversationId,
   isOpen,
   userName,
   avatarUrl,
@@ -43,6 +47,7 @@ export default function WorkspaceSidebar({
   onNewThread,
   onWorkspaceChange,
   onSelectConversation,
+  onDeleteConversation,
 }: WorkspaceSidebarProps) {
   const newThreadButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -102,7 +107,11 @@ export default function WorkspaceSidebar({
                   key={option.id}
                   type="button"
                   onClick={() => {
-                    onWorkspaceChange(option.id);
+                    if (isActive) {
+                      onNewThread();
+                    } else {
+                      onWorkspaceChange(option.id);
+                    }
                     onClose();
                   }}
                   className={`inline-flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm transition ${
@@ -136,35 +145,46 @@ export default function WorkspaceSidebar({
             ) : (
               recentConversations.map((conversation) => {
                 const isActive = conversation.id === currentConversationId;
-                const preview = isActive
-                  ? activeConversationPreview ||
-                    lastMessageByConversationId[conversation.id]?.content ||
-                    "No messages yet"
-                  : lastMessageByConversationId[conversation.id]?.content ||
-                    "No messages yet";
 
                 return (
-                  <button
+                  <div
                     key={conversation.id}
-                    type="button"
                     role="listitem"
-                    onClick={() => {
-                      onSelectConversation(conversation.id);
-                      onClose();
-                    }}
-                    className={`w-full rounded-xl border px-3 py-2 text-left transition ${
+                    className={`rounded-xl border p-2 transition ${
                       isActive
                         ? "border-teal-300 bg-white dark:border-teal-400/30 dark:bg-dark-700"
                         : "border-slate-200 bg-white/80 hover:border-slate-300 dark:border-white/10 dark:bg-dark-900/30 dark:hover:border-white/20"
                     }`}
                   >
-                    <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">
-                      {conversation.title || "Untitled conversation"}
-                    </p>
-                    <p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">
-                      {preview}
-                    </p>
-                  </button>
+                    <div className="flex items-start gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onSelectConversation(conversation.id);
+                          onClose();
+                        }}
+                        className="flex-1 text-left"
+                      >
+                        <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">
+                          {conversation.title || "Untitled conversation"}
+                        </p>
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Delete ${conversation.title || "conversation"}`}
+                        onClick={() => {
+                          const shouldDelete = window.confirm(
+                            "Delete this chat? This cannot be undone.",
+                          );
+                          if (!shouldDelete) return;
+                          onDeleteConversation(conversation.id);
+                        }}
+                        className="mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-200 hover:text-red-500 dark:text-slate-500 dark:hover:bg-white/10 dark:hover:text-red-400"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
                 );
               })
             )}
