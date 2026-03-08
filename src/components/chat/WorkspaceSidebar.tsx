@@ -107,6 +107,7 @@ export default function WorkspaceSidebar({
                   key={option.id}
                   type="button"
                   onClick={() => {
+                    onNewThread();
                     onWorkspaceChange(option.id);
                     onClose();
                   }}

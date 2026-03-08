@@ -100,13 +100,6 @@ export default function ChatPage() {
     await deleteConversation(conversationId);
   };
 
-  const handleWorkspaceChange = (nextWorkspace: Workspace) => {
-    if (currentConversationId) {
-      startNewThread();
-    }
-    setWorkspace(nextWorkspace);
-  };
-
   useMessages();
 
   if (!user) {
@@ -150,7 +143,7 @@ export default function ChatPage() {
           avatarUrl={avatarUrl}
           onClose={() => setIsSidebarOpen(false)}
           onNewThread={startNewThread}
-          onWorkspaceChange={handleWorkspaceChange}
+          onWorkspaceChange={setWorkspace}
           onSelectConversation={(id) => void selectConversation(id)}
           onDeleteConversation={(id) => void handleDeleteConversation(id)}
         />
