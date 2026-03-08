@@ -106,6 +106,6 @@ export default function ExportDropdown({ topic, explanations, compact = false, m
                     ))}
                 </div>
             )}
-        </div >
+        </div>
     )
 }

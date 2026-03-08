@@ -101,7 +101,11 @@ export default function ChatPage(): JSX.Element {
   };
 
   const handleDeleteConversation = async (conversationId: string) => {
-    await deleteConversation(conversationId);
+    try {
+      await deleteConversation(conversationId);
+    } catch {
+      notifyToast("Failed to delete conversation.", "error");
+    }
   };
 
   useMessages();
