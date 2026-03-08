@@ -28,13 +28,13 @@ export default function ExportButtons({ topic, explanations }: ExportButtonsProp
                 onClick={() => handleExport('txt')}
                 className="px-4 py-2 bg-dark-600 text-gray-300 rounded-lg hover:bg-dark-500 text-sm transition-colors"
             >
-                Export .txt
+                Export as TXT
             </button>
             <button
                 onClick={() => handleExport('md')}
                 className="px-4 py-2 bg-dark-600 text-gray-300 rounded-lg hover:bg-dark-500 text-sm transition-colors"
             >
-                Export .md
+                Export as MD
             </button>
         </div>
     )

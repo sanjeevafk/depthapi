@@ -1042,6 +1042,42 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
       };
 
+      const buildHttpError = async (response: Response) => {
+        let message = "";
+        try {
+          const payload = (await response.json()) as Record<string, unknown>;
+          if (payload && typeof payload === "object") {
+            const detail = payload.detail;
+            const error = payload.error;
+            if (typeof detail === "string" && detail.trim()) {
+              message = detail.trim();
+            } else if (typeof error === "string" && error.trim()) {
+              message = error.trim();
+            }
+          }
+        } catch {
+          // ignored: non-JSON error responses
+        }
+
+        if (response.status === 429) {
+          const retryAfter = response.headers.get("retry-after");
+          const suffix = retryAfter
+            ? ` Retry after ${retryAfter} seconds.`
+            : "";
+          const err = new Error(
+            `${message || "You are sending requests too quickly."}${suffix}`,
+          ) as Error & { status?: number };
+          err.status = 429;
+          return err;
+        }
+
+        const err = new Error(
+          message || `Request failed with status ${response.status}`,
+        ) as Error & { status?: number };
+        err.status = response.status;
+        return err;
+      };
+
       const handleStreamingPayload = (
         rawPayload: unknown,
         chunkKey: "delta" | "chunk",
@@ -1109,7 +1145,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           });
 
           if (!response.ok) {
-            throw new Error(`Request failed with status ${response.status}`);
+            throw await buildHttpError(response);
           }
 
           await streamFromResponse(response, (payload) =>
@@ -1119,7 +1155,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
 
         if (!response.ok) {
-          throw new Error(`Request failed with status ${response.status}`);
+          throw await buildHttpError(response);
         }
 
         await streamFromResponse(response, (payload) =>
@@ -1136,6 +1172,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             return;
           } catch (error: any) {
             if (controller.signal.aborted) throw error;
+            if (error?.status === 429) throw error;
             if (attempt >= maxRetries) throw error;
             attempt += 1;
             const backoff =
