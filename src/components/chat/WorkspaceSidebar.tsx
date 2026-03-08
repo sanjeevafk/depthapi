@@ -107,11 +107,7 @@ export default function WorkspaceSidebar({
                   key={option.id}
                   type="button"
                   onClick={() => {
-                    if (isActive) {
-                      onNewThread();
-                    } else {
-                      onWorkspaceChange(option.id);
-                    }
+                    onWorkspaceChange(option.id);
                     onClose();
                   }}
                   className={`inline-flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm transition ${
