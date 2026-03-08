@@ -225,7 +225,16 @@ const loadPendingSyncs = (): PendingSyncEntry[] => {
   if (typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(PENDING_SYNC_KEY);
-    return raw ? (JSON.parse(raw) as PendingSyncEntry[]) : [];
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item): item is PendingSyncEntry =>
+        typeof item === "object" &&
+        item !== null &&
+        typeof item.id === "string" &&
+        typeof item.content === "string"
+    );
   } catch {
     return [];
   }
