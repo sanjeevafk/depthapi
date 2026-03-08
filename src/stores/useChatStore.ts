@@ -31,6 +31,7 @@ export type DepthLevel = (typeof DEPTH_LEVELS)[number];
 interface ChatState {
   conversations: Conversation[];
   currentConversationId: string | null;
+  isDraftThread: boolean;
   workspace: Workspace;
   depthLevel: DepthLevel;
   theme: ThemeMode;
@@ -233,7 +234,7 @@ const loadPendingSyncs = (): PendingSyncEntry[] => {
         typeof item === "object" &&
         item !== null &&
         typeof item.id === "string" &&
-        typeof item.content === "string"
+        typeof item.content === "string",
     );
   } catch {
     return [];
@@ -370,6 +371,7 @@ const buildMessageRegistry = (messages: Message[]) => {
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: [],
   currentConversationId: null,
+  isDraftThread: false,
   workspace: DEFAULT_WORKSPACE,
   depthLevel: DEFAULT_DEPTH_LEVEL,
   theme: initialTheme,
@@ -511,6 +513,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { workspace, depthLevel } = get();
     set({
       currentConversationId: null,
+      isDraftThread: true,
       currentMode: getModeForWorkspace(workspace),
       currentPromptMode: depthLevel as PromptMode,
       selectedLevel: depthLevel as Level,
@@ -568,6 +571,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   syncConversations: (conversations: Conversation[]) => {
     set((state) => {
+      if (state.isDraftThread && state.currentConversationId === null) {
+        return { conversations };
+      }
+
       const preferredId = state.currentConversationId;
       const hasPreferred = preferredId
         ? conversations.some((item) => item.id === preferredId)
@@ -593,6 +600,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return {
         conversations,
         currentConversationId: nextConversationId,
+        isDraftThread: false,
         workspace: nextWorkspaceState.workspace,
         depthLevel: nextWorkspaceState.depthLevel,
         currentMode: nextWorkspaceState.mode,
@@ -632,6 +640,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     );
     set({
       currentConversationId: id,
+      isDraftThread: false,
       messagesById: {},
       messageIds: [],
       isLoading: true,
@@ -798,7 +807,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ? requestedMode
       : requestedPromptMode;
 
-    set({ isLoading: true });
+    set({ isLoading: true, isDraftThread: false });
 
     if (!conversationId) {
       const title = truncateTitle(trimmed);

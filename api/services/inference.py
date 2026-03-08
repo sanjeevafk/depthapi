@@ -73,6 +73,16 @@ async def generate_explanation(topic: str, level: str, model: str, **kwargs) -> 
         
         return response
 
+    if mode == "socratic":
+        template = PROMPTS.get("socratic")
+        if not template:
+            raise ValueError("Unknown mode template: socratic")
+        prompt = template.format(
+            topic=topic,
+            conversation_context=kwargs.get("conversation_context", "No prior context."),
+        )
+        return await call_model(model, prompt, **kwargs)
+
     template = PROMPTS.get(level)
     if not template:
         raise ValueError(f"Unknown level: {level}")
@@ -102,6 +112,14 @@ async def generate_stream_explanation(topic: str, level: str, **kwargs):
             search_context=context,
             quote_text=quote if quote else "No specific quote found.",
             topic=topic
+        )
+    elif mode == "socratic":
+        template = PROMPTS.get("socratic")
+        if not template:
+            raise ValueError("Unknown mode template: socratic")
+        prompt = template.format(
+            topic=topic,
+            conversation_context=kwargs.get("conversation_context", "No prior context."),
         )
     else:
         template = PROMPTS.get(level)

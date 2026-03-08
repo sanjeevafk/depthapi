@@ -89,6 +89,7 @@ CHAT_MODE_ALIASES = {
 CHAT_INFERENCE_MODE_ALIASES = {
     "technical-depth": "technical_depth",
     "technical": "technical_depth",
+    "socratic": "socratic",
 }
 
 PROMPT_MODE_ALIASES = {
