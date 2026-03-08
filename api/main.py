@@ -33,9 +33,8 @@ async def lifespan(app: FastAPI):
     global redis_available
     redis_available = False
     
-    r = await get_redis()
-
     try:
+        r = await get_redis()
         await r.ping()
         if FastAPILimiter is not None:
             await FastAPILimiter.init(r)

@@ -20,8 +20,8 @@ Live demo: https://knowbear.vercel.app
   - Groq-hosted Llama variants → speed + general knowledge  
   - Gemini → multimodal context & visual intuition (when needed)  
   - Judge model selects / merges / ranks the best parts of parallel generations  
-- **Ultra-fast repeat queries** via Redis caching (Upstash)  
-- **Export formats**: .txt, .json, .md, .pdf (with clean typography)  
+- **Ultra-fast repeat queries** via Upstash Redis REST caching  
+- **Export formats**: .txt, .md  
 - **Pinned & trending topics** — discoverability without search  
 - **Authentication & Pro tier** (optional, gated features)  
 - **Dark-only, space/minimalist UI** with smooth Framer Motion animations  
@@ -63,7 +63,7 @@ KnowBear monorepo
 | GET    | `/api/health`       | Redis, model providers, auth status            | No    | No            |
 | GET    | `/api/pinned`       | Curated & trending topics                      | No    | Light         |
 | POST   | `/api/query`        | Main query endpoint — returns layered output   | Optional | Yes        |
-| POST   | `/api/export`       | Convert result to file (txt/md/pdf/json)       | No    | Yes           |
+| POST   | `/api/export`       | Convert result to file (txt/md)                | No    | Yes           |
 | GET    | `/api/usage`        | Current user quota & usage (Pro users)         | Yes   | No            |
 
 ## 🛠 Tech Stack
@@ -71,7 +71,7 @@ KnowBear monorepo
 | Layer         | Technologies                                                                 |
 |---------------|------------------------------------------------------------------------------|
 | Frontend      | React 18, TypeScript, Vite, Tailwind CSS, Framer Motion, Zustand, React Query |
-| Backend       | FastAPI, Python 3.11+, Pydantic v2, Structlog, fastapi-limiter               |
+| Backend       | FastAPI, Python 3.11+, Pydantic v2, Structlog, Upstash Redis REST             |
 | AI Inference  | Groq (Llama, DeepSeek, Qwen), Google Gemini 1.5 / 2.0 Flash                 |
 | Auth          | Supabase Auth (JWT + OAuth)                                                 |
 | Cache / Queue | Redis (Upstash)                                                             |

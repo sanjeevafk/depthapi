@@ -1,17 +1,11 @@
 import asyncio
 import io
-import json
-import base64
-import re
-import markdown
 import structlog
-from typing import Optional, Dict
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-# 2026-01: Disabled PDF export to reduce serverless package size + fix output quality issues
-# from fpdf import FPDF, HTMLMixin
 
 from auth import verify_token, check_is_pro
 from utils import FREE_LEVELS, PREMIUM_LEVELS
@@ -28,37 +22,6 @@ class ExportRequest(BaseModel):
     premium: bool = False
     mode: str = "fast"
     visuals: Optional[dict[str, str]] = None
-
-
-# 2026-01: PDF Export components temporarily disabled
-"""
-class StyledPDF(FPDF, HTMLMixin):
-    def __init__(self, topic_name: str, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.topic_name = topic_name
-
-    def header(self):
-        # Fill background for every page
-        self.set_fill_color(10, 10, 10)
-        self.rect(0, 0, 210, 297, "F")
-        
-        if self.page_no() > 1:
-            self.set_font("helvetica", "I", 8)
-            self.set_text_color(150, 150, 150)
-            self.cell(0, 10, f"KnowBear Export: {self.topic_name}", align="R")
-            self.ln(10)
-
-    def footer(self):
-        self.set_y(-15)
-        self.set_font("helvetica", "I", 8)
-        self.set_text_color(150, 150, 150)
-        self.cell(0, 10, f"Page {self.page_no()} / {{nb}}", align="C")
-
-
-def safe_latin1(text: str) -> str:
-    # Ensure text is safe for fpdf2's default helvetica font.
-    return text.encode('latin-1', 'replace').decode('latin-1')
-"""
 
 @router.post("/export")
 async def export_explanations(req: ExportRequest, auth_data: dict = Depends(verify_token)) -> StreamingResponse:

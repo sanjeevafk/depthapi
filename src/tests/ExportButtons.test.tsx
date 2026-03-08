@@ -5,13 +5,13 @@ import ExportButtons from '../components/ExportButtons'
 describe('ExportButtons', () => {
     it('renders text and markdown buttons', () => {
         render(<ExportButtons topic="Test" explanations={{}} />)
-        expect(screen.getByText(/export \.txt/i)).toBeInTheDocument()
-        expect(screen.getByText(/export \.md/i)).toBeInTheDocument()
+        expect(screen.getByText(/export as txt/i)).toBeInTheDocument()
+        expect(screen.getByText(/export as md/i)).toBeInTheDocument()
     })
 
     it('buttons are clickable', () => {
         render(<ExportButtons topic="Test" explanations={{ eli5: 'test' }} />)
-        const txtBtn = screen.getByText(/export \.txt/i)
+        const txtBtn = screen.getByText(/export as txt/i)
         expect(txtBtn).not.toBeDisabled()
     })
 })

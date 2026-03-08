@@ -1,19 +1,23 @@
 """Chat messages endpoint."""
 
 import asyncio
+import hashlib
 import json
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, cast
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from auth import verify_token, get_supabase_admin, check_is_pro
+from config import get_settings
 from logging_config import logger
+from services.cache import cache_get, cache_set
 from services.inference import generate_stream_explanation
 from services.ensemble import ensemble_generate
+from services.rate_limit import check_rate_limit
 from utils import (
     CHAT_MODES,
     CHAT_PREMIUM_MODES,
@@ -37,13 +41,39 @@ class MessageRequest(BaseModel):
     prompt_mode: Optional[str] = None
 
 
+def _message_cache_key(content: str, mode: str) -> str:
+    digest = hashlib.sha256(f"{content}{mode}".encode("utf-8")).hexdigest()
+    return f"knowbear:cache:{digest}"
+
+
 @router.post("/messages")
-async def send_message(req: MessageRequest, auth_data: dict = Depends(verify_token)):
+async def send_message(req: MessageRequest, request: Request, auth_data: dict = Depends(verify_token)):
     user = auth_data["user"]
 
     content = (req.content or "").strip()
     if not content:
         raise HTTPException(status_code=400, detail="Content is required")
+
+    settings = get_settings()
+    max_requests = max(int(getattr(settings, "message_rate_limit_max", 30)), 1)
+    window_seconds = max(int(getattr(settings, "message_rate_limit_window_seconds", 60)), 1)
+    cache_ttl_seconds = max(int(getattr(settings, "message_cache_ttl_seconds", 3600)), 1)
+
+    requester_id = f"user:{getattr(user, 'id', '')}" if getattr(user, "id", None) else ""
+    client_ip = request.client.host if request.client else "unknown"
+    rate_limit_identifier = requester_id or f"ip:{client_ip}"
+    rate_limit_result = await check_rate_limit(
+        identifier=rate_limit_identifier,
+        limit=max_requests,
+        window_seconds=window_seconds,
+    )
+    if not rate_limit_result.allowed:
+        retry_after = max(rate_limit_result.retry_after, 1)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit reached. Please wait {retry_after} seconds and try again.",
+            headers={"Retry-After": str(retry_after)},
+        )
 
     supabase = get_supabase_admin()
     if not supabase:
@@ -110,6 +140,12 @@ async def send_message(req: MessageRequest, auth_data: dict = Depends(verify_tok
         if prompt_mode in CHAT_PREMIUM_MODES and not is_pro:
             prompt_mode = DEFAULT_CHAT_MODE
     inference_mode = CHAT_INFERENCE_MODE_ALIASES.get(selected_mode, "ensemble")
+    cache_mode = f"{selected_mode}:{prompt_mode}"
+    response_cache_key = _message_cache_key(content=content, mode=cache_mode)
+    cached_payload = await cache_get(response_cache_key)
+    cached_response = cached_payload.get("response") if cached_payload else None
+    if cached_response and not isinstance(cached_response, str):
+        cached_response = str(cached_response)
 
     user_metadata = {
         "client_id": req.client_generated_id,
@@ -198,6 +234,20 @@ async def send_message(req: MessageRequest, auth_data: dict = Depends(verify_tok
                 yield f"data: {json.dumps({'assistant_message_id': assistant_message_id, 'mode': selected_mode, 'prompt_mode': prompt_mode})}\n\n"
                 sent_id = True
 
+            if cached_response:
+                logger.info(
+                    "messages_cache_hit",
+                    conversation_id=req.conversation_id,
+                    cache_key=response_cache_key,
+                )
+                full_content = cached_response
+                for i in range(0, len(cached_response), chunk_size):
+                    chunk = cached_response[i:i + chunk_size]
+                    record_chunk()
+                    yield f"data: {json.dumps({'delta': chunk})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
             if selected_mode == "ensemble":
                 ensemble_start = time.perf_counter()
                 result = await ensemble_generate(content, prompt_mode, use_premium=is_pro, mode="ensemble")
@@ -221,6 +271,13 @@ async def send_message(req: MessageRequest, auth_data: dict = Depends(verify_tok
                         payload["assistant_message_id"] = assistant_message_id
                         sent_id = True
                     yield f"data: {json.dumps(payload)}\n\n"
+
+            if full_content.strip() and not cached_response:
+                await cache_set(
+                    response_cache_key,
+                    {"response": full_content},
+                    ttl=cache_ttl_seconds,
+                )
 
             yield "data: [DONE]\n\n"
         except Exception as e:
