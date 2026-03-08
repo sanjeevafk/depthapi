@@ -54,10 +54,10 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     if not content:
         raise HTTPException(status_code=400, detail="Content is required")
 
-    settings = get_settings()
-    max_requests = max(int(getattr(settings, "message_rate_limit_max", 30)), 1)
-    window_seconds = max(int(getattr(settings, "message_rate_limit_window_seconds", 60)), 1)
-    cache_ttl_seconds = max(int(getattr(settings, "message_cache_ttl_seconds", 3600)), 1)
+    config_settings = get_settings()
+    max_requests = max(int(getattr(config_settings, "message_rate_limit_max", 30)), 1)
+    window_seconds = max(int(getattr(config_settings, "message_rate_limit_window_seconds", 60)), 1)
+    cache_ttl_seconds = max(int(getattr(config_settings, "message_cache_ttl_seconds", 3600)), 1)
 
     requester_id = f"user:{getattr(user, 'id', '')}" if getattr(user, "id", None) else ""
     client_ip = request.client.host if request.client else "unknown"
@@ -104,10 +104,10 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     if requested_prompt_mode and requested_prompt_mode not in SUPPORTED_PROMPT_MODES:
         raise HTTPException(status_code=400, detail="Unsupported prompt_mode")
 
-    settings: Dict[str, Any] = conversation.get("settings") or {}
+    conversation_settings: Dict[str, Any] = conversation.get("settings") or {}
     selected_mode: str = cast(
         str,
-        requested_mode or conversation.get("mode") or settings.get("mode") or DEFAULT_CHAT_MODE,
+        requested_mode or conversation.get("mode") or conversation_settings.get("mode") or DEFAULT_CHAT_MODE,
     )
     if selected_mode not in SUPPORTED_CHAT_MODES:
         selected_mode = DEFAULT_CHAT_MODE
@@ -119,7 +119,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     if selected_mode == "ensemble":
         raw_prompt_mode = cast(
             Optional[str],
-            requested_prompt_mode or settings.get("prompt_mode") or settings.get("mode") or conversation.get("mode"),
+            requested_prompt_mode or conversation_settings.get("prompt_mode") or conversation_settings.get("mode") or conversation.get("mode"),
         )
         if raw_prompt_mode in PROMPT_MODE_ALIASES:
             raw_prompt_mode = PROMPT_MODE_ALIASES[raw_prompt_mode]
@@ -170,7 +170,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
 
     now_iso = datetime.now(timezone.utc).isoformat()
     if selected_mode in CHAT_MODES:
-        next_settings = {**settings, "mode": selected_mode, "prompt_mode": prompt_mode}
+        next_settings = {**conversation_settings, "mode": selected_mode, "prompt_mode": prompt_mode}
         update_payload = {"mode": selected_mode, "settings": next_settings, "updated_at": now_iso}
     else:
         update_payload = {"updated_at": now_iso}

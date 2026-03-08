@@ -1,5 +1,6 @@
 """Upstash Redis REST cache service with a Redis-like async interface."""
 
+import threading
 from typing import Any
 
 import httpx
@@ -64,6 +65,7 @@ class UpstashRedisCompat:
 
 
 _client: UpstashRedisCompat | None = None
+_client_lock = threading.Lock()
 
 
 def _strip_env_quotes(value: str) -> str:
@@ -76,15 +78,19 @@ async def get_redis() -> UpstashRedisCompat:
     if _client is not None:
         return _client
 
-    settings = get_settings()
-    base_url = _strip_env_quotes(getattr(settings, "upstash_redis_rest_url", ""))
-    token = _strip_env_quotes(getattr(settings, "upstash_redis_rest_token", ""))
+    with _client_lock:
+        if _client is not None:
+            return _client
 
-    if not base_url or not token:
-        raise RuntimeError("UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are required")
+        settings = get_settings()
+        base_url = _strip_env_quotes(getattr(settings, "upstash_redis_rest_url", ""))
+        token = _strip_env_quotes(getattr(settings, "upstash_redis_rest_token", ""))
 
-    _client = UpstashRedisCompat(base_url=base_url, token=token)
-    return _client
+        if not base_url or not token:
+            raise RuntimeError("UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are required")
+
+        _client = UpstashRedisCompat(base_url=base_url, token=token)
+        return _client
 
 
 async def cache_get(key: str) -> dict[str, Any] | None:
@@ -123,6 +129,10 @@ async def cache_set(key: str, value: dict[str, Any], ttl: int | None = None) -> 
 async def close_redis() -> None:
     """Close Upstash Redis REST client."""
     global _client
-    if _client:
-        await _client.close()
-        _client = None
+    client: UpstashRedisCompat | None = None
+    with _client_lock:
+        if _client:
+            client = _client
+            _client = None
+    if client:
+        await client.close()
