@@ -89,7 +89,7 @@ const supabaseConfigured =
   Boolean(import.meta.env.VITE_SUPABASE_URL) &&
   Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY);
 const defaultIsProEnv = import.meta.env.VITE_DEFAULT_IS_PRO;
-const defaultIsPro = defaultIsProEnv ? defaultIsProEnv === "true" : true;
+const defaultIsPro = defaultIsProEnv === "true";
 const API_URL = import.meta.env.VITE_API_URL || "";
 const THEME_STORAGE_KEY = "kb_theme_v1";
 const DEFAULT_WORKSPACE: Workspace = "learn";
