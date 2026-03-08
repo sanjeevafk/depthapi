@@ -90,7 +90,7 @@ const supabaseConfigured =
   Boolean(import.meta.env.VITE_SUPABASE_URL) &&
   Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY);
 const defaultIsProEnv = import.meta.env.VITE_DEFAULT_IS_PRO;
-const defaultIsPro = defaultIsProEnv === "true";
+const defaultIsPro = defaultIsProEnv ? defaultIsProEnv === "true" : true;
 const API_URL = import.meta.env.VITE_API_URL || "";
 const THEME_STORAGE_KEY = "kb_theme_v1";
 const DEFAULT_WORKSPACE: Workspace = "learn";
@@ -512,6 +512,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   startNewThread: () => {
     const { workspace, depthLevel } = get();
+    get().abortAllStreams();
     set({
       currentConversationId: null,
       isDraftThread: true,
@@ -711,6 +712,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       (conversation) => conversation.id === id,
     );
     if (!targetConversation) return;
+    const isActiveConversation = initialState.currentConversationId === id;
+
+    if (isActiveConversation) {
+      get().abortAllStreams();
+    }
 
     if (!id.startsWith("local-") && supabaseConfigured) {
       try {
@@ -727,7 +733,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     const state = get();
-    const isActiveConversation = state.currentConversationId === id;
     const remainingConversations = state.conversations
       .filter((conversation) => conversation.id !== id)
       .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
