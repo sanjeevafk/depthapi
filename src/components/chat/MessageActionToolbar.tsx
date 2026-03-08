@@ -9,7 +9,12 @@ interface MessageActionToolbarProps {
     disabled?: boolean
 }
 
-export default function MessageActionToolbar({ content, onRegenerate, onShare, disabled }: MessageActionToolbarProps) {
+export default function MessageActionToolbar({
+    content,
+    onRegenerate,
+    onShare,
+    disabled,
+}: MessageActionToolbarProps): JSX.Element {
     const [copied, setCopied] = useState(false)
 
     const handleCopy = async () => {

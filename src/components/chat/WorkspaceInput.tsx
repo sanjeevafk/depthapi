@@ -27,7 +27,7 @@ export default function WorkspaceInput({
   workspace,
   depthLevel,
   onDepthChange,
-}: WorkspaceInputProps) {
+}: WorkspaceInputProps): JSX.Element {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sendMessage = useChatStore((state) => state.sendMessage);

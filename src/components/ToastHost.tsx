@@ -12,7 +12,7 @@ const styleByType: Record<string, string> = {
     info: 'bg-dark-700 text-white border-white/10',
 }
 
-export default function ToastHost() {
+export default function ToastHost(): JSX.Element | null {
     const [toasts, setToasts] = useState<Toast[]>([])
 
     useEffect(() => {

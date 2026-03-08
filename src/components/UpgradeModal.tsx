@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useRef } from 'react'
+import { useEffect, useId, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Lock, X } from 'lucide-react'
 import { useChatStore } from '../stores/useChatStore'
@@ -12,7 +12,12 @@ interface UpgradeModalProps {
     onUseByok?: () => void
 }
 
-export const UpgradeModal: React.FC<UpgradeModalProps> = ({ isOpen, onClose, onUpgrade, onUseByok }) => {
+export function UpgradeModal({
+    isOpen,
+    onClose,
+    onUpgrade,
+    onUseByok,
+}: UpgradeModalProps): JSX.Element {
     const currentMode = useChatStore(state => state.currentMode)
     const setMode = useChatStore(state => state.setMode)
     const isPro = useChatStore(state => state.isPro)

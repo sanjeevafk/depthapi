@@ -1,7 +1,7 @@
 import { Moon, Sun } from "lucide-react";
 import { useChatStore } from "../../stores/useChatStore";
 
-export default function ThemeToggle() {
+export default function ThemeToggle(): JSX.Element {
   const theme = useChatStore((state) => state.theme);
   const toggleTheme = useChatStore((state) => state.toggleTheme);
   const isDark = theme === "dark";

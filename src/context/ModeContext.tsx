@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react'
+import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import type { Mode } from '../types'
 
@@ -9,7 +9,7 @@ interface ModeContextType {
 
 const ModeContext = createContext<ModeContextType | undefined>(undefined)
 
-export const ModeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export function ModeProvider({ children }: { children: ReactNode }): JSX.Element {
     const [searchParams, setSearchParams] = useSearchParams()
     const [mode, setModeState] = useState<Mode>(() => {
         const urlMode = searchParams.get('mode') as Mode
@@ -43,7 +43,7 @@ export const ModeProvider: React.FC<{ children: React.ReactNode }> = ({ children
     )
 }
 
-export const useMode = () => {
+export function useMode(): ModeContextType {
     const context = useContext(ModeContext)
     if (context === undefined) {
         throw new Error('useMode must be used within a ModeProvider')

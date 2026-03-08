@@ -1,7 +1,11 @@
-import { useUsageGateContext, ActionType } from '../context/UsageGateContext';
+import {
+    useUsageGateContext,
+    type ActionType,
+    type UsageGateContextType,
+} from '../context/UsageGateContext';
 
 export type { ActionType };
 
-export const useUsageGate = () => {
+export function useUsageGate(): UsageGateContextType {
     return useUsageGateContext();
-};
+}

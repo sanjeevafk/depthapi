@@ -3,7 +3,7 @@ import { User, Crown } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useUsageGateContext } from '../context/UsageGateContext';
 
-export const NavBar = () => {
+export function NavBar(): JSX.Element {
     const { user } = useAuth();
     const { isPro } = useUsageGateContext();
 
@@ -46,4 +46,4 @@ export const NavBar = () => {
             </div>
         </div>
     );
-};
+}

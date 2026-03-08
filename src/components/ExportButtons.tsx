@@ -6,7 +6,7 @@ interface ExportButtonsProps {
     explanations: Record<string, string>
 }
 
-export default function ExportButtons({ topic, explanations }: ExportButtonsProps) {
+export default function ExportButtons({ topic, explanations }: ExportButtonsProps): JSX.Element {
     const handleExport = async (format: 'txt' | 'md') => {
         try {
             const req: ExportRequest = { topic, explanations, format }

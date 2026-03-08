@@ -1,5 +1,5 @@
 import ChatPage from './ChatPage'
 
-export default function AppPage() {
+export default function AppPage(): JSX.Element {
     return <ChatPage />
 }

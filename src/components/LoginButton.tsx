@@ -1,7 +1,10 @@
-import React from 'react';
 import { useAuth } from '../context/AuthContext';
 
-export const LoginButton: React.FC<{ className?: string }> = ({ className = '' }) => {
+interface LoginButtonProps {
+    className?: string;
+}
+
+export function LoginButton({ className = '' }: LoginButtonProps): JSX.Element | null {
     const { signInWithGoogle, user, loading } = useAuth();
 
     if (loading) return null;
@@ -26,4 +29,4 @@ export const LoginButton: React.FC<{ className?: string }> = ({ className = '' }
             <span className="tracking-wide">Sign in with Google</span>
         </button>
     );
-};
+}

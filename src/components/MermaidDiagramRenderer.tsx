@@ -18,7 +18,9 @@ mermaid.initialize({
     },
 })
 
-export default function MermaidDiagramRenderer({ code }: MermaidDiagramProps) {
+export default function MermaidDiagramRenderer({
+    code,
+}: MermaidDiagramProps): JSX.Element {
     const ref = useRef<HTMLDivElement>(null)
 
     useEffect(() => {

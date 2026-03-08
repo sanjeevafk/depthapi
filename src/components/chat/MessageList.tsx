@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef } from 'react'
+import { memo, useEffect, useRef } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -48,21 +48,20 @@ const markdownComponents = {
     },
 }
 
-export default function MessageList() {
+export default function MessageList(): JSX.Element {
     const messageIds = useChatStore(state => state.messageIds)
     const isLoading = useChatStore(state => state.isLoading)
     const scrollRef = useRef<HTMLDivElement>(null)
 
     const lastMessageId = messageIds[messageIds.length - 1]
     const lastContent = useChatStore(state => (lastMessageId ? state.messagesById[lastMessageId]?.content : undefined))
-    const lastContentValue = useMemo(() => lastContent, [lastContent])
     useEffect(() => {
         if (!scrollRef.current) return
         scrollRef.current.scrollTo({
             top: scrollRef.current.scrollHeight,
             behavior: 'smooth',
         })
-    }, [messageIds.length, lastContentValue])
+    }, [messageIds.length, lastContent])
 
     return (
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
@@ -83,7 +82,7 @@ export default function MessageList() {
     )
 }
 
-function MessageItem({ messageId }: { messageId: string }) {
+function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
     const message = useChatStore(state => state.messagesById[messageId])
     const openRegenerationModal = useChatStore(state => state.openRegenerationModal)
     const retrySync = useChatStore(state => state.retrySync)
@@ -151,7 +150,13 @@ function MessageItem({ messageId }: { messageId: string }) {
 }
 
 const MessageContent = memo(
-    function MessageContent({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
+    function MessageContent({
+        content,
+        isStreaming,
+    }: {
+        content: string;
+        isStreaming?: boolean;
+    }): JSX.Element {
         return (
             <div data-streaming={isStreaming ? 'true' : 'false'}>
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>

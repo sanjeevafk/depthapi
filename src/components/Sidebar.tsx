@@ -32,7 +32,7 @@ type HistoryItem = {
     levels?: Level[]
 }
 
-export default function Sidebar({ onSelectTopic, refreshTrigger, isOpen, onToggle }: SidebarProps) {
+export default function Sidebar({ onSelectTopic, refreshTrigger, isOpen, onToggle }: SidebarProps): JSX.Element {
     const [showDeleteModal, setShowDeleteModal] = useState(false)
     const [isDeletingAll, setIsDeletingAll] = useState(false)
     const { user, profile, signOut, signInWithGoogle } = useAuth()

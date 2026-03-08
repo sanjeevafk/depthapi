@@ -4,7 +4,7 @@ import { CheckCircle, Loader2 } from 'lucide-react';
 import { waitForPaymentConfirmation } from '../lib/payments';
 import { useAuth } from '../context/AuthContext';
 
-export default function SuccessPage() {
+export default function SuccessPage(): JSX.Element {
     const navigate = useNavigate();
     const { refreshProfile } = useAuth();
     const [status, setStatus] = useState<'verifying' | 'success' | 'error'>('verifying');

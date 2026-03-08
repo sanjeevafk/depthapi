@@ -37,7 +37,11 @@ const WORKSPACE_WELCOME: Record<
   },
 };
 
-function WorkspaceWelcomeCard({ workspace }: { workspace: Workspace }) {
+function WorkspaceWelcomeCard({
+  workspace,
+}: {
+  workspace: Workspace;
+}): JSX.Element {
   const content = WORKSPACE_WELCOME[workspace];
 
   return (
@@ -65,7 +69,7 @@ function WorkspaceWelcomeCard({ workspace }: { workspace: Workspace }) {
   );
 }
 
-export default function ChatPage() {
+export default function ChatPage(): JSX.Element {
   const { user, signInWithGoogle } = useAuth();
   const { conversations } = useConversations();
 

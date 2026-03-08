@@ -17,7 +17,7 @@ const EXPORT_LABELS: Record<string, string> = {
     copy: 'Copy Markdown'
 }
 
-export default function ExportDropdown({ topic, explanations, compact = false, mode }: ExportDropdownProps) {
+export default function ExportDropdown({ topic, explanations, compact = false, mode }: ExportDropdownProps): JSX.Element {
     const [isOpen, setIsOpen] = useState(false)
     const [loading, setLoading] = useState(false)
     const [copied, setCopied] = useState(false)
@@ -78,17 +78,20 @@ export default function ExportDropdown({ topic, explanations, compact = false, m
     }
 
     const generateMarkdown = () => {
+        const explanationEntries = Object.entries(explanations)
+        const isMultiLevel = explanationEntries.length > 1
+
         // Start with the main topic header
         let markdown = `# ${topic}\n\n`
 
         // Add a horizontal rule after title if multiple levels exist
-        if (Object.keys(explanations).length > 1) {
+        if (isMultiLevel) {
             markdown += `---\n\n`
         }
 
-        for (const [level, text] of Object.entries(explanations)) {
+        for (const [level, text] of explanationEntries) {
             // Only add ELI headers if we are in multi-level mode
-            if (Object.keys(explanations).length > 1) {
+            if (isMultiLevel) {
                 const label = level.replace('eli', 'ELI-').toUpperCase()
                 markdown += `## ${label}\n\n`
             }
@@ -96,7 +99,7 @@ export default function ExportDropdown({ topic, explanations, compact = false, m
             markdown += `${text.trim()}\n\n`
 
             // Separator between levels
-            if (Object.keys(explanations).length > 1) {
+            if (isMultiLevel) {
                 markdown += `---\n\n`
             }
         }

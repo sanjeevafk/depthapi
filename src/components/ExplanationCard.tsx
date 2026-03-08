@@ -34,7 +34,7 @@ const LEVEL_NAMES: Record<Level, string> = {
     warm80: 'Warm Mode',
 }
 
-export default function ExplanationCard({ level, content, streaming }: ExplanationCardProps) {
+export default function ExplanationCard({ level, content, streaming }: ExplanationCardProps): JSX.Element {
     const borderColor = LEVEL_COLORS[level]
 
     return (

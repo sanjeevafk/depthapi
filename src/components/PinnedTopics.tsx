@@ -5,7 +5,7 @@ interface PinnedTopicsProps {
     onSelect: (topic: string) => void
 }
 
-export default function PinnedTopics({ topics, onSelect }: PinnedTopicsProps) {
+export default function PinnedTopics({ topics, onSelect }: PinnedTopicsProps): JSX.Element {
     return (
         <section className="w-full max-w-4xl mx-auto mt-8">
             <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-widest mb-4">Popular Topics</h3>

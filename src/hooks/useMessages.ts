@@ -14,7 +14,7 @@ const mapMessage = (record: any): Message => ({
     created_at: record.created_at,
 })
 
-export const useMessages = () => {
+export function useMessages(): void {
     const currentConversationId = useChatStore(state => state.currentConversationId)
     const selectConversation = useChatStore(state => state.selectConversation)
     const addMessage = useChatStore(state => state.addMessage)
