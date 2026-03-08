@@ -48,7 +48,7 @@ export default function WorkspaceSidebar({
   onWorkspaceChange,
   onSelectConversation,
   onDeleteConversation,
-}: WorkspaceSidebarProps) {
+}: WorkspaceSidebarProps): JSX.Element {
   const newThreadButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -142,6 +142,14 @@ export default function WorkspaceSidebar({
             ) : (
               recentConversations.map((conversation) => {
                 const isActive = conversation.id === currentConversationId;
+                const conversationTitle =
+                  conversation.title || "Untitled conversation";
+                const openConversationAriaLabel = `Open ${
+                  conversation.title || "untitled conversation"
+                }`;
+                const deleteConversationAriaLabel = `Delete ${
+                  conversation.title || "conversation"
+                }`;
 
                 return (
                   <div
@@ -161,15 +169,15 @@ export default function WorkspaceSidebar({
                           onClose();
                         }}
                         className="flex-1 text-left"
-                        aria-label={`Open ${conversation.title || "untitled conversation"}`}
+                        aria-label={openConversationAriaLabel}
                       >
                         <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">
-                          {conversation.title || "Untitled conversation"}
+                          {conversationTitle}
                         </p>
                       </button>
                       <button
                         type="button"
-                        aria-label={`Delete ${conversation.title || "conversation"}`}
+                        aria-label={deleteConversationAriaLabel}
                         onClick={() => {
                           const shouldDelete = window.confirm(
                             "Delete this chat? This cannot be undone.",
