@@ -161,6 +161,7 @@ export default function WorkspaceSidebar({
                           onClose();
                         }}
                         className="flex-1 text-left"
+                        aria-label={`Open ${conversation.title || "untitled conversation"}`}
                       >
                         <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">
                           {conversation.title || "Untitled conversation"}
