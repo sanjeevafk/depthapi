@@ -67,7 +67,7 @@ function WorkspaceWelcomeCard({ workspace }: { workspace: Workspace }) {
 
 export default function ChatPage() {
   const { user, signInWithGoogle } = useAuth();
-  const { conversations, lastMessageByConversationId } = useConversations();
+  const { conversations } = useConversations();
 
   const workspace = useChatStore((state) => state.workspace);
   const depthLevel = useChatStore((state) => state.depthLevel);
@@ -81,14 +81,10 @@ export default function ChatPage() {
   const setDepthLevel = useChatStore((state) => state.setDepthLevel);
   const setIsSidebarOpen = useChatStore((state) => state.setIsSidebarOpen);
   const startNewThread = useChatStore((state) => state.startNewThread);
+  const deleteConversation = useChatStore((state) => state.deleteConversation);
 
   const upgradeModalOpen = useChatStore((state) => state.upgradeModalOpen);
   const closeUpgradeModal = useChatStore((state) => state.closeUpgradeModal);
-
-  const activeConversationPreview = useChatStore((state) => {
-    const lastId = state.messageIds[state.messageIds.length - 1];
-    return lastId ? state.messagesById[lastId]?.content : undefined;
-  });
 
   const handleUpgrade = () => {
     notifyToast("Upgrade flow coming soon.", "info");
@@ -98,6 +94,10 @@ export default function ChatPage() {
   const handleUseByok = () => {
     notifyToast("BYOK setup coming soon.", "info");
     closeUpgradeModal();
+  };
+
+  const handleDeleteConversation = async (conversationId: string) => {
+    await deleteConversation(conversationId);
   };
 
   useMessages();
@@ -138,8 +138,6 @@ export default function ChatPage() {
           workspace={workspace}
           conversations={conversations}
           currentConversationId={currentConversationId}
-          activeConversationPreview={activeConversationPreview}
-          lastMessageByConversationId={lastMessageByConversationId}
           isOpen={isSidebarOpen}
           userName={userName}
           avatarUrl={avatarUrl}
@@ -147,6 +145,7 @@ export default function ChatPage() {
           onNewThread={startNewThread}
           onWorkspaceChange={setWorkspace}
           onSelectConversation={(id) => void selectConversation(id)}
+          onDeleteConversation={(id) => void handleDeleteConversation(id)}
         />
 
         {isSidebarOpen && (

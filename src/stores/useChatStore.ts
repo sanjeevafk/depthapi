@@ -51,6 +51,7 @@ interface ChatState {
   syncConversations: (conversations: Conversation[]) => void;
   selectConversation: (id: string) => Promise<void>;
   renameConversation: (id: string, title: string) => Promise<void>;
+  deleteConversation: (id: string) => Promise<void>;
   sendMessage: (
     content: string,
     options?: {
@@ -700,6 +701,58 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (error) {
       console.error("Failed to rename conversation:", error);
     }
+  },
+
+  deleteConversation: async (id: string) => {
+    if (!id) return;
+
+    const initialState = get();
+    const targetConversation = initialState.conversations.find(
+      (conversation) => conversation.id === id,
+    );
+    if (!targetConversation) return;
+
+    if (!id.startsWith("local-") && supabaseConfigured) {
+      try {
+        const { error } = await supabase
+          .from("conversations")
+          .delete()
+          .eq("id", id);
+        if (error) throw error;
+      } catch (error) {
+        console.error("Failed to delete conversation:", error);
+        notifyError("Failed to delete conversation.");
+        return;
+      }
+    }
+
+    const state = get();
+    const isActiveConversation = state.currentConversationId === id;
+    const remainingConversations = state.conversations
+      .filter((conversation) => conversation.id !== id)
+      .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+
+    if (!isActiveConversation) {
+      set({ conversations: remainingConversations });
+      return;
+    }
+
+    if (remainingConversations.length === 0) {
+      set({ conversations: remainingConversations });
+      get().startNewThread();
+      return;
+    }
+
+    const nextConversationId = remainingConversations[0].id;
+    set({
+      conversations: remainingConversations,
+      currentConversationId: nextConversationId,
+      isDraftThread: false,
+      messagesById: {},
+      messageIds: [],
+      isLoading: false,
+    });
+    await get().selectConversation(nextConversationId);
   },
 
   addMessage: (msg: Message) => {
