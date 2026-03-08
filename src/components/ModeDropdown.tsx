@@ -28,7 +28,7 @@ const MODES: { id: Mode; label: string; description: string; icon: any; color: s
     }
 ]
 
-export default function ModeDropdown({ selected, onChange, disabled }: ModeDropdownProps) {
+export default function ModeDropdown({ selected, onChange, disabled }: ModeDropdownProps): JSX.Element {
     const [isOpen, setIsOpen] = useState(false)
     const dropdownRef = useRef<HTMLDivElement>(null)
     const { isPro, checkAction } = useUsageGate()

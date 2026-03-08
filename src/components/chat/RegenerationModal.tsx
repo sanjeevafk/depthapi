@@ -3,7 +3,7 @@ import { Lock, RefreshCcw, X } from 'lucide-react'
 import { CHAT_MODE_OPTIONS, isModeGated } from '../../lib/chatModes'
 import { useChatStore } from '../../stores/useChatStore'
 
-export default function RegenerationModal() {
+export default function RegenerationModal(): JSX.Element | null {
     const isOpen = useChatStore(state => state.regenerationModalOpen)
     const targetId = useChatStore(state => state.regenerationTargetId)
     const messageIds = useChatStore(state => state.messageIds)

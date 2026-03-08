@@ -5,7 +5,7 @@ const MermaidRenderer = lazy(() => import('./MermaidRenderer'))
 
 export type { MermaidProps }
 
-export default function Mermaid(props: MermaidProps) {
+export default function Mermaid(props: MermaidProps): JSX.Element {
     return (
         <Suspense
             fallback={

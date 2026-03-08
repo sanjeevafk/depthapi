@@ -5,16 +5,14 @@ import {
     Search,
     Cpu,
     Layers,
-    CheckCircle2,
-    Globe,
-    ShieldCheck
+    CheckCircle2
 } from 'lucide-react'
 import { LoginButton } from '../components/LoginButton'
 import { LivePreviewCard } from '../components/LivePreviewCard'
 import { useAuth } from '../context/AuthContext'
 import { useEffect } from 'react'
 
-export default function LandingPage() {
+export default function LandingPage(): JSX.Element {
     const navigate = useNavigate()
     const { user } = useAuth()
 
@@ -178,7 +176,7 @@ export default function LandingPage() {
     )
 }
 
-function FeatureCard({ icon, title, description }: { icon: any, title: string, description: string }) {
+function FeatureCard({ icon, title, description }: { icon: any, title: string, description: string }): JSX.Element {
     return (
         <motion.div
             whileHover={{ y: -5 }}
@@ -195,7 +193,7 @@ function FeatureCard({ icon, title, description }: { icon: any, title: string, d
     )
 }
 
-function CheckItem({ title, description }: { title: string, description: string }) {
+function CheckItem({ title, description }: { title: string, description: string }): JSX.Element {
     return (
         <div className="flex gap-4">
             <CheckCircle2 className="w-6 h-6 text-cyan-500 shrink-0" />

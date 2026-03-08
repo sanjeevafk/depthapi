@@ -1,6 +1,4 @@
-import React from 'react';
-
-export const SkeletonLoader: React.FC = () => {
+export function SkeletonLoader(): JSX.Element {
     return (
         <div className="w-full space-y-4 animate-pulse">
             <div className="h-8 bg-dark-700 rounded-md w-3/4 mb-6"></div>
@@ -22,9 +20,9 @@ export const SkeletonLoader: React.FC = () => {
             </div>
         </div>
     );
-};
+}
 
-export const CardSkeleton: React.FC = () => {
+export function CardSkeleton(): JSX.Element {
     return (
         <div className="bg-dark-800/50 backdrop-blur-sm border border-dark-700 rounded-2xl p-6 shadow-2xl animate-pulse">
             <div className="h-6 bg-dark-700 rounded-md w-1/3 mb-4"></div>
@@ -35,4 +33,4 @@ export const CardSkeleton: React.FC = () => {
             </div>
         </div>
     );
-};
+}

@@ -22,7 +22,7 @@ export default function MobileBottomNav({
     isSidebarOpen,
     onToggleSidebar,
     mode
-}: MobileBottomNavProps) {
+}: MobileBottomNavProps): JSX.Element | null {
     if (!hasResult && !loading) return null
 
     return (

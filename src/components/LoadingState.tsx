@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import type { Mode, Level } from '../types'
 import { Loader2, Quote } from 'lucide-react'
 
@@ -16,7 +16,7 @@ const FALLBACK_QUOTES = [
     "Live as if you were to die tomorrow. Learn as if you were to live forever. — Mahatma Gandhi"
 ]
 
-export const LoadingState: React.FC<LoadingStateProps> = ({ mode, level, topic }) => {
+export function LoadingState({ mode, level, topic }: LoadingStateProps): JSX.Element {
     const [message, setMessage] = useState('')
     const [quote, setQuote] = useState<string | null>(null)
 

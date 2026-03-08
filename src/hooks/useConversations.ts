@@ -47,7 +47,13 @@ const fetchLastMessages = async (conversationIds: string[]): Promise<Record<stri
     return next
 }
 
-export const useConversations = () => {
+interface UseConversationsResult {
+    conversations: Conversation[]
+    lastMessageByConversationId: Record<string, Message | null>
+    isLoading: boolean
+}
+
+export function useConversations(): UseConversationsResult {
     const { user } = useAuth()
     const syncConversations = useChatStore(state => state.syncConversations)
     const conversations = useChatStore(state => state.conversations)

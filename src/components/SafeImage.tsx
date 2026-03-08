@@ -5,7 +5,7 @@ interface SafeImageProps {
     alt: string
 }
 
-export default function SafeImage({ src, alt }: SafeImageProps) {
+export default function SafeImage({ src, alt }: SafeImageProps): JSX.Element {
     const [error, setError] = useState(false)
 
     if (error) {

@@ -3,7 +3,18 @@ import { useState, useEffect } from 'react';
 const GUEST_USAGE_KEY = 'guest_usage_count';
 const GUEST_LIMIT = 5;
 
-export const useGuestMode = () => {
+interface GuestModeState {
+    isGuest: true;
+    usageCount: number;
+    limit: number;
+    incrementUsage: () => void;
+    resetUsage: () => void;
+    checkLimit: () => boolean;
+    showUpgradeModal: boolean;
+    setShowUpgradeModal: (show: boolean) => void;
+}
+
+export function useGuestMode(): GuestModeState {
     const [usageCount, setUsageCount] = useState<number>(0);
     const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
@@ -49,4 +60,4 @@ export const useGuestMode = () => {
         showUpgradeModal,
         setShowUpgradeModal
     };
-};
+}

@@ -11,7 +11,9 @@ export interface MermaidProps {
     chart: string
 }
 
-export default function MermaidRenderer({ chart }: MermaidProps) {
+export default function MermaidRenderer({
+    chart,
+}: MermaidProps): JSX.Element | null {
     const ref = useRef<HTMLDivElement>(null)
     const [hasError, setHasError] = useState(false)
     const [normalizedChart, setNormalizedChart] = useState('')

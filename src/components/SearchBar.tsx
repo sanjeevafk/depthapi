@@ -11,7 +11,7 @@ interface SearchBarProps {
     value?: string
 }
 
-export default function SearchBar({ onSearch, loading, mode, onModeChange, value = '' }: SearchBarProps) {
+export default function SearchBar({ onSearch, loading, mode, onModeChange, value = '' }: SearchBarProps): JSX.Element {
     const [topic, setTopic] = useState(value)
     const [isFocused, setIsFocused] = useState(false)
     const [placeholder, setPlaceholder] = useState("What passes for knowledge...?")

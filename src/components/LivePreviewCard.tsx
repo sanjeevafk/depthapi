@@ -2,7 +2,7 @@ import { motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
 import { Sparkles, User } from 'lucide-react'
 
-export function LivePreviewCard() {
+export function LivePreviewCard(): JSX.Element {
     const [step, setStep] = useState(0) // 0: idle, 1: typing query, 2: thinking, 3: typing response, 4: done
 
     // Animation constants
@@ -127,7 +127,7 @@ export function LivePreviewCard() {
     )
 }
 
-function TypingText({ text, start, className }: { text: string, start: boolean, className?: string }) {
+function TypingText({ text, start, className }: { text: string, start: boolean, className?: string }): JSX.Element {
     const [displayed, setDisplayed] = useState("")
 
     useEffect(() => {
@@ -157,7 +157,7 @@ function TypingText({ text, start, className }: { text: string, start: boolean, 
     )
 }
 
-function ResponseLine({ tokens, delay }: { tokens: { text: string, type: 'normal' | 'highlight' }[], delay: number }) {
+function ResponseLine({ tokens, delay }: { tokens: { text: string, type: 'normal' | 'highlight' }[], delay: number }): JSX.Element | null {
     const [visible, setVisible] = useState(false)
 
     useEffect(() => {

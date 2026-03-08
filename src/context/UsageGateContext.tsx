@@ -18,7 +18,11 @@ export interface UsageGateContextType {
 
 const UsageGateContext = createContext<UsageGateContextType | undefined>(undefined);
 
-export function UsageGateProvider({ children }: { children: ReactNode }) {
+export function UsageGateProvider({
+    children,
+}: {
+    children: ReactNode;
+}): JSX.Element {
     const { user, profile } = useAuth();
     const guestMode = useGuestMode();
     const [showPremiumModal, setShowPremiumModal] = useState(false);
@@ -98,10 +102,10 @@ export function UsageGateProvider({ children }: { children: ReactNode }) {
     );
 }
 
-export const useUsageGateContext = () => {
+export function useUsageGateContext(): UsageGateContextType {
     const context = useContext(UsageGateContext);
     if (!context) {
         throw new Error('useUsageGateContext must be used within a UsageGateProvider');
     }
     return context;
-};
+}

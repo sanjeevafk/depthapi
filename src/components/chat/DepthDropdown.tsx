@@ -21,7 +21,10 @@ interface DepthDropdownProps {
   onChange: (level: DepthLevel) => void;
 }
 
-export default function DepthDropdown({ value, onChange }: DepthDropdownProps) {
+export default function DepthDropdown({
+  value,
+  onChange,
+}: DepthDropdownProps): JSX.Element {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const triggerRef = useRef<HTMLButtonElement>(null);

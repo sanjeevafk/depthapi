@@ -7,7 +7,7 @@ const LandingPage = lazy(() => import('./pages/LandingPage'))
 const AppPage = lazy(() => import('./pages/AppPage'))
 const SuccessPage = lazy(() => import('./pages/SuccessPage'))
 
-export default function App() {
+export default function App(): JSX.Element {
     return (
         <ErrorBoundary>
             <ToastHost />
