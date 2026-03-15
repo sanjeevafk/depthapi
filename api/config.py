@@ -11,9 +11,16 @@ class Settings(BaseSettings):
 
     environment: str = "development"
     groq_api_key: str = ""
+    openrouter_api_key: str = ""
+    openrouter_model: str = "qwen/qwen3.5-9b"
+    openrouter_fallback_model: str = "anthropic/claude-sonnet-4.6"
 
     kaggle_api_token: str = ""
     gemini_api_key: str = ""
+    gemini_primary_model: str = "gemini-2.5-pro"
+    gemini_fallback_model: str = "gemini-2.5-flash"
+    huggingface_model: str = ""
+    huggingface_classification_model: str = ""
     redis_url: str = "redis://localhost:6379"
     upstash_redis_rest_url: str = ""
     upstash_redis_rest_token: str = ""
