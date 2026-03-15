@@ -52,7 +52,7 @@ export const CHAT_MODE_DESCRIPTIONS: Record<ChatMode, string> = {
     eli15: 'High-school level clarity.',
     meme: 'Punchy, funny analogies.',
     learning: 'General learning with judged ensemble answers.',
-    technical: 'Technical research with search-aware judging.',
+    technical: 'Technical research with gemini-2.5-pro and deepseek-ai/DeepSeek-R1 fallback.',
     socratic: 'Guided question flow.',
 }
 
