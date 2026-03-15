@@ -25,7 +25,12 @@ Even if you're just starting with open source, this is a friendly place to learn
    ```
 
 2. **Set up the development environment** (see README Quick Start section)  
-   - Backend: `python3 -m venv .venv && source .venv/bin/activate && npm run api:install`  
+   - Backend:
+     - Create and activate virtual environment:
+       - Unix/Linux/macOS: `python3 -m venv .venv && source .venv/bin/activate`
+       - Windows (PowerShell): `python -m venv .venv && .venv\Scripts\Activate.ps1`
+       - Windows (CMD): `python -m venv .venv && .venv\Scripts\activate.bat`
+     - Install dependencies: `npm run api:install`
      - Copy `.env.example` to `.env` and fill in required values (see README for details)
    - Frontend: `pnpm install && pnpm dev`  
    - Run both in parallel and test your changes locally.
