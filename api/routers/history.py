@@ -1,11 +1,13 @@
 import asyncio
+from datetime import datetime
+from typing import List
+
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 
 from auth import verify_token, get_supabase_admin
 from pydantic import BaseModel
-from typing import List
-from datetime import datetime
-import structlog
+from utils import DEFAULT_CHAT_MODE, SUPPORTED_CHAT_MODES, normalize_mode
 
 logger = structlog.get_logger(__name__)
 
@@ -15,13 +17,13 @@ class HistoryItem(BaseModel):
     id: str
     topic: str
     levels: List[str]
-    mode: str = "fast"
+    mode: str = DEFAULT_CHAT_MODE
     created_at: datetime
 
 class HistoryCreate(BaseModel):
     topic: str
     levels: List[str]
-    mode: str = "fast"
+    mode: str = DEFAULT_CHAT_MODE
 
 @router.get("/history", response_model=List[HistoryItem])
 async def get_history(auth_data: dict = Depends(verify_token)):
@@ -36,10 +38,9 @@ async def get_history(auth_data: dict = Depends(verify_token)):
         response = await asyncio.to_thread(
             supabase.table("history").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(50).execute
         )
-        allowed_modes = {"fast", "ensemble"}
         for item in response.data:
-            if item.get("mode") not in allowed_modes:
-                item["mode"] = "fast"
+            normalized_mode = normalize_mode(item.get("mode"))
+            item["mode"] = normalized_mode if normalized_mode in SUPPORTED_CHAT_MODES else DEFAULT_CHAT_MODE
         return response.data
 
     except Exception as e:
@@ -56,8 +57,8 @@ async def add_history_item(data: HistoryCreate, auth_data: dict = Depends(verify
         raise HTTPException(status_code=500, detail="Database connection error")
         
     try:
-        allowed_modes = {"fast", "ensemble"}
-        mode = data.mode if data.mode in allowed_modes else "fast"
+        normalized_mode = normalize_mode(data.mode)
+        mode = normalized_mode if normalized_mode in SUPPORTED_CHAT_MODES else DEFAULT_CHAT_MODE
         response = await asyncio.to_thread(
             supabase.table("history").insert({
                 "user_id": user_id,

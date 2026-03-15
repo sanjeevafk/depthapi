@@ -1,55 +1,104 @@
-"""Ensemble voting and judging logic."""
+"""Ensemble generation and HuggingFace judging."""
 
 import asyncio
 import json
-import re
-from prompts import JUDGE_PROMPT, JUDGE_MODEL, FREE_MODELS, PREMIUM_MODELS, FAST_MODEL
-from services.inference import call_model, generate_explanation
+from typing import Any
+
+from prompts import (
+    JUDGE_PROMPT,
+    LEARNING_CANDIDATE_MODELS,
+    SOCRATIC_CANDIDATE_MODELS,
+    TECHNICAL_CANDIDATE_MODELS,
+)
+from services.inference import generate_explanation
+from services.model_provider import ModelProvider
+from utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE, normalize_mode
 
 
-async def ensemble_generate(topic: str, level: str, use_premium: bool = False, mode: str = "ensemble") -> str:
-    """Generate with multiple models, pick best via judge."""
-    if mode == "fast":
-        # Fast mode: single model, no judge
-        try:
-            return await generate_explanation(topic, level, FAST_MODEL, is_pro=use_premium)
-        except Exception as e:
-            raise RuntimeError(f"Fast model failed: {e}")
+def _candidate_models_for_mode(mode: str) -> list[str]:
+    normalized_mode = normalize_mode(mode)
+    if normalized_mode == TECHNICAL_MODE:
+        return TECHNICAL_CANDIDATE_MODELS
+    if normalized_mode == SOCRATIC_MODE:
+        return SOCRATIC_CANDIDATE_MODELS
+    return LEARNING_CANDIDATE_MODELS
 
-    models = PREMIUM_MODELS if use_premium else FREE_MODELS
-    tasks = [generate_explanation(topic, level, m, is_pro=use_premium) for m in models]
+
+async def ensemble_generate(topic: str, level: str, use_premium: bool = False, mode: str = LEARNING_MODE, **kwargs) -> str:
+    """Generate multiple candidates and always return the judge-selected result."""
+    del use_premium  # Legacy flag retained only for compatibility with current callers.
+
+    candidate_models = _candidate_models_for_mode(mode)
+    tasks = [
+        generate_explanation(
+            topic,
+            level,
+            model_name,
+            mode=normalize_mode(mode),
+            **kwargs,
+        )
+        for model_name in candidate_models
+    ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    valid = [(i, r) for i, r in enumerate(results) if isinstance(r, str) and r]
+    valid = [result for result in results if isinstance(result, str) and result.strip()]
     if not valid:
-        errors = [str(r) for r in results]
-        raise RuntimeError(f"All models failed. Errors: {errors}")
-    if len(valid) == 1:
-        return valid[0][1]
-    return await judge_responses(topic, [r for _, r in valid])
+        errors = [str(result) for result in results]
+        raise RuntimeError(f"All candidate providers failed. Errors: {errors}")
+
+    return await judge_responses(topic, valid, mode=mode)
 
 
-async def judge_responses(topic: str, responses: list[str]) -> str:
-    """Use judge model to pick best response."""
-    # Give judge more context - 1500 chars from each response
-    resp_text = "\n".join(f"[{i}]: {r[:1500]}" for i, r in enumerate(responses))
-    prompt = JUDGE_PROMPT.format(topic=topic, responses=resp_text)
+async def ensemble_stream_generate(
+    topic: str,
+    level: str,
+    mode: str = LEARNING_MODE,
+    chunk_size: int = 400,
+    **kwargs,
+):
+    """Chunk the final judged answer for SSE routes."""
+    result = await ensemble_generate(topic, level, mode=mode, **kwargs)
+    for index in range(0, len(result), chunk_size):
+        yield result[index : index + chunk_size]
+
+
+async def judge_responses(topic: str, responses: list[str], mode: str = LEARNING_MODE) -> str:
+    """Use the HuggingFace judge model to select or synthesize the final response."""
+    response_preview = "\n".join(f"[{index}]: {response[:2000]}" for index, response in enumerate(responses))
+    prompt = JUDGE_PROMPT.format(topic=topic, responses=response_preview)
+
+    provider = ModelProvider.get_instance()
+    raw_result = await provider.judge_candidates(prompt)
+
     try:
-        # Increase tokens for reason
-        result = await call_model(JUDGE_MODEL, prompt, max_tokens=200)
-        match = re.search(r'"best"\s*:\s*(\d+)', result)
-        idx = int(match.group(1)) if match else 0
-        return responses[min(idx, len(responses) - 1)]
+        parsed = _extract_json(raw_result)
     except Exception:
         return responses[0]
 
+    final_response = str(parsed.get("final_response", "")).strip()
+    if final_response:
+        return final_response
 
-async def generate_all_levels(topic: str, levels: list[str], premium: bool = False) -> dict[str, str]:
-    """Generate explanations for all levels in parallel."""
-    tasks = {lvl: ensemble_generate(topic, lvl, premium) for lvl in levels}
-    results = {}
-    for lvl, task in tasks.items():
+    best_index = int(parsed.get("best_index", 0))
+    return responses[min(max(best_index, 0), len(responses) - 1)]
+
+
+def _extract_json(raw_result: str) -> dict[str, Any]:
+    """Handle plain JSON and fenced JSON emitted by the judge model."""
+    cleaned = raw_result.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        cleaned = cleaned.replace("json\n", "", 1)
+    return json.loads(cleaned)
+
+
+async def generate_all_levels(topic: str, levels: list[str], premium: bool = False, mode: str = LEARNING_MODE) -> dict[str, str]:
+    """Generate judged answers for all requested levels."""
+    del premium
+    tasks = {level: ensemble_generate(topic, level, mode=mode) for level in levels}
+    results: dict[str, str] = {}
+    for level, task in tasks.items():
         try:
-            results[lvl] = await task
-        except Exception as e:
-            results[lvl] = f"Error: {str(e)}"
+            results[level] = await task
+        except Exception as exc:
+            results[level] = f"Error: {exc}"
     return results

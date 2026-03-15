@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import main as main_app
+import api.main as api_main_app
 import config as config_module
 import auth as auth_module
 import services.cache as cache_module
@@ -109,8 +110,8 @@ def test_settings():
         gemini_api_key="",
         gemini_primary_model="gemini-2.5-pro",
         gemini_fallback_model="gemini-2.5-flash",
-        huggingface_model="",
-        huggingface_classification_model="",
+        huggingface_fallback_model="deepseek-ai/DeepSeek-V3.2",
+        huggingface_judge_model="Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled",
         openrouter_api_key="",
         openrouter_model="qwen/qwen3.5-9b",
         openrouter_fallback_model="anthropic/claude-sonnet-4.6",
@@ -135,7 +136,9 @@ def test_settings():
 @pytest.fixture(autouse=True)
 def patch_settings(monkeypatch, test_settings):
     monkeypatch.setattr(config_module, "get_settings", lambda: test_settings)
-    monkeypatch.setattr(main_app, "get_settings", lambda: test_settings)
+    if hasattr(main_app, "get_settings"):
+        monkeypatch.setattr(main_app, "get_settings", lambda: test_settings)
+    monkeypatch.setattr(api_main_app, "get_settings", lambda: test_settings)
     monkeypatch.setattr(cache_module, "get_settings", lambda: test_settings)
     monkeypatch.setattr(auth_module, "get_settings", lambda: test_settings)
     monkeypatch.setattr(model_provider_module, "get_settings", lambda: test_settings)
@@ -150,14 +153,19 @@ def dummy_redis():
 
 @pytest.fixture
 def app_client(monkeypatch, dummy_redis):
+    async def _noop_close():
+        return None
+
     monkeypatch.setattr(cache_module, "get_redis", lambda: dummy_redis)
-    monkeypatch.setattr(main_app, "FastAPILimiter", DummyLimiter)
+    monkeypatch.setattr(api_main_app, "get_redis", lambda: dummy_redis)
+    monkeypatch.setattr(api_main_app, "close_redis", _noop_close)
+    monkeypatch.setattr(api_main_app, "FastAPILimiter", DummyLimiter)
     monkeypatch.setattr(
         model_provider_module.ModelProvider,
         "get_instance",
         classmethod(lambda cls: DummyProvider())
     )
-    main_app.redis_available = True
+    setattr(api_main_app, "redis_available", False)
     main_app.app.dependency_overrides = {}
     with TestClient(main_app.app) as client:
         yield client

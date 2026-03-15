@@ -49,6 +49,19 @@ class SearchManager:
 
         return content if content else "No external context found."
 
+    async def get_structured_search_context(self, query: str) -> Dict[str, Any]:
+        """Return a structured payload suitable for prompt injection in technical mode."""
+        content = await self.get_search_context(query)
+        return {
+            "query": query,
+            "provider_keys_present": {
+                "tavily": bool(settings.tavily_api_key),
+                "serper": bool(settings.serper_api_key),
+                "exa": bool(settings.exa_api_key),
+            },
+            "context": content,
+        }
+
     def _select_provider(self, query: str) -> str:
         # Check for visual keywords - favor Serper
         if any(keyword in query.lower() for keyword in self.visual_keywords):

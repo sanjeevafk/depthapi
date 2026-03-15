@@ -1,14 +1,43 @@
-"""Input validation and sanitization utilities."""
+"""Input validation and mode normalization utilities."""
 
-import re
 import html
 import json
-import os
 import logging
+import os
+import re
 
 MAX_TOPIC_LENGTH = 200
 ALLOWED_PATTERN = re.compile(r"^[\w\s\-.,!?'\"()]+$", re.UNICODE)
 _logger = logging.getLogger(__name__)
+
+LEARNING_MODE = "learning"
+TECHNICAL_MODE = "technical"
+SOCRATIC_MODE = "socratic"
+
+FREE_LEVELS = ["eli5", "eli10", "eli12", "eli15", "meme"]
+PREMIUM_LEVELS: list[str] = []
+PROMPT_LEVELS = FREE_LEVELS
+
+MODE_ALIASES = {
+    "fast": LEARNING_MODE,
+    "default": LEARNING_MODE,
+    "balanced": LEARNING_MODE,
+    "ensemble": LEARNING_MODE,
+    "technical-depth": TECHNICAL_MODE,
+    "technical_depth": TECHNICAL_MODE,
+    "technical": TECHNICAL_MODE,
+    "learn": LEARNING_MODE,
+    "learning": LEARNING_MODE,
+    "socratic": SOCRATIC_MODE,
+}
+
+_DEFAULT_CHAT_MODE_DATA = {
+    "chat_modes": [LEARNING_MODE, TECHNICAL_MODE, SOCRATIC_MODE],
+    "free_modes": [LEARNING_MODE, SOCRATIC_MODE],
+    "pro_modes": [TECHNICAL_MODE],
+    "prompt_modes": PROMPT_LEVELS,
+    "legacy_modes": [],
+}
 
 
 def sanitize_topic(topic: str) -> str:
@@ -23,34 +52,20 @@ def sanitize_topic(topic: str) -> str:
     return html.escape(topic)
 
 
-def topic_cache_key(topic: str, level: str) -> str:
-    """Generate cache key for topic+level."""
+def topic_cache_key(topic: str, level: str, mode: str | None = None) -> str:
+    """Generate cache key for topic+level, optionally scoping by mode."""
     safe = re.sub(r"\W+", "_", topic.lower().strip()).strip("_")[:50]
-    return f"knowbear:{safe}:{level}"
+    return f"knowbear:{safe}:{mode}:{level}" if mode else f"knowbear:{safe}:{level}"
 
 
-FREE_LEVELS = ["eli5", "eli10", "eli12", "eli15", "meme"]
-PREMIUM_LEVELS = ["classic60", "gentle70", "warm80"]
+def normalize_mode(mode: str | None) -> str:
+    normalized = (mode or "").strip().lower()
+    return MODE_ALIASES.get(normalized, LEARNING_MODE)
 
-_DEFAULT_CHAT_MODE_DATA = {
-    "chat_modes": [
-        "eli5",
-        "eli10",
-        "eli12",
-        "eli15",
-        "meme",
-        "classic60",
-        "gentle70",
-        "warm80",
-        "ensemble",
-        "technical-depth",
-        "socratic",
-    ],
-    "free_modes": ["eli5", "eli10", "eli12", "eli15", "meme", "ensemble", "technical-depth", "socratic"],
-    "pro_modes": ["classic60", "gentle70", "warm80"],
-    "prompt_modes": ["eli5", "eli10", "eli12", "eli15", "meme", "classic60", "gentle70", "warm80"],
-    "legacy_modes": ["technical", "meme-style"],
-}
+
+def normalize_prompt_level(level: str | None) -> str:
+    normalized = (level or "").strip().lower()
+    return normalized if normalized in PROMPT_LEVELS else "eli15"
 
 
 def _load_chat_modes():
@@ -73,25 +88,16 @@ CHAT_PREMIUM_MODES = _CHAT_MODE_DATA.get("pro_modes") or []
 CHAT_PROMPT_MODES = _CHAT_MODE_DATA.get("prompt_modes") or []
 CHAT_LEGACY_MODES = _CHAT_MODE_DATA.get("legacy_modes") or []
 
-SUPPORTED_CHAT_MODES = set(CHAT_MODES + CHAT_LEGACY_MODES)
-SUPPORTED_PROMPT_MODES = set(CHAT_PROMPT_MODES + ["meme-style"])
-DEFAULT_CHAT_MODE = "eli5"
+SUPPORTED_CHAT_MODES = set(CHAT_MODES)
+SUPPORTED_PROMPT_MODES = set(CHAT_PROMPT_MODES)
+DEFAULT_CHAT_MODE = LEARNING_MODE
 
-CHAT_MODE_ALIASES = {
-    "meme-style": "meme",
-    "meme": "meme",
-    "ensemble": "eli15",
-    "technical-depth": "eli15",
-    "technical": "eli15",
-    "socratic": "socratic",
-}
-
+CHAT_MODE_ALIASES = MODE_ALIASES.copy()
 CHAT_INFERENCE_MODE_ALIASES = {
-    "technical-depth": "technical_depth",
-    "technical": "technical_depth",
-    "socratic": "socratic",
+    LEARNING_MODE: LEARNING_MODE,
+    TECHNICAL_MODE: TECHNICAL_MODE,
+    SOCRATIC_MODE: SOCRATIC_MODE,
 }
-
 PROMPT_MODE_ALIASES = {
     "meme-style": "meme",
 }

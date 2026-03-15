@@ -11,22 +11,19 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from auth import verify_token, get_supabase_admin, check_is_pro
+from auth import check_is_pro, get_supabase_admin, verify_token
 from config import get_settings
 from logging_config import logger
 from services.cache import cache_get, cache_set
-from services.inference import generate_stream_explanation
-from services.ensemble import ensemble_generate
+from services.ensemble import ensemble_stream_generate
 from services.rate_limit import check_rate_limit
 from utils import (
-    CHAT_MODES,
-    CHAT_PREMIUM_MODES,
-    CHAT_PROMPT_MODES,
-    SUPPORTED_CHAT_MODES,
-    SUPPORTED_PROMPT_MODES,
     DEFAULT_CHAT_MODE,
-    CHAT_INFERENCE_MODE_ALIASES,
     PROMPT_MODE_ALIASES,
+    SUPPORTED_PROMPT_MODES,
+    TECHNICAL_MODE,
+    normalize_mode,
+    normalize_prompt_level,
 )
 
 router = APIRouter(tags=["messages"])
@@ -41,15 +38,14 @@ class MessageRequest(BaseModel):
     prompt_mode: Optional[str] = None
 
 
-def _message_cache_key(content: str, mode: str) -> str:
-    digest = hashlib.sha256(f"{content}{mode}".encode("utf-8")).hexdigest()
+def _message_cache_key(content: str, mode: str, prompt_mode: str) -> str:
+    digest = hashlib.sha256(f"{content}{mode}{prompt_mode}".encode("utf-8")).hexdigest()
     return f"knowbear:cache:{digest}"
 
 
 @router.post("/messages")
 async def send_message(req: MessageRequest, request: Request, auth_data: dict = Depends(verify_token)):
     user = auth_data["user"]
-
     content = (req.content or "").strip()
     if not content:
         raise HTTPException(status_code=400, detail="Content is required")
@@ -93,56 +89,28 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         conversation = cast(Dict[str, Any], conversation_resp.data)
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error("messages_conversation_fetch_failed", error=str(e), conversation_id=req.conversation_id)
-        raise HTTPException(status_code=500, detail="Failed to load conversation")
+    except Exception as exc:
+        logger.error("messages_conversation_fetch_failed", error=str(exc), conversation_id=req.conversation_id)
+        raise HTTPException(status_code=500, detail="Failed to load conversation") from exc
 
-    requested_mode = req.mode
-    requested_prompt_mode = req.prompt_mode
-    if requested_mode and requested_mode not in SUPPORTED_CHAT_MODES:
-        raise HTTPException(status_code=400, detail="Unsupported mode")
-    if requested_prompt_mode and requested_prompt_mode not in SUPPORTED_PROMPT_MODES:
-        raise HTTPException(status_code=400, detail="Unsupported prompt_mode")
-
-    conversation_settings: Dict[str, Any] = conversation.get("settings") or {}
-    selected_mode: str = cast(
-        str,
-        requested_mode or conversation.get("mode") or conversation_settings.get("mode") or DEFAULT_CHAT_MODE,
-    )
-    if selected_mode not in SUPPORTED_CHAT_MODES:
+    selected_mode = normalize_mode(req.mode or conversation.get("mode") or conversation.get("settings", {}).get("mode"))
+    if selected_mode not in {DEFAULT_CHAT_MODE, "technical", "socratic"}:
         selected_mode = DEFAULT_CHAT_MODE
+
+    requested_prompt_mode = PROMPT_MODE_ALIASES.get(req.prompt_mode or "", req.prompt_mode or "")
+    stored_prompt_mode = PROMPT_MODE_ALIASES.get(
+        cast(str, (conversation.get("settings") or {}).get("prompt_mode") or ""),
+        cast(str, (conversation.get("settings") or {}).get("prompt_mode") or ""),
+    )
+    prompt_mode = normalize_prompt_level(requested_prompt_mode or stored_prompt_mode)
+    if prompt_mode not in SUPPORTED_PROMPT_MODES:
+        prompt_mode = normalize_prompt_level(None)
 
     is_pro = await check_is_pro(user.id)
-    if selected_mode in CHAT_PREMIUM_MODES and not is_pro:
+    if selected_mode == TECHNICAL_MODE and not is_pro:
         selected_mode = DEFAULT_CHAT_MODE
-
-    if selected_mode == "ensemble":
-        raw_prompt_mode = cast(
-            Optional[str],
-            requested_prompt_mode or conversation_settings.get("prompt_mode") or conversation_settings.get("mode") or conversation.get("mode"),
-        )
-        if raw_prompt_mode in PROMPT_MODE_ALIASES:
-            raw_prompt_mode = PROMPT_MODE_ALIASES[raw_prompt_mode]
-        if raw_prompt_mode in CHAT_PROMPT_MODES:
-            prompt_mode = cast(str, raw_prompt_mode)
-        else:
-            prompt_mode = DEFAULT_CHAT_MODE
-        if prompt_mode in CHAT_PREMIUM_MODES and not is_pro:
-            prompt_mode = DEFAULT_CHAT_MODE
-    else:
-        raw_prompt_mode = cast(Optional[str], requested_prompt_mode or selected_mode)
-        if raw_prompt_mode in PROMPT_MODE_ALIASES:
-            raw_prompt_mode = PROMPT_MODE_ALIASES[raw_prompt_mode]
-        if raw_prompt_mode in CHAT_PROMPT_MODES:
-            prompt_mode = cast(str, raw_prompt_mode)
-        else:
-            prompt_mode = DEFAULT_CHAT_MODE
-        if prompt_mode in CHAT_PREMIUM_MODES and not is_pro:
-            prompt_mode = DEFAULT_CHAT_MODE
-    inference_mode = CHAT_INFERENCE_MODE_ALIASES.get(selected_mode, "ensemble")
-    cache_mode = f"{selected_mode}:{prompt_mode}"
-    response_cache_key = _message_cache_key(content=content, mode=cache_mode)
-    cached_payload = await cache_get(response_cache_key)
+    cache_key = _message_cache_key(content=content, mode=selected_mode, prompt_mode=prompt_mode)
+    cached_payload = await cache_get(cache_key)
     cached_response = cached_payload.get("response") if cached_payload else None
     if cached_response and not isinstance(cached_response, str):
         cached_response = str(cached_response)
@@ -155,35 +123,33 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
 
     try:
         await asyncio.to_thread(
-            supabase.table("messages").insert(
+            supabase.table("messages")
+            .insert(
                 {
                     "conversation_id": conversation.get("id"),
                     "role": "user",
                     "content": content,
                     "metadata": user_metadata,
                 }
-            ).execute
-        )
-    except Exception as e:
-        logger.error("messages_user_insert_failed", error=str(e), conversation_id=req.conversation_id)
-        raise HTTPException(status_code=500, detail="Failed to save user message")
-
-    now_iso = datetime.now(timezone.utc).isoformat()
-    if selected_mode in CHAT_MODES:
-        next_settings = {**conversation_settings, "mode": selected_mode, "prompt_mode": prompt_mode}
-        update_payload = {"mode": selected_mode, "settings": next_settings, "updated_at": now_iso}
-    else:
-        update_payload = {"updated_at": now_iso}
-
-    try:
-        await asyncio.to_thread(
-            supabase.table("conversations")
-            .update(update_payload)
-            .eq("id", conversation.get("id"))
+            )
             .execute
         )
-    except Exception as e:
-        logger.warning("messages_conversation_update_failed", error=str(e), conversation_id=req.conversation_id)
+    except Exception as exc:
+        logger.error("messages_user_insert_failed", error=str(exc), conversation_id=req.conversation_id)
+        raise HTTPException(status_code=500, detail="Failed to save user message") from exc
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    update_payload = {
+        "mode": selected_mode,
+        "settings": {**(conversation.get("settings") or {}), "mode": selected_mode, "prompt_mode": prompt_mode},
+        "updated_at": now_iso,
+    }
+    try:
+        await asyncio.to_thread(
+            supabase.table("conversations").update(update_payload).eq("id", conversation.get("id")).execute
+        )
+    except Exception as exc:
+        logger.warning("messages_conversation_update_failed", error=str(exc), conversation_id=req.conversation_id)
 
     assistant_metadata = {
         "assistant_client_id": req.assistant_client_id,
@@ -193,20 +159,22 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
 
     try:
         assistant_resp = await asyncio.to_thread(
-            supabase.table("messages").insert(
+            supabase.table("messages")
+            .insert(
                 {
                     "conversation_id": conversation.get("id"),
                     "role": "assistant",
                     "content": "",
                     "metadata": assistant_metadata,
                 }
-            ).execute
+            )
+            .execute
         )
         assistant_data = cast(list[Dict[str, Any]], assistant_resp.data) if assistant_resp.data else []
         assistant_message_id = assistant_data[0]["id"] if assistant_data else None
-    except Exception as e:
-        logger.error("messages_assistant_insert_failed", error=str(e), conversation_id=req.conversation_id)
-        raise HTTPException(status_code=500, detail="Failed to start assistant message")
+    except Exception as exc:
+        logger.error("messages_assistant_insert_failed", error=str(exc), conversation_id=req.conversation_id)
+        raise HTTPException(status_code=500, detail="Failed to start assistant message") from exc
 
     async def event_generator():
         start_time = time.perf_counter()
@@ -235,53 +203,37 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 sent_id = True
 
             if cached_response:
-                logger.info(
-                    "messages_cache_hit",
-                    conversation_id=req.conversation_id,
-                    cache_key=response_cache_key,
-                )
+                logger.info("messages_cache_hit", conversation_id=req.conversation_id, cache_key=cache_key)
                 full_content = cached_response
-                for i in range(0, len(cached_response), chunk_size):
-                    chunk = cached_response[i:i + chunk_size]
+                for index in range(0, len(cached_response), chunk_size):
+                    chunk = cached_response[index : index + chunk_size]
                     record_chunk()
                     yield f"data: {json.dumps({'delta': chunk})}\n\n"
                 yield "data: [DONE]\n\n"
                 return
 
-            if selected_mode == "ensemble":
-                ensemble_start = time.perf_counter()
-                result = await ensemble_generate(content, prompt_mode, use_premium=is_pro, mode="ensemble")
-                ensemble_ms = (time.perf_counter() - ensemble_start) * 1000
-                full_content = result
-                for i in range(0, len(result), chunk_size):
-                    chunk = result[i:i + chunk_size]
-                    record_chunk()
-                    yield f"data: {json.dumps({'delta': chunk})}\n\n"
-            else:
-                async for chunk in generate_stream_explanation(
-                    topic=content,
-                    level=prompt_mode,
-                    mode=inference_mode,
-                    is_pro=is_pro,
-                ):
-                    full_content += chunk
-                    record_chunk()
-                    payload = {"delta": chunk}
-                    if not sent_id and assistant_message_id:
-                        payload["assistant_message_id"] = assistant_message_id
-                        sent_id = True
-                    yield f"data: {json.dumps(payload)}\n\n"
+            ensemble_start = time.perf_counter()
+            async for chunk in ensemble_stream_generate(
+                content,
+                prompt_mode,
+                mode=selected_mode,
+                use_premium=is_pro,
+            ):
+                full_content += chunk
+                record_chunk()
+                payload = {"delta": chunk}
+                if not sent_id and assistant_message_id:
+                    payload["assistant_message_id"] = assistant_message_id
+                    sent_id = True
+                yield f"data: {json.dumps(payload)}\n\n"
+            ensemble_ms = (time.perf_counter() - ensemble_start) * 1000
 
-            if full_content.strip() and not cached_response:
-                await cache_set(
-                    response_cache_key,
-                    {"response": full_content},
-                    ttl=cache_ttl_seconds,
-                )
+            if full_content.strip():
+                await cache_set(cache_key, {"response": full_content}, ttl=cache_ttl_seconds)
 
             yield "data: [DONE]\n\n"
-        except Exception as e:
-            logger.error("messages_stream_failed", error=str(e), conversation_id=req.conversation_id)
+        except Exception as exc:
+            logger.error("messages_stream_failed", error=str(exc), conversation_id=req.conversation_id)
             yield f"data: {json.dumps({'error': 'Streaming failed'})}\n\n"
             yield "data: [DONE]\n\n"
         finally:
@@ -301,24 +253,18 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 content_chars=len(full_content),
                 is_pro=is_pro,
                 ensemble_ms=round(ensemble_ms, 2) if ensemble_ms is not None else None,
-                streaming=selected_mode != "ensemble",
+                streaming=True,
             )
             if assistant_message_id:
                 try:
                     await asyncio.to_thread(
-                        supabase.table("messages")
-                        .update({"content": full_content})
-                        .eq("id", assistant_message_id)
-                        .execute
+                        supabase.table("messages").update({"content": full_content}).eq("id", assistant_message_id).execute
                     )
-                except Exception as e:
-                    logger.error("messages_assistant_update_failed", error=str(e), message_id=assistant_message_id)
+                except Exception as exc:
+                    logger.error("messages_assistant_update_failed", error=str(exc), message_id=assistant_message_id)
 
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-        },
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
     )

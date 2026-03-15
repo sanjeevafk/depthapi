@@ -144,7 +144,7 @@ async def test_technical_mode_prefers_gemini(monkeypatch):
     monkeypatch.setattr(provider, "_call_openrouter", fail_other)
     monkeypatch.setattr(provider, "_call_huggingface", fail_other)
 
-    result = await provider.route_inference("prompt", mode="technical_depth")
+    result = await provider.route_inference("prompt", mode="technical")
 
     assert result["provider"] == GEMINI_PROVIDER
     assert calls == [GEMINI_PROVIDER]
