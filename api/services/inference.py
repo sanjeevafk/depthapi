@@ -92,7 +92,7 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
     return await call_model(model, prompt, **kwargs)
 
 
-async def generate_stream_explanation(topic: str, level: str, **kwargs):
+async def generate_stream_explanation(topic: str, level: str, model: str | None = None, **kwargs):
     """Stream explanation for topic at given level."""
     from services.model_provider import ModelProvider
     mode = normalize_mode(kwargs.get("mode", LEARNING_MODE))

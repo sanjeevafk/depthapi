@@ -64,15 +64,13 @@ async def judge_responses(topic: str, responses: list[str], mode: str = LEARNING
 
     try:
         parsed = _extract_json(raw_result)
+        final_response = str(parsed.get("final_response", "")).strip()
+        if final_response:
+            return final_response
+        best_index = int(parsed.get("best_index", 0))
+        return responses[min(max(best_index, 0), len(responses) - 1)]
     except Exception:
         return responses[0]
-
-    final_response = str(parsed.get("final_response", "")).strip()
-    if final_response:
-        return final_response
-
-    best_index = int(parsed.get("best_index", 0))
-    return responses[min(max(best_index, 0), len(responses) - 1)]
 
 
 def _extract_json(raw_result: str) -> dict[str, Any]:
@@ -87,11 +85,13 @@ def _extract_json(raw_result: str) -> dict[str, Any]:
 async def generate_all_levels(topic: str, levels: list[str], premium: bool = False, mode: str = LEARNING_MODE) -> dict[str, str]:
     """Generate judged answers for all requested levels."""
     del premium
-    tasks = {level: ensemble_generate(topic, level, mode=mode) for level in levels}
-    results: dict[str, str] = {}
-    for level, task in tasks.items():
+    async def _generate_for_level(level: str) -> tuple[str, str]:
         try:
-            results[level] = await task
+            result = await ensemble_generate(topic, level, mode=mode)
+            return level, result
         except Exception as exc:
-            results[level] = f"Error: {exc}"
-    return results
+            return level, f"Error: {exc}"
+
+    tasks = [_generate_for_level(level) for level in levels]
+    completed = await asyncio.gather(*tasks)
+    return dict(completed)

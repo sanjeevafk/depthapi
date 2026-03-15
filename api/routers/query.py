@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from collections.abc import AsyncIterable, AsyncIterator, Iterable
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -53,6 +54,15 @@ def _normalize_levels(levels: list[str]) -> list[str]:
 
 def _cache_key(topic: str, level: str, mode: str) -> str:
     return topic_cache_key(topic, level, mode=normalize_mode(mode))
+
+
+async def _stream_chunks(stream: AsyncIterable[str] | Iterable[str]) -> AsyncIterator[str]:
+    if isinstance(stream, AsyncIterable):
+        async for chunk in stream:
+            yield chunk
+    else:
+        for chunk in stream:
+            yield chunk
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -126,7 +136,7 @@ async def query_topic(req: QueryRequest, auth_data: dict = Depends(verify_token_
             explanations[level] = result
             await cache_set(_cache_key(topic, level, mode), {"text": result})
         else:
-            explanations[level] = f"Error generating {level}: {result}"
+            explanations[level] = f"Error generating {level}: Please try again."
             logger.error("query_generation_failed", level=level, error=str(result), mode=mode)
 
     if auth_data:
@@ -174,7 +184,7 @@ async def query_topic_stream(req: QueryRequest, auth_data: dict = Depends(verify
                         asyncio.create_task(save_to_history(auth_data["user"], topic, [level], mode))
                     return
 
-            generator = (
+            stream = (
                 ensemble_stream_generate(
                     topic,
                     level,
@@ -192,7 +202,7 @@ async def query_topic_stream(req: QueryRequest, auth_data: dict = Depends(verify
                     regenerate=req.regenerate,
                 )
             )
-            async for chunk in generator:
+            async for chunk in _stream_chunks(stream):
                 full_content += chunk
                 yield f"data: {json.dumps({'chunk': chunk})}\n\n"
 
@@ -204,7 +214,7 @@ async def query_topic_stream(req: QueryRequest, auth_data: dict = Depends(verify
                 asyncio.create_task(save_to_history(auth_data["user"], topic, [level], mode))
         except Exception as exc:
             logger.error("streaming_failed", error=str(exc), topic=topic, mode=mode)
-            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            yield f"data: {json.dumps({'error': 'An error occurred while streaming. Please try again.'})}\n\n"
             yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
@@ -219,26 +229,41 @@ async def save_to_history(user, topic: str, levels: list[str], mode: str):
             logger.error("save_to_history_task_no_supabase_admin")
             return
 
-        existing = await asyncio.to_thread(
-            supabase.table("history").select("id, levels").eq("user_id", user.id).eq("topic", topic).execute
-        )
+        def _fetch_existing():
+            return (
+                supabase.table("history")
+                .select("id, levels")
+                .eq("user_id", user.id)
+                .eq("topic", topic)
+                .execute()
+            )
+
+        existing = await asyncio.to_thread(_fetch_existing)
+
         normalized_mode = normalize_mode(mode)
 
-        if existing.data:
-            item_id = existing.data[0]["id"]
-            existing_levels = set(existing.data[0]["levels"])
+        data = getattr(existing, "data", None)
+        if isinstance(data, list) and data and isinstance(data[0], dict):
+            item_id = data[0].get("id")
+            existing_levels = set(data[0].get("levels", []))
             new_levels = list(existing_levels.union(set(levels)))
-            await asyncio.to_thread(
-                supabase.table("history")
-                .update({"levels": new_levels, "mode": normalized_mode, "created_at": "now()"})
-                .eq("id", item_id)
-                .execute
-            )
+            def _update_existing():
+                return (
+                    supabase.table("history")
+                    .update({"levels": new_levels, "mode": normalized_mode})
+                    .eq("id", item_id)
+                    .execute()
+                )
+
+            await asyncio.to_thread(_update_existing)
         else:
-            await asyncio.to_thread(
-                supabase.table("history")
-                .insert({"user_id": user.id, "topic": topic, "levels": levels, "mode": normalized_mode})
-                .execute
-            )
+            def _insert_new():
+                return (
+                    supabase.table("history")
+                    .insert({"user_id": user.id, "topic": topic, "levels": levels, "mode": normalized_mode})
+                    .execute()
+                )
+
+            await asyncio.to_thread(_insert_new)
     except Exception as exc:
         logger.error("save_to_history_task_error", error=str(exc), user_id=user.id, topic=topic)

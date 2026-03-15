@@ -166,7 +166,7 @@ def app_client(monkeypatch, dummy_redis):
         "get_instance",
         classmethod(lambda cls: DummyProvider())
     )
-    setattr(api_main_app, "redis_available", False)
+    monkeypatch.setattr(api_main_app, "redis_available", False)
     main_app.app.dependency_overrides = {}
     with TestClient(main_app.app) as client:
         yield client
