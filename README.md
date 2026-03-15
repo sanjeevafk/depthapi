@@ -72,13 +72,22 @@ KnowBear monorepo
 |---------------|------------------------------------------------------------------------------|
 | Frontend      | React 18, TypeScript, Vite, Tailwind CSS, Framer Motion, Zustand, React Query |
 | Backend       | FastAPI, Python 3.11+, Pydantic v2, Structlog, Upstash Redis REST             |
-| AI Inference  | Groq (Llama, DeepSeek, Qwen), Google Gemini 1.5 / 2.0 Flash                 |
+| AI Inference  | Groq, Gemini 2.5, OpenRouter, HuggingFace                                   |
 | Auth          | Supabase Auth (JWT + OAuth)                                                 |
 | Cache / Queue | Redis (Upstash)                                                             |
 | Deployment    | Vercel (frontend + serverless backend), Render / Railway (alternative)      |
 | Testing       | pytest, vitest, Playwright (planned)                                        |
 | License       | Apache License 2.0                                                          |
 
+## Python Tooling
+
+The backend uses the repository-root virtualenv at `.venv/`. Use the root scripts so local commands always resolve through `.venv/bin/python`:
+
+```bash
+npm run api:install
+npm run api:dev
+npm run api:test
+```
 
 ## 🛤️ Development Journey
 
@@ -97,11 +106,9 @@ From the repository root:
 
 ### Backend (FastAPI)
 ```bash
-cd api
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-cp ../.env.example .env            # or adjust path if .env.example is elsewhere
+python3 -m venv .venv
+npm run api:install
+cp .env.example .env
 # Edit .env with your real keys:
 #   GROQ_API_KEY=...
 #   GEMINI_API_KEY=... (if used)
@@ -109,8 +116,8 @@ cp ../.env.example .env            # or adjust path if .env.example is elsewhere
 #   SUPABASE_ANON_KEY=...
 #   UPSTASH_REDIS_REST_URL=...
 #   etc.
-```bash
-uvicorn main:app --reload --port 8000
+
+npm run api:dev
 ```
 
 Open http://localhost:8000/docs to see the Swagger UI.
@@ -128,19 +135,11 @@ Open http://localhost:5173 (it should proxy `/api` calls to the backend at http:
 
 ### One-command dev (optional)
 
-Install `concurrently` globally or as dev dep:
+Run both frontend and backend with:
 
 ```bash
-pnpm add -D concurrently
+npm run dev:full
 ```
-
-Then add to root `package.json` scripts:
-
-```json
-"dev": "concurrently \"pnpm dev\" \"cd api && uvicorn main:app --reload --port 8000\""
-```
-
-Run with `pnpm dev`.
 
 ## Database Migrations (Supabase)
 
@@ -167,13 +166,13 @@ npx supabase db push
 Run the v1 history → v2 conversations/messages data migration (dry-run by default):
 
 ```bash
-python scripts/migrate_v1_to_v2_history.py
+.venv/bin/python scripts/migrate_v1_to_v2_history.py
 ```
 
 To write data:
 
 ```bash
-python scripts/migrate_v1_to_v2_history.py --dry-run=false
+.venv/bin/python scripts/migrate_v1_to_v2_history.py --dry-run=false
 ```
 
 Required environment variables for the migration script:

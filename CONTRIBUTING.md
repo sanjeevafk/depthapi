@@ -25,8 +25,8 @@ Even if you're just starting with open source, this is a friendly place to learn
    ```
 
 2. **Set up the development environment** (see README Quick Start section)  
-   - Backend: `cd api && pip install -r requirements.txt` + create `.env`  
-   - Frontend: `cd src && pnpm install && pnpm dev`  
+   - Backend: `python3 -m venv .venv && npm run api:install` + create `.env`  
+   - Frontend: `pnpm install && pnpm dev`  
    - Run both in parallel and test your changes locally.
 
 3. **Create a branch** for your work  
@@ -43,8 +43,8 @@ Even if you're just starting with open source, this is a friendly place to learn
    - If adding a new feature, include a short description in the PR
 
 5. **Test locally**  
-   - Run backend tests: `cd api && pytest`  
-   - Run frontend tests: `cd src && pnpm test` (when coverage grows)  
+   - Run backend tests: `npm run api:test`  
+   - Run frontend tests: `pnpm test` (when coverage grows)  
    - Manually verify the UI and API responses
 
 6. **Push & open a Pull Request**  
@@ -93,4 +93,3 @@ By contributing, you agree that your contributions will be licensed under the pr
 - Feel free to ping me (@voidcommit-afk) in the issue/PR  
 
 Thank you again. Every contribution helps make KnowBear better!
-
