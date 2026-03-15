@@ -2,5 +2,12 @@
     "git.ignoreLimitWarning": true,
     "css.lint.unknownAtRules": "ignore",
     "scss.lint.unknownAtRules": "ignore",
-    "postman.settings.dotenv-detection-notification-visibility": false
+    "postman.settings.dotenv-detection-notification-visibility": false,
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    "python.testing.pytestEnabled": true,
+    "python.testing.pytestPath": "${workspaceFolder}/.venv/bin/pytest",
+    "python.testing.pytestArgs": [
+        "api/tests"
+    ],
+    "python.terminal.activateEnvironment": true
 }
