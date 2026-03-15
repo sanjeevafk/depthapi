@@ -23,6 +23,7 @@ from utils import (
     PROMPT_MODE_ALIASES,
     SUPPORTED_PROMPT_MODES,
     LEARNING_MODE,
+    SOCRATIC_MODE,
     TECHNICAL_MODE,
     normalize_mode,
     normalize_prompt_level,
@@ -96,7 +97,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         raise HTTPException(status_code=500, detail="Failed to load conversation") from exc
 
     selected_mode = normalize_mode(req.mode or conversation.get("mode") or conversation.get("settings", {}).get("mode"))
-    if selected_mode not in {DEFAULT_CHAT_MODE, "technical", "socratic"}:
+    if selected_mode not in {LEARNING_MODE, TECHNICAL_MODE, SOCRATIC_MODE}:
         selected_mode = DEFAULT_CHAT_MODE
 
     requested_prompt_mode = PROMPT_MODE_ALIASES.get(req.prompt_mode or "", req.prompt_mode or "")

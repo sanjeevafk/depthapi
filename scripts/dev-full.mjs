@@ -27,7 +27,11 @@ function start(name, args) {
     processes.push(child);
 }
 
+let shuttingDown = false;
+
 function shutdown(exitCode = 0) {
+    if (shuttingDown) return;
+    shuttingDown = true;
     for (const child of processes) {
         if (!child.killed) {
             child.kill("SIGTERM");

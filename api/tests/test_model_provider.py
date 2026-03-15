@@ -1,5 +1,6 @@
 import time
 from types import SimpleNamespace
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -43,7 +44,7 @@ async def test_route_inference_stream_fallback(monkeypatch):
 @pytest.mark.asyncio
 async def test_route_inference_stream_filters_split_thinking_tags():
     provider = ModelProvider()
-    provider.groq_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace()))
+    provider.groq_client = cast(Any, SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace())))
 
     chunks = [
         SimpleNamespace(
@@ -98,7 +99,7 @@ async def test_fallback_to_gemini_raises_when_unconfigured():
 @pytest.mark.asyncio
 async def test_learning_mode_prefers_gemini(monkeypatch):
     provider = ModelProvider()
-    provider.groq_client = object()
+    provider.groq_client = cast(Any, object())
     provider.gemini_configured = True
     provider.openrouter_api_key = "or-key"
     provider.hf_token = "hf-key"
@@ -126,7 +127,7 @@ async def test_learning_mode_prefers_gemini(monkeypatch):
 @pytest.mark.asyncio
 async def test_technical_mode_prefers_gemini(monkeypatch):
     provider = ModelProvider()
-    provider.groq_client = object()
+    provider.groq_client = cast(Any, object())
     provider.gemini_configured = True
     provider.openrouter_api_key = "or-key"
     provider.hf_token = "hf-key"
@@ -154,7 +155,7 @@ async def test_technical_mode_prefers_gemini(monkeypatch):
 @pytest.mark.asyncio
 async def test_requested_openrouter_model_routes_to_openrouter(monkeypatch):
     provider = ModelProvider()
-    provider.groq_client = object()
+    provider.groq_client = cast(Any, object())
     provider.gemini_configured = True
     provider.openrouter_api_key = "or-key"
     calls = []
@@ -181,7 +182,7 @@ async def test_requested_openrouter_model_routes_to_openrouter(monkeypatch):
 @pytest.mark.asyncio
 async def test_rate_limited_provider_is_blocked_and_skipped(monkeypatch):
     provider = ModelProvider()
-    provider.groq_client = object()
+    provider.groq_client = cast(Any, object())
     provider.gemini_configured = True
     provider.openrouter_api_key = "or-key"
     provider.hf_token = "hf-key"
@@ -208,8 +209,9 @@ async def test_rate_limited_provider_is_blocked_and_skipped(monkeypatch):
 
     assert first["provider"] == GEMINI_PROVIDER
     assert second["provider"] == GEMINI_PROVIDER
-    assert provider.provider_status[GROQ_PROVIDER]["blockedUntil"] is not None
-    assert provider.provider_status[GROQ_PROVIDER]["blockedUntil"] > time.time()
+    blocked_until = provider.provider_status[GROQ_PROVIDER]["blockedUntil"]
+    assert blocked_until is not None
+    assert blocked_until > time.time()
     assert calls == [GROQ_PROVIDER, GEMINI_PROVIDER, GEMINI_PROVIDER]
     await provider.http_client.aclose()
 
@@ -217,7 +219,7 @@ async def test_rate_limited_provider_is_blocked_and_skipped(monkeypatch):
 @pytest.mark.asyncio
 async def test_circuit_breaker_recovers_after_cooldown(monkeypatch):
     provider = ModelProvider()
-    provider.groq_client = object()
+    provider.groq_client = cast(Any, object())
     provider.gemini_configured = True
     provider.provider_status[GROQ_PROVIDER]["blockedUntil"] = time.time() - 1
     calls = []

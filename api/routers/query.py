@@ -245,7 +245,7 @@ async def save_to_history(user, topic: str, levels: list[str], mode: str):
         data = getattr(existing, "data", None)
         if isinstance(data, list) and data and isinstance(data[0], dict):
             item_id = data[0].get("id")
-            existing_levels = set(data[0].get("levels", []))
+            existing_levels = set(data[0].get("levels") or [])
             new_levels = list(existing_levels.union(set(levels)))
             def _update_existing():
                 return (
