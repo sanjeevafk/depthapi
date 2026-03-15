@@ -4,23 +4,16 @@ import asyncio
 import json
 from typing import Any
 
-from prompts import (
-    JUDGE_PROMPT,
-    LEARNING_CANDIDATE_MODELS,
-    SOCRATIC_CANDIDATE_MODELS,
-    TECHNICAL_CANDIDATE_MODELS,
-)
+from prompts import JUDGE_PROMPT, LEARNING_CANDIDATE_MODELS
 from services.inference import generate_explanation
 from services.model_provider import ModelProvider
-from utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE, normalize_mode
+from utils import LEARNING_MODE, normalize_mode
 
 
 def _candidate_models_for_mode(mode: str) -> list[str]:
     normalized_mode = normalize_mode(mode)
-    if normalized_mode == TECHNICAL_MODE:
-        return TECHNICAL_CANDIDATE_MODELS
-    if normalized_mode == SOCRATIC_MODE:
-        return SOCRATIC_CANDIDATE_MODELS
+    if normalized_mode != LEARNING_MODE:
+        raise ValueError("Ensemble judging is only supported for learning mode.")
     return LEARNING_CANDIDATE_MODELS
 
 

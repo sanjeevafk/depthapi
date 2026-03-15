@@ -23,23 +23,21 @@ async def close_client():
     retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError)),
     reraise=True
 )
-async def call_model(model: str, prompt: str, max_tokens: int = 1024, **kwargs) -> str:
+async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **kwargs) -> str:
     """Call API with given model and prompt."""
     from services.model_provider import ModelProvider
     
     provider = ModelProvider.get_instance()
     
     task = kwargs.get("task", "general")
-    if model in ["llama-3.3-70b-versatile", "deep_dive"]:
-         task = "coding"
+    if model in ["openai/gpt-oss-20b", "gpt-oss-20b", "deep_dive"]:
+        task = "coding"
             
     try:
-        result = await provider.route_inference(
-            prompt=prompt, 
-            task=task,
-            model=model,
-            **kwargs
-        )
+        route_kwargs = {"prompt": prompt, "task": task, **kwargs}
+        if model:
+            route_kwargs["model"] = model
+        result = await provider.route_inference(**route_kwargs)
 
         return result["content"]
     except Exception as e:
@@ -48,7 +46,7 @@ async def call_model(model: str, prompt: str, max_tokens: int = 1024, **kwargs) 
 
 
 
-async def generate_explanation(topic: str, level: str, model: str, **kwargs) -> str:
+async def generate_explanation(topic: str, level: str, model: str | None = None, **kwargs) -> str:
     """Generate explanation for topic at given level."""
     mode = normalize_mode(kwargs.get("mode", LEARNING_MODE))
     

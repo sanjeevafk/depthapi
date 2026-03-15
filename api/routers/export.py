@@ -8,8 +8,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from auth import verify_token, check_is_pro
-from utils import DEFAULT_CHAT_MODE, FREE_LEVELS, SUPPORTED_CHAT_MODES, normalize_mode
+from utils import DEFAULT_CHAT_MODE, FREE_LEVELS, LEARNING_MODE, SUPPORTED_CHAT_MODES, normalize_mode
 from services.ensemble import ensemble_generate
+from services.inference import generate_explanation
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["export"])
@@ -47,7 +48,10 @@ async def export_explanations(req: ExportRequest, auth_data: dict = Depends(veri
     missing_levels = list(target_levels - current_levels)
 
     if missing_levels:
-        tasks = {lvl: ensemble_generate(req.topic, lvl, is_verified_pro, req.mode) for lvl in missing_levels}
+        if req.mode == LEARNING_MODE:
+            tasks = {lvl: ensemble_generate(req.topic, lvl, is_verified_pro, req.mode) for lvl in missing_levels}
+        else:
+            tasks = {lvl: generate_explanation(req.topic, lvl, mode=req.mode) for lvl in missing_levels}
         results = await asyncio.gather(*tasks.values(), return_exceptions=True)
         
         for lvl, result in zip(tasks.keys(), results):
