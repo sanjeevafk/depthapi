@@ -42,28 +42,6 @@ Output ONLY the final explanation in plain text. No thinking, no markdown, no bo
 
 Output ONLY the meme explanation. No labels, no hashtags, no thinking.""" ,
 
-    # ====================== ELDERLY / GENTLE MODES ======================
-    "classic60": """You are explaining to a thoughtful person in their 60s who reads the newspaper and balances a checkbook.
-Think step-by-step: 1. Use familiar, classic metaphors. 2. Speak slowly and respectfully. 3. Take time to explain.
-
-Explain {topic} to someone 60 or older using familiar examples like balancing a checkbook, reading the morning paper, or tuning a radio. Speak clearly and kindly.
-
-Output ONLY the final explanation in plain text. No thinking, no markdown.""" ,
-
-    "gentle70": """You are explaining to a gentle person in their 70s with extreme patience and warmth.
-Think step-by-step: 1. Choose deeply familiar analogies (rotary phone, drive-in movies, mailing letters). 2. Use reassuring language. 3. Never rush.
-
-Explain {topic} to someone 70 or older with the warmest, most patient tone. Use everyday examples from their lifetime. Make them feel completely comfortable.
-
-Output ONLY the final explanation in plain text. No thinking, no markdown.""" ,
-
-    "warm80": """You are explaining to a beloved grandparent in their 80s with maximum warmth and care.
-Think step-by-step: 1. Use the simplest possible timeless analogies (baking bread, tending a garden, sitting on the porch). 2. Speak like you're holding their hand.
-
-Explain {topic} to someone 80 or older in the warmest, most comforting way possible. Take all the time in the world. Use only the simplest words.
-
-Output ONLY the final explanation in plain text. No thinking, no markdown.""" ,
-
     # ====================== SOCRATIC MODE (NEW) ======================
     "socratic": """You are a master Socratic teacher guiding the user to discover the answer themselves.
 
@@ -95,13 +73,14 @@ Rate each response (0-5) on:
 - Conciseness (no fluff)
 - Originality / vividness
 
-Then choose the single best response.
+Then synthesize the strongest final response for the user.
 
 Output valid JSON only:
 {{
   "best_index": 0,
   "scores": [5, 4, 3],
-  "reason": "brief one-sentence explanation why this one won"
+  "reason": "brief one-sentence explanation why this one won",
+  "final_response": "the final response to return to the user"
 }}"""
 
 # ====================== TECHNICAL DEPTH MODE ======================
@@ -137,15 +116,22 @@ CRITICAL: Base everything strictly on the given context. If context is insuffici
 """
 
 # ====================== MODEL CONFIGS ======================
-FREE_MODELS = ["llama-3.1-8b-instant"]
-PREMIUM_MODELS = [
+LEARNING_CANDIDATE_MODELS = [
     "llama-3.1-8b-instant",
-    "llama-3.3-70b-versatile",
-    "openai/gpt-oss-120b",
-    "openai/gpt-oss-20b",
+    "gemini-2.5-flash",
+    "qwen/qwen3.5-9b",
 ]
-JUDGE_MODEL = "llama-3.3-70b-versatile"
-FAST_MODEL = "llama-3.1-8b-instant"
+TECHNICAL_CANDIDATE_MODELS = [
+    "llama-3.3-70b-versatile",
+    "gemini-2.5-pro",
+    "anthropic/claude-sonnet-4.6",
+]
+SOCRATIC_CANDIDATE_MODELS = [
+    "openai/gpt-oss-20b",
+    "gemini-2.5-flash",
+    "qwen/qwen3.5-9b",
+]
+JUDGE_MODEL = "Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled"
 
 # Helper for easy access
 ALL_MODES = list(PROMPTS.keys())

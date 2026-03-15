@@ -26,7 +26,7 @@ async def test_generate_stream_explanation_regenerate_appends_quote(monkeypatch)
     async for chunk in inference_module.generate_stream_explanation(
         "topic",
         "eli5",
-        mode="fast",
+        mode="learning",
         regenerate=True
     ):
         chunks.append(chunk)

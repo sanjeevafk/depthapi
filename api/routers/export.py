@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from auth import verify_token, check_is_pro
-from utils import FREE_LEVELS, PREMIUM_LEVELS
+from utils import DEFAULT_CHAT_MODE, FREE_LEVELS, SUPPORTED_CHAT_MODES, normalize_mode
 from services.ensemble import ensemble_generate
 
 logger = structlog.get_logger(__name__)
@@ -20,7 +20,7 @@ class ExportRequest(BaseModel):
     explanations: dict[str, str]
     format: str = Field(default="txt", pattern="^(txt|md)$")
     premium: bool = False
-    mode: str = "fast"
+    mode: str = DEFAULT_CHAT_MODE
     visuals: Optional[dict[str, str]] = None
 
 @router.post("/export")
@@ -36,14 +36,12 @@ async def export_explanations(req: ExportRequest, auth_data: dict = Depends(veri
     if not req.premium:
         raise HTTPException(status_code=403, detail="Exporting is a premium feature. Please upgrade to use this functionality.")
 
-    allowed_modes = {"fast", "ensemble"}
-    if req.mode not in allowed_modes:
-        req.mode = "fast"
+    req.mode = normalize_mode(req.mode)
+    if req.mode not in SUPPORTED_CHAT_MODES:
+        req.mode = DEFAULT_CHAT_MODE
 
     # Identify levels to include based on mode
     target_levels = set(FREE_LEVELS)
-    if is_verified_pro:
-        target_levels.update(PREMIUM_LEVELS)
     
     current_levels = set(req.explanations.keys())
     missing_levels = list(target_levels - current_levels)
@@ -62,10 +60,6 @@ async def export_explanations(req: ExportRequest, auth_data: dict = Depends(veri
     for lvl in FREE_LEVELS:
         if lvl in req.explanations:
             ordered_explanations[lvl] = req.explanations[lvl]
-    if is_verified_pro:
-        for lvl in PREMIUM_LEVELS:
-             if lvl in req.explanations:
-                ordered_explanations[lvl] = req.explanations[lvl]
                 
     req.explanations = ordered_explanations
 

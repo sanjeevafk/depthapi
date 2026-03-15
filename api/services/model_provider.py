@@ -11,6 +11,7 @@ from groq import AsyncGroq
 
 from config import get_settings
 from logging_config import logger
+from utils import LEARNING_MODE, TECHNICAL_MODE, normalize_mode
 
 GROQ_PROVIDER = "groq"
 GEMINI_PROVIDER = "gemini"
@@ -42,6 +43,12 @@ OPENROUTER_FALLBACK_MODEL = "anthropic/claude-sonnet-4.6"
 OPENROUTER_MODEL_ALLOWLIST = {
     OPENROUTER_PRIMARY_MODEL,
     OPENROUTER_FALLBACK_MODEL,
+}
+HUGGINGFACE_FALLBACK_MODEL = "deepseek-ai/DeepSeek-V3.2"
+HUGGINGFACE_JUDGE_MODEL = "Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled"
+HUGGINGFACE_MODEL_ALLOWLIST = {
+    HUGGINGFACE_FALLBACK_MODEL,
+    HUGGINGFACE_JUDGE_MODEL,
 }
 
 GROQ_MODEL_ALLOWLIST = {
@@ -122,10 +129,17 @@ class ModelProvider:
             GEMINI_FALLBACK_MODEL,
         )
         self.hf_token = os.getenv("HF_TOKEN")
-        self.hf_model = getattr(self.settings, "huggingface_model", "") or os.getenv("HUGGINGFACE_MODEL", "")
-        self.hf_classification_model = (
-            getattr(self.settings, "huggingface_classification_model", "")
-            or os.getenv("HUGGINGFACE_CLASSIFICATION_MODEL", "")
+        self.hf_fallback_model = self._validated_model(
+            getattr(self.settings, "huggingface_fallback_model", "")
+            or os.getenv("HUGGINGFACE_FALLBACK_MODEL", HUGGINGFACE_FALLBACK_MODEL),
+            HUGGINGFACE_MODEL_ALLOWLIST,
+            HUGGINGFACE_FALLBACK_MODEL,
+        )
+        self.hf_judge_model = self._validated_model(
+            getattr(self.settings, "huggingface_judge_model", "")
+            or os.getenv("HUGGINGFACE_JUDGE_MODEL", HUGGINGFACE_JUDGE_MODEL),
+            HUGGINGFACE_MODEL_ALLOWLIST,
+            HUGGINGFACE_JUDGE_MODEL,
         )
         self.http_client = httpx.AsyncClient(timeout=15.0)
         from typing import Optional
@@ -158,11 +172,6 @@ class ModelProvider:
 
     async def route_inference(self, prompt: str, image_data=None, task="general", **kwargs) -> dict:
         """Select a provider based on mode, health, and fallback availability."""
-        if task == "classification":
-            classification_result = await self._call_huggingface_classification(prompt)
-            if classification_result is not None:
-                return classification_result
-
         provider_chain = self._resolve_provider_chain(
             mode=kwargs.get("mode", ""),
             model=kwargs.get("model"),
@@ -338,6 +347,13 @@ class ModelProvider:
                 OPENROUTER_PROVIDER,
                 HUGGINGFACE_PROVIDER,
             )
+        elif model in HUGGINGFACE_MODEL_ALLOWLIST:
+            base_order = (
+                HUGGINGFACE_PROVIDER,
+                GEMINI_PROVIDER,
+                GROQ_PROVIDER,
+                OPENROUTER_PROVIDER,
+            )
         elif model == "openrouter":
             base_order = (
                 OPENROUTER_PROVIDER,
@@ -401,29 +417,27 @@ class ModelProvider:
         if provider_name == OPENROUTER_PROVIDER:
             return bool(self.openrouter_api_key)
         if provider_name == HUGGINGFACE_PROVIDER:
-            return bool(self.hf_token and self.hf_model)
+            return bool(self.hf_token and self.hf_fallback_model)
         return False
 
     def _route_label(self, mode: str, image_data, prompt: str) -> str:
-        normalized_mode = (mode or "").lower()
-        if image_data or len(prompt) > 20000 or normalized_mode == "technical_depth":
-            return "technical"
-        return "learning"
+        normalized_mode = normalize_mode(mode)
+        if image_data or len(prompt) > 20000 or normalized_mode == TECHNICAL_MODE:
+            return TECHNICAL_MODE
+        return LEARNING_MODE
 
     def _resolve_groq_model(self, prompt: str, task="general", **kwargs) -> tuple[str, int]:
         target_model = "llama-3.1-8b-instant"
         max_tokens = 1024
-        mode = (kwargs.get("mode") or "").lower()
+        mode = normalize_mode(kwargs.get("mode"))
 
-        if mode == "technical_depth":
+        if mode == TECHNICAL_MODE:
             target_model = "llama-3.3-70b-versatile"
             max_tokens = 3000
         elif task == "coding" or "code" in task.lower():
             target_model = "llama-3.3-70b-versatile"
             max_tokens = 2048
-        elif mode == "fast":
-            max_tokens = 1200
-        elif mode in {"eli5", "eli10"}:
+        elif mode == LEARNING_MODE:
             max_tokens = 1200
 
         requested_model = kwargs.get("model")
@@ -486,11 +500,11 @@ class ModelProvider:
         }
 
     async def _call_huggingface(self, prompt: str) -> dict:
-        if not self.hf_token or not self.hf_model:
+        if not self.hf_token or not self.hf_fallback_model:
             raise ModelUnavailable("HuggingFace is not configured.")
 
         response = await self.http_client.post(
-            f"https://api-inference.huggingface.co/models/{self.hf_model}",
+            f"https://api-inference.huggingface.co/models/{self.hf_fallback_model}",
             headers={"Authorization": f"Bearer {self.hf_token}"},
             json={
                 "inputs": f"<|user|>\n{prompt}<|end|>\n<|assistant|>",
@@ -507,32 +521,31 @@ class ModelProvider:
             content = str(payload)
         return {
             "provider": HUGGINGFACE_PROVIDER,
-            "model": self.hf_model,
+            "model": self.hf_fallback_model,
             "content": self._clean_text(content),
         }
 
-    async def _call_huggingface_classification(self, prompt: str) -> dict | None:
-        if not self.hf_token or not self.hf_classification_model:
-            return None
-        if HUGGINGFACE_PROVIDER not in self._available_providers((HUGGINGFACE_PROVIDER,)):
-            return None
+    async def judge_candidates(self, prompt: str) -> str:
+        if not self.hf_token or not self.hf_judge_model:
+            raise ModelUnavailable("HuggingFace judge model is not configured.")
 
-        try:
-            response = await self.http_client.post(
-                f"https://api-inference.huggingface.co/models/{self.hf_classification_model}",
-                headers={"Authorization": f"Bearer {self.hf_token}"},
-                json={"inputs": prompt},
-                timeout=5.0,
-            )
-            response.raise_for_status()
-            return {
-                "provider": HUGGINGFACE_PROVIDER,
-                "model": self.hf_classification_model,
-                "content": str(response.json()),
-            }
-        except Exception as exc:
-            self._log_provider_failure(HUGGINGFACE_PROVIDER, exc)
-            return None
+        response = await self.http_client.post(
+            f"https://api-inference.huggingface.co/models/{self.hf_judge_model}",
+            headers={"Authorization": f"Bearer {self.hf_token}"},
+            json={
+                "inputs": prompt,
+                "parameters": {"max_new_tokens": 1024, "return_full_text": False},
+            },
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if isinstance(payload, list) and payload:
+            content = payload[0].get("generated_text", "")
+        elif isinstance(payload, list):
+            content = ""
+        else:
+            content = str(payload)
+        return self._clean_text(content)
 
     async def _fallback_to_gemini(self, prompt: str) -> dict:
         if not self.gemini_configured:
@@ -568,8 +581,8 @@ class ModelProvider:
         requested_model = kwargs.get("model")
         if requested_model in GEMINI_MODEL_ALLOWLIST:
             return requested_model
-        mode = (kwargs.get("mode") or "").lower()
-        if image_data is not None or mode == "technical_depth":
+        mode = normalize_mode(kwargs.get("mode"))
+        if image_data is not None or mode == TECHNICAL_MODE:
             return self.gemini_primary_model
         return self.gemini_fallback_model
 
@@ -577,8 +590,8 @@ class ModelProvider:
         requested_model = kwargs.get("model")
         if requested_model in OPENROUTER_MODEL_ALLOWLIST:
             return requested_model
-        mode = (kwargs.get("mode") or "").lower()
-        if mode == "technical_depth":
+        mode = normalize_mode(kwargs.get("mode"))
+        if mode == TECHNICAL_MODE:
             return self.openrouter_fallback_model
         return self.openrouter_primary_model
 

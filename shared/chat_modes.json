@@ -1,25 +1,11 @@
 {
   "chat_modes": [
-    "eli5",
-    "eli10",
-    "eli12",
-    "eli15",
-    "meme",
-    "classic60",
-    "gentle70",
-    "warm80",
-    "ensemble",
-    "technical-depth",
+    "learning",
+    "technical",
     "socratic"
   ],
   "free_modes": [
-    "eli5",
-    "eli10",
-    "eli12",
-    "eli15",
-    "meme",
-    "ensemble",
-    "technical-depth",
+    "learning",
     "socratic"
   ],
   "prompt_modes": [
@@ -27,18 +13,10 @@
     "eli10",
     "eli12",
     "eli15",
-    "meme",
-    "classic60",
-    "gentle70",
-    "warm80"
+    "meme"
   ],
   "pro_modes": [
-    "classic60",
-    "gentle70",
-    "warm80"
+    "technical"
   ],
-  "legacy_modes": [
-    "technical",
-    "meme-style"
-  ]
+  "legacy_modes": []
 }
