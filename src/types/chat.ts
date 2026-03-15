@@ -4,11 +4,8 @@ export const CHAT_MODES = [
     'eli12',
     'eli15',
     'meme',
-    'classic60',
-    'gentle70',
-    'warm80',
-    'ensemble',
-    'technical-depth',
+    'learning',
+    'technical',
     'socratic',
 ] as const
 
@@ -18,15 +15,12 @@ export const CHAT_FREE_MODES = [
     'eli12',
     'eli15',
     'meme',
-    'ensemble',
-    'technical-depth',
+    'learning',
     'socratic',
 ] as const
 
 export const CHAT_PREMIUM_MODES = [
-    'classic60',
-    'gentle70',
-    'warm80',
+    'technical',
 ] as const
 
 export const CHAT_PROMPT_MODES = [
@@ -35,13 +29,15 @@ export const CHAT_PROMPT_MODES = [
     'eli12',
     'eli15',
     'meme',
-    'classic60',
-    'gentle70',
-    'warm80',
 ] as const
 
 export const LEGACY_CHAT_MODES = [
-    'technical',
+    'fast',
+    'ensemble',
+    'default',
+    'balanced',
+    'technical-depth',
+    'technical_depth',
     'meme-style',
 ] as const
 

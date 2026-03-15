@@ -27,7 +27,11 @@ export function LoadingState({ mode, level, topic }: LoadingStateProps): JSX.Ele
             baseMessage = 'Brewing your ELI5 explanation...'
         } else if (level === 'eli10') {
             baseMessage = 'Preparing a simple 10-year-old friendly answer...'
-        } else if (mode === 'fast' || mode === 'ensemble') {
+        } else if (mode === 'technical') {
+            baseMessage = 'Researching and judging a technical answer...'
+        } else if (mode === 'socratic') {
+            baseMessage = 'Preparing a guided question sequence...'
+        } else {
             baseMessage = 'Crafting your answer...'
         }
 

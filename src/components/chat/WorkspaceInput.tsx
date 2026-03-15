@@ -18,9 +18,9 @@ const WORKSPACE_PLACEHOLDERS: Record<Workspace, string> = {
 };
 
 const MODE_BY_WORKSPACE: Record<Workspace, ChatMode> = {
-  learn: "ensemble",
+  learn: "learning",
   socratic: "socratic",
-  technical: "technical-depth",
+  technical: "technical",
 };
 
 export default function WorkspaceInput({

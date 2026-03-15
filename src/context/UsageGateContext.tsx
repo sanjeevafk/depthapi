@@ -33,7 +33,7 @@ export function UsageGateProvider({
 
     const checkAction = (
         action: ActionType,
-        mode: string = 'fast'
+        mode: string = 'learning'
     ): { allowed: boolean; downgraded?: boolean } => {
         // PRO users bypass all limits
         if (isPro) {
@@ -41,7 +41,7 @@ export function UsageGateProvider({
         }
 
         // HARD GATED Features
-        if (action === 'premium_mode' || action === 'export_data') {
+        if ((action === 'premium_mode' && mode === 'technical') || action === 'export_data') {
             setPaywallContext({ mode, action });
             setShowPremiumModal(true);
             return { allowed: false };
@@ -49,12 +49,12 @@ export function UsageGateProvider({
 
         // SEARCH logic
         if (action === 'search') {
-            // Fast mode is indefinite (unlimited) for everyone
-            if (mode === 'fast') {
+            // Learning mode is available to everyone.
+            if (mode === 'learning') {
                 return { allowed: true };
             }
 
-            // Guest check (Global Limit) - only applies to non-fast modes if any are accessible to guests
+            // Guest check only applies to non-learning modes.
             if (!user) {
                 if (guestMode.checkLimit()) {
                     setShowPremiumModal(true);
@@ -66,10 +66,9 @@ export function UsageGateProvider({
         return { allowed: true };
     };
 
-    const recordAction = (action: ActionType, mode: string = 'fast') => {
+    const recordAction = (action: ActionType, mode: string = 'learning') => {
         if (action === 'search') {
-            // Only increment strict usage limit for non-fast searches
-            if (!user && mode !== 'fast') {
+            if (!user && mode !== 'learning') {
                 guestMode.incrementUsage();
             }
         }

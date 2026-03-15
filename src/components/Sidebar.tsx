@@ -223,7 +223,10 @@ export default function Sidebar({ onSelectTopic, refreshTrigger, isOpen, onToggl
                                         <div
                                             key={item.id}
                                             onClick={() => {
-                                                const effectiveMode = item.mode === 'ensemble' ? 'ensemble' : 'fast'
+                                                const effectiveMode =
+                                                    item.mode === 'technical' ? 'technical' :
+                                                        item.mode === 'socratic' ? 'socratic' :
+                                                            'learning'
                                                 onSelectTopic(item.topic, effectiveMode, item.levels?.[0] as Level)
                                             }}
                                             className="group flex items-center justify-between p-2.5 rounded-lg hover:bg-dark-800 cursor-pointer transition-all border border-transparent hover:border-dark-700"
@@ -231,11 +234,13 @@ export default function Sidebar({ onSelectTopic, refreshTrigger, isOpen, onToggl
                                             <div className="flex items-center gap-2.5 min-w-0 flex-1">
                                                 <MessageSquare size={14} className="text-gray-500 shrink-0" />
                                                 <span className="text-gray-300 text-sm truncate flex-1">{item.topic}</span>
-                                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md uppercase tracking-wider shrink-0 whitespace-nowrap ${item.mode === 'ensemble'
-                                                    ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
-                                                    : 'bg-gray-500/10 text-gray-400 border border-gray-500/20'
+                                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md uppercase tracking-wider shrink-0 whitespace-nowrap ${item.mode === 'technical'
+                                                    ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20'
+                                                    : item.mode === 'socratic'
+                                                        ? 'bg-violet-500/10 text-violet-400 border border-violet-500/20'
+                                                        : 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
                                                     }`}>
-                                                    {item.mode === 'ensemble' ? 'Ens' : 'Fast'}
+                                                    {item.mode === 'technical' ? 'Tech' : item.mode === 'socratic' ? 'Soc' : 'Learn'}
                                                 </span>
                                             </div>
                                             <button

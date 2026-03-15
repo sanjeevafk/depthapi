@@ -13,10 +13,10 @@ export function ModeProvider({ children }: { children: ReactNode }): JSX.Element
     const [searchParams, setSearchParams] = useSearchParams()
     const [mode, setModeState] = useState<Mode>(() => {
         const urlMode = searchParams.get('mode') as Mode
-        if (['fast', 'ensemble'].includes(urlMode)) {
+        if (['learning', 'technical', 'socratic'].includes(urlMode)) {
             return urlMode
         }
-        return 'fast'
+        return 'learning'
     })
 
     const setMode = useCallback((newMode: Mode) => {
@@ -31,7 +31,7 @@ export function ModeProvider({ children }: { children: ReactNode }): JSX.Element
     // Sync state with URL changes (e.g. back button)
     useEffect(() => {
         const urlMode = searchParams.get('mode') as Mode
-        if (urlMode && ['fast', 'ensemble'].includes(urlMode) && urlMode !== mode) {
+        if (urlMode && ['learning', 'technical', 'socratic'].includes(urlMode) && urlMode !== mode) {
             setModeState(urlMode)
         }
     }, [searchParams, mode])

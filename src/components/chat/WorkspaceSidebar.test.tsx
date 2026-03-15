@@ -15,8 +15,8 @@ const conversations: Conversation[] = [
   {
     id: "conv-2",
     title: "Deep learning",
-    mode: "technical-depth",
-    settings: { mode: "technical-depth" },
+    mode: "technical",
+    settings: { mode: "technical" },
     created_at: "2026-01-01T00:00:00.000Z",
     updated_at: "2026-01-03T00:00:00.000Z",
   },
