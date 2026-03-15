@@ -16,11 +16,13 @@ from config import get_settings
 from logging_config import logger
 from services.cache import cache_get, cache_set
 from services.ensemble import ensemble_stream_generate
+from services.inference import generate_stream_explanation
 from services.rate_limit import check_rate_limit
 from utils import (
     DEFAULT_CHAT_MODE,
     PROMPT_MODE_ALIASES,
     SUPPORTED_PROMPT_MODES,
+    LEARNING_MODE,
     TECHNICAL_MODE,
     normalize_mode,
     normalize_prompt_level,
@@ -185,7 +187,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         total_chunk_interval_ms = 0.0
         chunk_count = 0
         chunk_size = 400
-        ensemble_ms = None
+        generation_ms = None
 
         def record_chunk():
             nonlocal first_token_ms, last_chunk_time, total_chunk_interval_ms, chunk_count
@@ -212,13 +214,23 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 yield "data: [DONE]\n\n"
                 return
 
-            ensemble_start = time.perf_counter()
-            async for chunk in ensemble_stream_generate(
-                content,
-                prompt_mode,
-                mode=selected_mode,
-                use_premium=is_pro,
-            ):
+            generation_start = time.perf_counter()
+            generator = (
+                ensemble_stream_generate(
+                    content,
+                    prompt_mode,
+                    mode=selected_mode,
+                    use_premium=is_pro,
+                )
+                if selected_mode == LEARNING_MODE
+                else generate_stream_explanation(
+                    content,
+                    prompt_mode,
+                    mode=selected_mode,
+                    regenerate=False,
+                )
+            )
+            async for chunk in generator:
                 full_content += chunk
                 record_chunk()
                 payload = {"delta": chunk}
@@ -226,7 +238,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     payload["assistant_message_id"] = assistant_message_id
                     sent_id = True
                 yield f"data: {json.dumps(payload)}\n\n"
-            ensemble_ms = (time.perf_counter() - ensemble_start) * 1000
+            generation_ms = (time.perf_counter() - generation_start) * 1000
 
             if full_content.strip():
                 await cache_set(cache_key, {"response": full_content}, ttl=cache_ttl_seconds)
@@ -252,7 +264,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 chunk_size=chunk_size,
                 content_chars=len(full_content),
                 is_pro=is_pro,
-                ensemble_ms=round(ensemble_ms, 2) if ensemble_ms is not None else None,
+                generation_ms=round(generation_ms, 2) if generation_ms is not None else None,
                 streaming=True,
             )
             if assistant_message_id:

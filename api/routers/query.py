@@ -1,4 +1,4 @@
-"""Query endpoint for judged ensemble explanations."""
+"""Query endpoint for learning ensembles and direct-mode explanations."""
 
 import asyncio
 import json
@@ -11,9 +11,11 @@ from auth import check_is_pro, ensure_user_exists, get_supabase_admin, verify_to
 from logging_config import logger
 from services.cache import cache_get, cache_set
 from services.ensemble import ensemble_generate, ensemble_stream_generate
+from services.inference import generate_explanation, generate_stream_explanation
 from utils import (
     DEFAULT_CHAT_MODE,
     FREE_LEVELS,
+    LEARNING_MODE,
     SOCRATIC_MODE,
     TECHNICAL_MODE,
     PROMPT_MODE_ALIASES,
@@ -94,17 +96,29 @@ async def query_topic(req: QueryRequest, auth_data: dict = Depends(verify_token_
             asyncio.create_task(save_to_history(auth_data["user"], topic, levels, mode))
         return QueryResponse(topic=topic, explanations=explanations, cached=True)
 
-    tasks = {
-        level: ensemble_generate(
-            topic,
-            level,
-            use_premium=req.premium,
-            mode=mode,
-            temperature=req.temperature,
-            regenerate=req.regenerate,
-        )
-        for level in missing_levels
-    }
+    if mode == LEARNING_MODE:
+        tasks = {
+            level: ensemble_generate(
+                topic,
+                level,
+                use_premium=req.premium,
+                mode=mode,
+                temperature=req.temperature,
+                regenerate=req.regenerate,
+            )
+            for level in missing_levels
+        }
+    else:
+        tasks = {
+            level: generate_explanation(
+                topic,
+                level,
+                mode=mode,
+                temperature=req.temperature,
+                regenerate=req.regenerate,
+            )
+            for level in missing_levels
+        }
     results = await asyncio.gather(*tasks.values(), return_exceptions=True)
 
     for level, result in zip(tasks.keys(), results):
@@ -160,14 +174,25 @@ async def query_topic_stream(req: QueryRequest, auth_data: dict = Depends(verify
                         asyncio.create_task(save_to_history(auth_data["user"], topic, [level], mode))
                     return
 
-            async for chunk in ensemble_stream_generate(
-                topic,
-                level,
-                mode=mode,
-                use_premium=req.premium,
-                temperature=req.temperature,
-                regenerate=req.regenerate,
-            ):
+            generator = (
+                ensemble_stream_generate(
+                    topic,
+                    level,
+                    mode=mode,
+                    use_premium=req.premium,
+                    temperature=req.temperature,
+                    regenerate=req.regenerate,
+                )
+                if mode == LEARNING_MODE
+                else generate_stream_explanation(
+                    topic,
+                    level,
+                    mode=mode,
+                    temperature=req.temperature,
+                    regenerate=req.regenerate,
+                )
+            )
+            async for chunk in generator:
                 full_content += chunk
                 yield f"data: {json.dumps({'chunk': chunk})}\n\n"
 
