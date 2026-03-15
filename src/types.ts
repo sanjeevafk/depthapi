@@ -9,12 +9,12 @@ export interface QueryRequest {
     levels?: string[]
     premium?: boolean
     bypass_cache?: boolean
-    mode?: 'fast' | 'ensemble'
+    mode?: 'learning' | 'technical' | 'socratic'
     temperature?: number
     regenerate?: boolean
 }
 
-export type Mode = 'fast' | 'ensemble'
+export type Mode = 'learning' | 'technical' | 'socratic'
 
 export interface QueryResponse {
     topic: string
@@ -41,7 +41,5 @@ export interface ExportRequest {
 }
 
 export const FREE_LEVELS = ['eli5', 'eli10', 'eli12', 'eli15', 'meme'] as const
-export const PREMIUM_LEVELS = ['classic60', 'gentle70', 'warm80'] as const
-export const LEGACY_LEVELS = ['meme-style'] as const
-export const ALL_FREE_LEVELS: readonly string[] = [...FREE_LEVELS, ...LEGACY_LEVELS]
-export type Level = (typeof FREE_LEVELS)[number] | (typeof PREMIUM_LEVELS)[number] | (typeof LEGACY_LEVELS)[number]
+export const PREMIUM_LEVELS = [] as const
+export type Level = (typeof FREE_LEVELS)[number]

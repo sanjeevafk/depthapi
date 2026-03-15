@@ -18,14 +18,14 @@ vi.mock('../hooks/useUsageGate', () => ({
 
 describe('SearchBar', () => {
     it('renders input and button', () => {
-        render(<SearchBar onSearch={() => { }} loading={false} mode="fast" onModeChange={() => { }} />)
+        render(<SearchBar onSearch={() => { }} loading={false} mode="learning" onModeChange={() => { }} />)
         expect(screen.getByPlaceholderText(/what passes for knowledge/i)).toBeInTheDocument()
         expect(screen.getByRole('button', { name: /explain/i })).toBeInTheDocument()
     })
 
     it('calls onSearch with topic on submit', () => {
         const onSearch = vi.fn()
-        render(<SearchBar onSearch={onSearch} loading={false} mode="fast" onModeChange={() => { }} />)
+        render(<SearchBar onSearch={onSearch} loading={false} mode="learning" onModeChange={() => { }} />)
         const input = screen.getByPlaceholderText(/what passes for knowledge/i)
         fireEvent.change(input, { target: { value: 'Photosynthesis' } })
         fireEvent.submit(input.closest('form')!)
@@ -33,7 +33,7 @@ describe('SearchBar', () => {
     })
 
     it('disables button when loading', () => {
-        render(<SearchBar onSearch={() => { }} loading mode="fast" onModeChange={() => { }} />)
+        render(<SearchBar onSearch={() => { }} loading mode="learning" onModeChange={() => { }} />)
         const submitButton = screen.getAllByRole('button').find(button => button.getAttribute('type') === 'submit')
         expect(submitButton).toBeTruthy()
         expect(submitButton).toBeDisabled()

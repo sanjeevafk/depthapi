@@ -110,7 +110,7 @@ const resolveDepthLevel = (
 
 const resolveWorkspaceFromMode = (mode: ChatMode): Workspace => {
   if (mode === "socratic") return "socratic";
-  if (mode === "technical-depth") return "technical";
+  if (mode === "technical") return "technical";
   return "learn";
 };
 
@@ -130,10 +130,10 @@ const resolveWorkspaceState = (
     };
   }
 
-  if (resolvedMode === "technical-depth") {
+  if (resolvedMode === "technical") {
     return {
       workspace: "technical" as Workspace,
-      mode: "technical-depth" as ChatMode,
+      mode: "technical" as ChatMode,
       promptMode: resolveDepthLevel(promptMode, fallbackDepth) as PromptMode,
       depthLevel: resolveDepthLevel(promptMode, fallbackDepth),
     };
@@ -146,7 +146,7 @@ const resolveWorkspaceState = (
 
   return {
     workspace: "learn" as Workspace,
-    mode: "ensemble" as ChatMode,
+    mode: "learning" as ChatMode,
     promptMode: nextDepth as PromptMode,
     depthLevel: nextDepth,
   };
@@ -177,8 +177,8 @@ const persistTheme = (theme: ThemeMode) => {
 
 const getModeForWorkspace = (workspace: Workspace): ChatMode => {
   if (workspace === "socratic") return "socratic";
-  if (workspace === "technical") return "technical-depth";
-  return "ensemble";
+  if (workspace === "technical") return "technical";
+  return "learning";
 };
 
 const initialTheme = loadTheme();
@@ -376,7 +376,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   workspace: DEFAULT_WORKSPACE,
   depthLevel: DEFAULT_DEPTH_LEVEL,
   theme: initialTheme,
-  currentMode: "ensemble",
+  currentMode: "learning",
   currentPromptMode: DEFAULT_DEPTH_LEVEL as PromptMode,
   selectedLevel: DEFAULT_DEPTH_LEVEL as Level,
   isSidebarOpen: false,
@@ -489,7 +489,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
     get().setPromptMode(level as PromptMode);
     if (get().workspace === "learn") {
-      get().setMode("ensemble");
+      get().setMode("learning");
     }
   },
 
@@ -1137,7 +1137,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             body: JSON.stringify({
               topic: trimmed,
               levels: [fallbackLevel],
-              mode: "ensemble",
+              mode: requestedMode,
               premium: isPro,
               regenerate: Boolean(options?.isRegeneration),
               bypass_cache: Boolean(options?.isRegeneration),

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Zap, Sparkles, ChevronDown, Lock } from 'lucide-react'
+import { BookOpen, Code2, CircleHelp, ChevronDown, Lock } from 'lucide-react'
 import type { Mode } from '../types'
 import { useUsageGate } from '../hooks/useUsageGate'
 
@@ -11,20 +11,28 @@ interface ModeDropdownProps {
 
 const MODES: { id: Mode; label: string; description: string; icon: any; color: string; premium: boolean }[] = [
     {
-        id: 'fast',
-        label: 'Fast',
-        description: 'Speed-optimized, standard answers.',
-        icon: Zap,
-        color: 'text-cyan-400',
+        id: 'learning',
+        label: 'Learning',
+        description: 'General learning with judged ensemble answers.',
+        icon: BookOpen,
+        color: 'text-teal-400',
         premium: false
     },
     {
-        id: 'ensemble',
-        label: 'Ensemble',
-        description: 'High-accuracy synthesis from multiple models.',
-        icon: Sparkles,
-        color: 'text-purple-400',
-        premium: true
+        id: 'technical',
+        label: 'Technical',
+        description: 'Search-aware technical analysis with judged output.',
+        icon: Code2,
+        color: 'text-sky-400',
+        premium: false
+    },
+    {
+        id: 'socratic',
+        label: 'Socratic',
+        description: 'Guided questioning instead of direct explanation.',
+        icon: CircleHelp,
+        color: 'text-violet-400',
+        premium: false
     }
 ]
 

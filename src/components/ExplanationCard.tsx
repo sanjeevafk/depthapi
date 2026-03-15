@@ -16,10 +16,6 @@ const LEVEL_COLORS: Record<Level, string> = {
     eli12: 'border-l-cyan-500',
     eli15: 'border-l-blue-500',
     meme: 'border-l-purple-500',
-    'meme-style': 'border-l-purple-500',
-    classic60: 'border-l-yellow-500',
-    gentle70: 'border-l-indigo-500',
-    warm80: 'border-l-rose-500',
 }
 
 const LEVEL_NAMES: Record<Level, string> = {
@@ -28,10 +24,6 @@ const LEVEL_NAMES: Record<Level, string> = {
     eli12: 'Explain Like I\'m 12',
     eli15: 'Explain Like I\'m 15',
     meme: 'Meme Explanation',
-    'meme-style': 'Meme Explanation',
-    classic60: 'Classic Mode',
-    gentle70: 'Gentle Mode',
-    warm80: 'Warm Mode',
 }
 
 export default function ExplanationCard({ level, content, streaming }: ExplanationCardProps): JSX.Element {
