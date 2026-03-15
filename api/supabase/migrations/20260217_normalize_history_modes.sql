@@ -1,11 +1,7 @@
 -- Normalize history modes to supported values
-update public.history
+update "public"."history"
 set mode = case
   when mode in ('technical-depth', 'technical_depth') then 'technical'
- set mode = case
-   when mode in ('technical-depth', 'technical_depth') then 'technical'
-   else 'learning'
- end
   else 'learning'
 end
 where mode not in ('learning', 'technical', 'socratic');
