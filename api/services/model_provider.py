@@ -18,16 +18,15 @@ GEMINI_PROVIDER = "gemini"
 OPENROUTER_PROVIDER = "openrouter"
 HUGGINGFACE_PROVIDER = "huggingface"
 
-LEARNING_PROVIDER_ORDER = (
-    GROQ_PROVIDER,
+NORMAL_PROVIDER_ORDER = (
     GEMINI_PROVIDER,
+    GROQ_PROVIDER,
     OPENROUTER_PROVIDER,
     HUGGINGFACE_PROVIDER,
 )
+LEARNING_PROVIDER_ORDER = NORMAL_PROVIDER_ORDER
 TECHNICAL_PROVIDER_ORDER = (
     GEMINI_PROVIDER,
-    GROQ_PROVIDER,
-    OPENROUTER_PROVIDER,
     HUGGINGFACE_PROVIDER,
 )
 
@@ -40,21 +39,36 @@ GEMINI_MODEL_ALLOWLIST = {
 }
 OPENROUTER_PRIMARY_MODEL = "qwen/qwen3.5-9b"
 OPENROUTER_FALLBACK_MODEL = "anthropic/claude-sonnet-4.6"
+OPENROUTER_MODEL_ALIAS = {
+    "qwen-9b": OPENROUTER_PRIMARY_MODEL,
+    "sonnet-4.6": OPENROUTER_FALLBACK_MODEL,
+}
 OPENROUTER_MODEL_ALLOWLIST = {
     OPENROUTER_PRIMARY_MODEL,
     OPENROUTER_FALLBACK_MODEL,
+    *OPENROUTER_MODEL_ALIAS.keys(),
 }
-HUGGINGFACE_FALLBACK_MODEL = "deepseek-ai/DeepSeek-V3.2"
-HUGGINGFACE_JUDGE_MODEL = "Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled"
+HUGGINGFACE_FALLBACK_MODEL = "deepseek-ai/DeepSeek-R1"
+HUGGINGFACE_SECONDARY_MODEL = "microsoft/phi-4"
+HUGGINGFACE_JUDGE_MODEL = "MiniMaxAI/MiniMax-M2.5"
+HUGGINGFACE_MODEL_ALIAS = {
+    "deepseek": HUGGINGFACE_FALLBACK_MODEL,
+    "phi-4": HUGGINGFACE_SECONDARY_MODEL,
+}
 HUGGINGFACE_MODEL_ALLOWLIST = {
     HUGGINGFACE_FALLBACK_MODEL,
+    HUGGINGFACE_SECONDARY_MODEL,
     HUGGINGFACE_JUDGE_MODEL,
+    *HUGGINGFACE_MODEL_ALIAS.keys(),
 }
 
+GROQ_LLAMA_8B_MODEL = "llama-3.1-8b-instant"
+GROQ_MODEL_ALIAS = {
+    "llama-8b": GROQ_LLAMA_8B_MODEL,
+}
 GROQ_MODEL_ALLOWLIST = {
-    "llama-3.1-8b-instant",
-    "llama-3.3-70b-versatile",
-    "openai/gpt-oss-120b",
+    GROQ_LLAMA_8B_MODEL,
+    "llama-8b",
     "openai/gpt-oss-20b",
 }
 RATE_LIMIT_MARKERS = (
@@ -111,12 +125,14 @@ class ModelProvider:
             getattr(self.settings, "openrouter_model", "") or os.getenv("OPENROUTER_MODEL", OPENROUTER_PRIMARY_MODEL),
             OPENROUTER_MODEL_ALLOWLIST,
             OPENROUTER_PRIMARY_MODEL,
+            alias_map=OPENROUTER_MODEL_ALIAS,
         )
         self.openrouter_fallback_model = self._validated_model(
             getattr(self.settings, "openrouter_fallback_model", "")
             or os.getenv("OPENROUTER_FALLBACK_MODEL", OPENROUTER_FALLBACK_MODEL),
             OPENROUTER_MODEL_ALLOWLIST,
             OPENROUTER_FALLBACK_MODEL,
+            alias_map=OPENROUTER_MODEL_ALIAS,
         )
         self.gemini_primary_model = self._validated_model(
             getattr(self.settings, "gemini_primary_model", "") or GEMINI_PRIMARY_MODEL,
@@ -129,17 +145,30 @@ class ModelProvider:
             GEMINI_FALLBACK_MODEL,
         )
         self.hf_token = os.getenv("HF_TOKEN")
-        self.hf_fallback_model = self._validated_model(
+        self.hf_primary_model = self._validated_model(
             getattr(self.settings, "huggingface_fallback_model", "")
             or os.getenv("HUGGINGFACE_FALLBACK_MODEL", HUGGINGFACE_FALLBACK_MODEL),
             HUGGINGFACE_MODEL_ALLOWLIST,
             HUGGINGFACE_FALLBACK_MODEL,
+            alias_map=HUGGINGFACE_MODEL_ALIAS,
         )
+        self.hf_secondary_model = self._validated_model(
+            getattr(self.settings, "huggingface_secondary_model", "")
+            or os.getenv("HUGGINGFACE_SECONDARY_MODEL", HUGGINGFACE_SECONDARY_MODEL),
+            HUGGINGFACE_MODEL_ALLOWLIST,
+            HUGGINGFACE_SECONDARY_MODEL,
+            alias_map=HUGGINGFACE_MODEL_ALIAS,
+        )
+        self.hf_fallback_models = list(
+            dict.fromkeys([model for model in (self.hf_primary_model, self.hf_secondary_model) if model])
+        )
+        self.hf_fallback_model = self.hf_primary_model
         self.hf_judge_model = self._validated_model(
             getattr(self.settings, "huggingface_judge_model", "")
             or os.getenv("HUGGINGFACE_JUDGE_MODEL", HUGGINGFACE_JUDGE_MODEL),
             HUGGINGFACE_MODEL_ALLOWLIST,
             HUGGINGFACE_JUDGE_MODEL,
+            alias_map=HUGGINGFACE_MODEL_ALIAS,
         )
         self.http_client = httpx.AsyncClient(timeout=15.0)
         from typing import Optional
@@ -319,7 +348,7 @@ class ModelProvider:
         if provider_name == OPENROUTER_PROVIDER:
             return await self._call_openrouter(prompt, task=task, **kwargs)
         if provider_name == HUGGINGFACE_PROVIDER:
-            return await self._call_huggingface(prompt)
+            return await self._call_huggingface(prompt, **kwargs)
         raise ModelUnavailable(f"Unknown provider: {provider_name}")
 
     def _resolve_provider_chain(self, mode: str, model: str | None, image_data, prompt: str) -> list[str]:
@@ -417,7 +446,7 @@ class ModelProvider:
         if provider_name == OPENROUTER_PROVIDER:
             return bool(self.openrouter_api_key)
         if provider_name == HUGGINGFACE_PROVIDER:
-            return bool(self.hf_token and self.hf_fallback_model)
+            return bool(self.hf_token and self.hf_fallback_models)
         return False
 
     def _route_label(self, mode: str, image_data, prompt: str) -> str:
@@ -427,84 +456,136 @@ class ModelProvider:
         return LEARNING_MODE
 
     def _resolve_groq_model(self, prompt: str, task="general", **kwargs) -> tuple[str, int]:
-        target_model = "llama-3.1-8b-instant"
+        target_model = GROQ_LLAMA_8B_MODEL
         max_tokens = 1024
         mode = normalize_mode(kwargs.get("mode"))
 
-        if mode == TECHNICAL_MODE:
-            target_model = "llama-3.3-70b-versatile"
-            max_tokens = 3000
-        elif task == "coding" or "code" in task.lower():
-            target_model = "llama-3.3-70b-versatile"
+        if task == "coding" or "code" in task.lower():
+            target_model = "openai/gpt-oss-20b"
             max_tokens = 2048
         elif mode == LEARNING_MODE:
             max_tokens = 1200
 
         requested_model = kwargs.get("model")
         if requested_model in GROQ_MODEL_ALLOWLIST:
-            target_model = requested_model
+            target_model = GROQ_MODEL_ALIAS.get(requested_model, requested_model)
+
+        # Ensure target_model is always a string
+        if target_model is None:
+            target_model = GROQ_LLAMA_8B_MODEL
 
         return target_model, max_tokens
+
+    def _groq_candidate_models(self, task="general", **kwargs) -> list[str]:
+        requested_model = kwargs.get("model")
+        if requested_model in GROQ_MODEL_ALLOWLIST:
+            return [model for model in [GROQ_MODEL_ALIAS.get(requested_model, requested_model)] if model is not None]
+        if task == "coding" or "code" in task.lower():
+            return ["openai/gpt-oss-20b", GROQ_LLAMA_8B_MODEL]
+        return [GROQ_LLAMA_8B_MODEL, "openai/gpt-oss-20b"]
 
     async def _call_groq(self, prompt: str, task="general", **kwargs) -> dict:
         if not self.groq_client:
             raise ModelUnavailable("Groq is not configured.")
 
-        target_model, max_tokens = self._resolve_groq_model(prompt, task=task, **kwargs)
-        completion = await self.groq_client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model=target_model,
-            max_tokens=max_tokens,
-            temperature=kwargs.get("temperature", 0.7),
-            timeout=30.0,
-        )
-        content = completion.choices[0].message.content or ""
-        return {
-            "provider": GROQ_PROVIDER,
-            "model": target_model,
-            "content": self._clean_text(content),
-        }
+        _, max_tokens = self._resolve_groq_model(prompt, task=task, **kwargs)
+        last_error: Exception | None = None
+        for target_model in self._groq_candidate_models(task=task, **kwargs):
+            try:
+                completion = await self.groq_client.chat.completions.create(
+                    messages=[{"role": "user", "content": prompt}],
+                    model=target_model,
+                    max_tokens=max_tokens,
+                    temperature=kwargs.get("temperature", 0.7),
+                    timeout=30.0,
+                )
+                content = completion.choices[0].message.content or ""
+                return {
+                    "provider": GROQ_PROVIDER,
+                    "model": target_model,
+                    "content": self._clean_text(content),
+                }
+            except Exception as exc:
+                last_error = exc
+                logger.warning("groq_model_failed", model=target_model, error=str(exc))
+
+        raise ModelError(f"Groq models failed: {last_error}")
 
     async def _call_openrouter(self, prompt: str, task="general", **kwargs) -> dict:
         if not self.openrouter_api_key:
             raise ModelUnavailable("OpenRouter is not configured.")
 
         _, max_tokens = self._resolve_groq_model(prompt, task=task, **kwargs)
-        target_model = self._resolve_openrouter_model(**kwargs)
-        response = await self.http_client.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {self.openrouter_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": target_model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": kwargs.get("temperature", 0.7),
-                "max_tokens": max_tokens,
-            },
-        )
-        response.raise_for_status()
-        payload = response.json()
-        message = payload.get("choices", [{}])[0].get("message", {})
-        content = message.get("content", "")
-        if isinstance(content, list):
-            content = "".join(
-                part.get("text", "") if isinstance(part, dict) else str(part)
-                for part in content
-            )
-        return {
-            "provider": OPENROUTER_PROVIDER,
-            "model": target_model,
-            "content": self._clean_text(str(content)),
-        }
+        last_error: Exception | None = None
+        for target_model in self._openrouter_candidate_models(**kwargs):
+            try:
+                response = await self.http_client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.openrouter_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": target_model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": kwargs.get("temperature", 0.7),
+                        "max_tokens": max_tokens,
+                    },
+                )
+                response.raise_for_status()
+                payload = response.json()
+                message = payload.get("choices", [{}])[0].get("message", {})
+                content = message.get("content", "")
+                if isinstance(content, list):
+                    content = "".join(
+                        part.get("text", "") if isinstance(part, dict) else str(part)
+                        for part in content
+                    )
+                return {
+                    "provider": OPENROUTER_PROVIDER,
+                    "model": target_model,
+                    "content": self._clean_text(str(content)),
+                }
+            except Exception as exc:
+                last_error = exc
+                logger.warning("openrouter_model_failed", model=target_model, error=str(exc))
 
-    async def _call_huggingface(self, prompt: str) -> dict:
-        if not self.hf_token or not self.hf_fallback_model:
+        raise ModelError(f"OpenRouter models failed: {last_error}")
+
+    async def _call_huggingface(self, prompt: str, **kwargs) -> dict:
+        if not self.hf_token or not self.hf_fallback_models:
             raise ModelUnavailable("HuggingFace is not configured.")
 
+        requested_model = kwargs.get("model")
+        if requested_model in HUGGINGFACE_MODEL_ALIAS:
+            requested_model = HUGGINGFACE_MODEL_ALIAS[requested_model]
+        if requested_model in HUGGINGFACE_MODEL_ALLOWLIST and requested_model != self.hf_judge_model:
+            models_to_try = [requested_model]
+        else:
+            mode = normalize_mode(kwargs.get("mode"))
+            if mode == TECHNICAL_MODE:
+                models_to_try = [self.hf_primary_model]
+            else:
+                models_to_try = list(self.hf_fallback_models)
+
+        last_error: Exception | None = None
+        for model_name in models_to_try:
+            try:
+                content = await self._call_huggingface_model(prompt, model_name)
+                return {
+                    "provider": HUGGINGFACE_PROVIDER,
+                    "model": model_name,
+                    "content": self._clean_text(content),
+                }
+            except Exception as exc:
+                last_error = exc
+                logger.warning("huggingface_model_failed", model=model_name, error=str(exc))
+
+        raise ModelError(f"HuggingFace models failed: {last_error}")
+
+    async def _call_huggingface_model(self, prompt: str, model_name: str) -> str:
         response = await self.http_client.post(
-            f"https://api-inference.huggingface.co/models/{self.hf_fallback_model}",
+            f"https://api-inference.huggingface.co/models/{model_name}",
             headers={"Authorization": f"Bearer {self.hf_token}"},
             json={
                 "inputs": f"<|user|>\n{prompt}<|end|>\n<|assistant|>",
@@ -514,16 +595,10 @@ class ModelProvider:
         response.raise_for_status()
         payload = response.json()
         if isinstance(payload, list) and payload:
-            content = payload[0].get("generated_text", "")
-        elif isinstance(payload, list):
-            content = ""
-        else:
-            content = str(payload)
-        return {
-            "provider": HUGGINGFACE_PROVIDER,
-            "model": self.hf_fallback_model,
-            "content": self._clean_text(content),
-        }
+            return payload[0].get("generated_text", "")
+        if isinstance(payload, list):
+            return ""
+        return str(payload)
 
     async def judge_candidates(self, prompt: str) -> str:
         if not self.hf_token or not self.hf_judge_model:
@@ -589,15 +664,35 @@ class ModelProvider:
     def _resolve_openrouter_model(self, **kwargs) -> str:
         requested_model = kwargs.get("model")
         if requested_model in OPENROUTER_MODEL_ALLOWLIST:
-            return requested_model
+            resolved = OPENROUTER_MODEL_ALIAS.get(requested_model, requested_model)
+            return resolved or self.openrouter_primary_model
         mode = normalize_mode(kwargs.get("mode"))
         if mode == TECHNICAL_MODE:
             return self.openrouter_fallback_model
         return self.openrouter_primary_model
 
-    def _validated_model(self, configured_model: str, allowed_models: set[str], fallback_model: str) -> str:
-        if configured_model in allowed_models:
-            return configured_model
+    def _openrouter_candidate_models(self, **kwargs) -> list[str]:
+        requested_model = kwargs.get("model")
+        if requested_model in OPENROUTER_MODEL_ALLOWLIST:
+            resolved = OPENROUTER_MODEL_ALIAS.get(requested_model, requested_model)
+            if resolved:
+                return [resolved]
+            return [self.openrouter_primary_model]
+        mode = normalize_mode(kwargs.get("mode"))
+        if mode == TECHNICAL_MODE:
+            return [self.openrouter_fallback_model]
+        return [self.openrouter_primary_model, self.openrouter_fallback_model]
+
+    def _validated_model(
+        self,
+        configured_model: str,
+        allowed_models: set[str],
+        fallback_model: str,
+        alias_map: dict[str, str] | None = None,
+    ) -> str:
+        resolved_model = alias_map.get(configured_model, configured_model) if alias_map else configured_model
+        if resolved_model in allowed_models:
+            return resolved_model
         logger.warning(
             "unsupported_model_config",
             configured_model=configured_model,
