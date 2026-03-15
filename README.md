@@ -2,7 +2,7 @@
 
 **KnowBear** is an AI-powered tool that delivers explanations at **exactly the right depth** for any topic — from ELI5 (explain like I'm 5) to technical deep-dives, meme-style breakdowns, structured reasoning, and more.
 
-It intelligently routes queries across multiple frontier models, combines their outputs via an ensemble judge, caches frequent requests, and offers clean exports — all wrapped in a minimalist, space-themed dark UI.
+It intelligently routes queries across multiple frontier models, applies an ensemble judge in Learning mode, caches frequent requests, and offers clean exports — all wrapped in a minimalist, space-themed dark UI.
 
 Live demo: https://knowbear.vercel.app
 
@@ -10,16 +10,14 @@ Live demo: https://knowbear.vercel.app
 
 - **Layered explanation system** — switch between 5–7 distinct explanation styles  
   - ELI5 / ELI10 / ELI15  
-  - Meme & analogy heavy  
+  - Meme & analogy heavy
   - Structured academic style  
   - Technical deep-dive (math, proofs, code)  
   - First-principles reasoning  
-- **Intelligent model routing & ensemble**  
-  - DeepSeek-R1 → strongest logical & first-principles reasoning  
-  - Qwen models → best code & implementation explanations  
-  - Groq-hosted Llama variants → speed + general knowledge  
-  - Gemini → multimodal context & visual intuition (when needed)  
-  - Judge model selects / merges / ranks the best parts of parallel generations  
+- **Mode-aware routing**  
+  - Learning: multi-provider candidates + judge (`MiniMaxAI/MiniMax-M2.5`)  
+  - Technical: `gemini-2.5-pro` primary, `deepseek-ai/DeepSeek-R1` fallback  
+  - Socratic/normal fallback: `gemini-2.5-flash` → Groq (`llama-3.1-8b-instant`, `openai/gpt-oss-20b`) → OpenRouter (`qwen/qwen3.5-9b`, `anthropic/claude-sonnet-4.6`) → HuggingFace (`deepseek-ai/DeepSeek-R1`, `microsoft/phi-4`)  
 - **Ultra-fast repeat queries** via Upstash Redis REST caching  
 - **Export formats**: .txt, .md  
 - **Pinned & trending topics** — discoverability without search  

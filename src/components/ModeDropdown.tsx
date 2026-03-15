@@ -21,7 +21,7 @@ const MODES: { id: Mode; label: string; description: string; icon: any; color: s
     {
         id: 'technical',
         label: 'Technical',
-        description: 'Search-aware technical analysis with judged output.',
+        description: 'Search-aware technical analysis with gemini-2.5-pro and deepseek-ai/DeepSeek-R1 fallback.',
         icon: Code2,
         color: 'text-sky-400',
         premium: false
