@@ -2,7 +2,10 @@
 update public.history
 set mode = case
   when mode in ('technical-depth', 'technical_depth') then 'technical'
-  when mode = 'socratic' then 'socratic'
+ set mode = case
+   when mode in ('technical-depth', 'technical_depth') then 'technical'
+   else 'learning'
+ end
   else 'learning'
 end
 where mode not in ('learning', 'technical', 'socratic');

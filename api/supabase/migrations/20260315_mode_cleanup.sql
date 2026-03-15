@@ -5,7 +5,7 @@ set mode = case
   when mode = 'socratic' then 'socratic'
   else 'learning'
 end
-where mode not in ('learning', 'technical', 'socratic');
+where mode is null or mode not in ('learning', 'technical', 'socratic');
 
 update public.conversations
 set mode = case
@@ -13,7 +13,7 @@ set mode = case
   when mode = 'socratic' then 'socratic'
   else 'learning'
 end
-where mode not in ('learning', 'technical', 'socratic');
+where mode is null or mode not in ('learning', 'technical', 'socratic');
 
 update public.conversations
 set settings = jsonb_set(
