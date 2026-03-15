@@ -61,6 +61,11 @@ HUGGINGFACE_MODEL_ALLOWLIST = {
     HUGGINGFACE_JUDGE_MODEL,
     *HUGGINGFACE_MODEL_ALIAS.keys(),
 }
+MODEL_CHAT_TEMPLATES = {
+    "microsoft/phi-4": "<|user|>\n{prompt}<|end|>\n<|assistant|>",
+    "deepseek-ai/deepseek-r1": "User: {prompt}\nAssistant:",
+    "minimaxai/minimax-m2.5": "<User>{prompt}</User><Assistant>",
+}
 
 GROQ_LLAMA_8B_MODEL = "llama-3.1-8b-instant"
 GROQ_MODEL_ALIAS = {
@@ -588,7 +593,7 @@ class ModelProvider:
             f"https://api-inference.huggingface.co/models/{model_name}",
             headers={"Authorization": f"Bearer {self.hf_token}"},
             json={
-                "inputs": f"<|user|>\n{prompt}<|end|>\n<|assistant|>",
+                "inputs": self._format_hf_prompt(prompt, model_name),
                 "parameters": {"max_new_tokens": 1024, "return_full_text": False},
             },
         )
@@ -599,6 +604,18 @@ class ModelProvider:
         if isinstance(payload, list):
             return ""
         return str(payload)
+
+    def _format_hf_prompt(self, prompt: str, model_name: str) -> str:
+        normalized_model_name = model_name.strip().lower()
+        template = MODEL_CHAT_TEMPLATES.get(normalized_model_name)
+        if template is None:
+            for model_prefix, candidate_template in MODEL_CHAT_TEMPLATES.items():
+                if normalized_model_name.startswith(model_prefix):
+                    template = candidate_template
+                    break
+        if template is None:
+            template = "{prompt}"
+        return template.format(prompt=prompt)
 
     async def judge_candidates(self, prompt: str) -> str:
         if not self.hf_token or not self.hf_judge_model:
