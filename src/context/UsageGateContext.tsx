@@ -41,7 +41,7 @@ export function UsageGateProvider({
         }
 
         // HARD GATED Features
-        if ((action === 'premium_mode' && mode === 'technical') || action === 'export_data') {
+        if (action === 'premium_mode' || action === 'export_data') {
             setPaywallContext({ mode, action });
             setShowPremiumModal(true);
             return { allowed: false };
