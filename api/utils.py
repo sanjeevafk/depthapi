@@ -55,6 +55,8 @@ def sanitize_topic(topic: str) -> str:
 def topic_cache_key(topic: str, level: str, mode: str | None = None) -> str:
     """Generate cache key for topic+level, optionally scoping by mode."""
     safe = re.sub(r"\W+", "_", topic.lower().strip()).strip("_")[:50]
+    if mode:
+        mode = mode.strip().lower()
     return f"knowbear:{safe}:{mode}:{level}" if mode else f"knowbear:{safe}:{level}"
 
 

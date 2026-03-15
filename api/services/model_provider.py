@@ -4,6 +4,7 @@ import asyncio
 import os
 import re
 import time
+from threading import Lock
 from typing import Any, Optional
 
 import httpx
@@ -86,6 +87,8 @@ RATE_LIMIT_MARKERS = (
     "quota exceeded",
     "quota_exceeded",
 )
+
+_instance_lock = Lock()
 
 
 class ModelError(Exception):
@@ -187,7 +190,9 @@ class ModelProvider:
     @classmethod
     def get_instance(cls):
         if cls._instance is None:
-            cls._instance = cls()
+            with _instance_lock:
+                if cls._instance is None:
+                    cls._instance = cls()
         return cls._instance
 
     async def close(self):
@@ -521,7 +526,8 @@ class ModelProvider:
         if not self.openrouter_api_key:
             raise ModelUnavailable("OpenRouter is not configured.")
 
-        _, max_tokens = self._resolve_groq_model(prompt, task=task, **kwargs)
+        # Use appropriate token limit for OpenRouter
+        max_tokens = 2048 if task == "coding" or "code" in task.lower() else 1024
         last_error: Exception | None = None
         for target_model in self._openrouter_candidate_models(**kwargs):
             try:

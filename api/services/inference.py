@@ -140,4 +140,5 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
     if mode == TECHNICAL_MODE and images:
         yield "\n\n### Visual References\n"
         for img in images:
-            yield f"![{img.get('title', 'Image')}]({img['url']})\n"
+            if url := img.get('url'):
+                yield f"![{img.get('title', 'Image')}]({url})\n"
