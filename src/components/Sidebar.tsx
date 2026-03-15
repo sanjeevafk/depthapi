@@ -227,7 +227,7 @@ export default function Sidebar({ onSelectTopic, refreshTrigger, isOpen, onToggl
                                                     item.mode === 'technical' ? 'technical' :
                                                         item.mode === 'socratic' ? 'socratic' :
                                                             'learning'
-                                                onSelectTopic(item.topic, effectiveMode, item.levels?.[0] as Level)
+                                                onSelectTopic(item.topic, effectiveMode, item.levels?.[0])
                                             }}
                                             className="group flex items-center justify-between p-2.5 rounded-lg hover:bg-dark-800 cursor-pointer transition-all border border-transparent hover:border-dark-700"
                                         >
