@@ -96,7 +96,7 @@ async def test_fallback_to_gemini_raises_when_unconfigured():
 
 
 @pytest.mark.asyncio
-async def test_learning_mode_prefers_groq(monkeypatch):
+async def test_learning_mode_prefers_gemini(monkeypatch):
     provider = ModelProvider()
     provider.groq_client = object()
     provider.gemini_configured = True
@@ -104,22 +104,22 @@ async def test_learning_mode_prefers_groq(monkeypatch):
     provider.hf_token = "hf-key"
     calls = []
 
-    async def fake_groq(_prompt, **_kwargs):
-        calls.append(GROQ_PROVIDER)
-        return {"provider": GROQ_PROVIDER, "model": "groq-model", "content": "groq"}
+    async def fake_gemini(_prompt, **_kwargs):
+        calls.append(GEMINI_PROVIDER)
+        return {"provider": GEMINI_PROVIDER, "model": "gemini-model", "content": "gemini"}
 
     async def fail_other(*_args, **_kwargs):
         raise AssertionError("Fallback provider should not be called")
 
-    monkeypatch.setattr(provider, "_call_groq", fake_groq)
-    monkeypatch.setattr(provider, "_call_gemini_direct", fail_other)
+    monkeypatch.setattr(provider, "_call_gemini_direct", fake_gemini)
+    monkeypatch.setattr(provider, "_call_groq", fail_other)
     monkeypatch.setattr(provider, "_call_openrouter", fail_other)
     monkeypatch.setattr(provider, "_call_huggingface", fail_other)
 
-    result = await provider.route_inference("prompt", mode="eli5")
+    result = await provider.route_inference("prompt", mode="eli5", model="openai/gpt-oss-20b")
 
-    assert result["provider"] == GROQ_PROVIDER
-    assert calls == [GROQ_PROVIDER]
+    assert result["provider"] == GEMINI_PROVIDER
+    assert calls == [GEMINI_PROVIDER]
     await provider.http_client.aclose()
 
 
@@ -203,8 +203,8 @@ async def test_rate_limited_provider_is_blocked_and_skipped(monkeypatch):
     monkeypatch.setattr(provider, "_call_openrouter", fake_gemini)
     monkeypatch.setattr(provider, "_call_huggingface", fake_gemini)
 
-    first = await provider.route_inference("prompt", mode="eli5")
-    second = await provider.route_inference("prompt", mode="eli5")
+    first = await provider.route_inference("prompt", mode="eli5", model="openai/gpt-oss-20b")
+    second = await provider.route_inference("prompt", mode="eli5", model="openai/gpt-oss-20b")
 
     assert first["provider"] == GEMINI_PROVIDER
     assert second["provider"] == GEMINI_PROVIDER

@@ -117,21 +117,11 @@ CRITICAL: Base everything strictly on the given context. If context is insuffici
 
 # ====================== MODEL CONFIGS ======================
 LEARNING_CANDIDATE_MODELS = [
-    "llama-3.1-8b-instant",
     "gemini-2.5-flash",
     "qwen/qwen3.5-9b",
-]
-TECHNICAL_CANDIDATE_MODELS = [
-    "llama-3.3-70b-versatile",
-    "gemini-2.5-pro",
-    "anthropic/claude-sonnet-4.6",
-]
-SOCRATIC_CANDIDATE_MODELS = [
     "openai/gpt-oss-20b",
-    "gemini-2.5-flash",
-    "qwen/qwen3.5-9b",
 ]
-JUDGE_MODEL = "Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled"
+JUDGE_MODEL = "MiniMaxAI/MiniMax-M2.5"
 
 # Helper for easy access
 ALL_MODES = list(PROMPTS.keys())
