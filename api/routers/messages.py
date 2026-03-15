@@ -41,7 +41,7 @@ class MessageRequest(BaseModel):
 
 
 def _message_cache_key(content: str, mode: str, prompt_mode: str) -> str:
-    digest = hashlib.sha256(f"{content}{mode}{prompt_mode}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"{content}\x00{mode}\x00{prompt_mode}".encode("utf-8")).hexdigest()
     return f"knowbear:cache:{digest}"
 
 

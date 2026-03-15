@@ -1,9 +1,10 @@
 """Model provider abstraction and fallback routing."""
 
+import asyncio
 import os
 import re
 import time
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 from google import genai
@@ -30,7 +31,7 @@ TECHNICAL_PROVIDER_ORDER = (
     HUGGINGFACE_PROVIDER,
 )
 
-PROVIDER_COOLDOWN_SECONDS = 24 * 60 * 60
+PROVIDER_COOLDOWN_SECONDS = 60  # Start with 1 minute, consider exponential backoff
 GEMINI_PRIMARY_MODEL = "gemini-2.5-pro"
 GEMINI_FALLBACK_MODEL = "gemini-2.5-flash"
 GEMINI_MODEL_ALLOWLIST = {
@@ -175,9 +176,7 @@ class ModelProvider:
             HUGGINGFACE_JUDGE_MODEL,
             alias_map=HUGGINGFACE_MODEL_ALIAS,
         )
-        self.http_client = httpx.AsyncClient(timeout=15.0)
-        from typing import Optional
-
+        self.http_client = httpx.AsyncClient(timeout=60.0)
         self.provider_status: dict[str, dict[str, Optional[float]]] = {
             GROQ_PROVIDER: {"blockedUntil": None},
             GEMINI_PROVIDER: {"blockedUntil": None},
@@ -268,6 +267,8 @@ class ModelProvider:
             finish_reason = None
             pending_fragment = ""
             async for chunk in stream:
+                if not chunk.choices:
+                    continue
                 choice = chunk.choices[0]
                 content = choice.delta.content
                 if choice.finish_reason:
@@ -658,7 +659,8 @@ class ModelProvider:
         if image_data is not None:
             contents = [prompt, image_data]
 
-        response = self.gemini_client.models.generate_content(
+        response = await asyncio.to_thread(
+            self.gemini_client.models.generate_content,
             model=target_model,
             contents=contents,
             config={"http_options": {"timeout": 30000}},
