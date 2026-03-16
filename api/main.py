@@ -16,7 +16,7 @@ from fastapi_limiter.depends import RateLimiter
 from routers import pinned, query, export, history, webhooks, payments, messages
 from services.cache import close_redis, get_redis
 from services.inference import close_client
-from services.model_provider import ModelProvider, ModelError, RequiresPro, ModelUnavailable
+from services.llm_errors import LLMError, LLMBadRequest, LLMUnavailable
 from logging_config import setup_logging, logger
 from config import get_settings
 
@@ -55,14 +55,10 @@ async def lifespan(app: FastAPI):
         else:
             logger.warning("redis_unavailable_dev_mode_continuing", error=str(e))
 
-    provider = ModelProvider.get_instance()
-    await provider.initialize()
-    
-    logger.info("startup", 
-                gemini_configured=provider.gemini_configured)
+    logger.info("startup")
     
     yield
-    await asyncio.gather(close_redis(), close_client(), ModelProvider.get_instance().close())
+    await asyncio.gather(close_redis(), close_client())
 
 
 app = FastAPI(
@@ -148,30 +144,30 @@ async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
 
-@app.exception_handler(ModelUnavailable)
-async def model_unavailable_handler(request: Request, exc: ModelUnavailable):
-    """Handle missing model configuration."""
-    logger.warning("model_unavailable", error=str(exc))
+@app.exception_handler(LLMUnavailable)
+async def llm_unavailable_handler(request: Request, exc: LLMUnavailable):
+    """Handle missing LLM configuration."""
+    logger.warning("llm_unavailable", error=str(exc))
     return JSONResponse(
         status_code=503,
         content={"error": "Service Unavailable", "detail": str(exc)}
     )
 
 
-@app.exception_handler(RequiresPro)
-async def requires_pro_handler(request: Request, exc: RequiresPro):
-    """Handle pro-only feature access."""
-    logger.info("requires_pro_access", error=str(exc))
+@app.exception_handler(LLMBadRequest)
+async def llm_bad_request_handler(request: Request, exc: LLMBadRequest):
+    """Handle invalid LLM requests."""
+    logger.error("llm_bad_request", error=str(exc))
     return JSONResponse(
-        status_code=402,
-        content={"error": "Payment Required", "detail": str(exc)}
+        status_code=400,
+        content={"error": "Bad Request", "detail": str(exc)}
     )
 
 
-@app.exception_handler(ModelError)
-async def model_error_handler(request: Request, exc: ModelError):
-    """Handle general model errors."""
-    logger.error("model_error", error=str(exc))
+@app.exception_handler(LLMError)
+async def llm_error_handler(request: Request, exc: LLMError):
+    """Handle general LLM errors."""
+    logger.error("llm_error", error=str(exc))
     return JSONResponse(
         status_code=400,
         content={"error": "Bad Request", "detail": str(exc)}
@@ -222,7 +218,7 @@ app.include_router(payments.router, prefix="/api")
 async def health():
     """Health check with dependency status."""
     settings = get_settings()
-    status = {
+    status: dict = {
         "status": "ok",
         "timestamp": datetime.utcnow().isoformat(),
         "environment": settings.environment,

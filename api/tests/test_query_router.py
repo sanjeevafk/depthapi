@@ -22,7 +22,10 @@ async def test_query_cache_hit_returns_cached(app_client, monkeypatch):
     monkeypatch.setattr(query_module, "cache_set", fake_cache_set)
     monkeypatch.setattr(query_module, "ensemble_generate", fake_ensemble_generate)
 
-    app_client.app.dependency_overrides[auth_module.verify_token_optional] = lambda: None
+    async def fake_auth():
+        return None
+
+    app_client.app.dependency_overrides[auth_module.verify_token_optional] = fake_auth
 
     resp = await app_client.post(
         "/api/query",
@@ -47,7 +50,7 @@ async def test_query_invalid_topic(app_client):
 async def test_query_premium_downgrade_and_level_filter(app_client, monkeypatch, fake_user):
     calls = []
 
-    async def fake_ensemble_generate(_topic, _level, use_premium, mode):
+    async def fake_ensemble_generate(_topic, _level, use_premium, mode, **_kwargs):
         calls.append((use_premium, mode))
         return "ok"
 
@@ -60,12 +63,19 @@ async def test_query_premium_downgrade_and_level_filter(app_client, monkeypatch,
     async def fake_check_is_pro(_user_id):
         return False
 
+    async def fake_save_to_history(*_args, **_kwargs):
+        return None
+
     monkeypatch.setattr(query_module, "ensemble_generate", fake_ensemble_generate)
     monkeypatch.setattr(query_module, "cache_get", fake_cache_get)
     monkeypatch.setattr(query_module, "cache_set", fake_cache_set)
     monkeypatch.setattr(query_module, "check_is_pro", fake_check_is_pro)
+    monkeypatch.setattr(query_module, "save_to_history", fake_save_to_history)
 
-    app_client.app.dependency_overrides[auth_module.verify_token_optional] = lambda: {"user": fake_user}
+    async def fake_auth():
+        return {"user": fake_user}
+
+    app_client.app.dependency_overrides[auth_module.verify_token_optional] = fake_auth
 
     resp = await app_client.post(
         "/api/query",
