@@ -9,7 +9,7 @@ from prompts import PROMPTS, TECHNICAL_DEPTH_PROMPT
 from logging_config import logger
 from services.search import search_service
 from utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE, normalize_mode
-from services.llm_client import close_llm_client
+from services.llm_client import close_llm_client, create_chat_completion, stream_chat_completion
 
 
 
@@ -26,21 +26,21 @@ async def close_client():
 )
 async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **kwargs) -> str:
     """Call API with given model and prompt."""
-    from services.model_provider import ModelProvider
-    
-    provider = ModelProvider.get_instance()
-    
     task = kwargs.get("task", "general")
     if model in ["openai/gpt-oss-20b", "gpt-oss-20b", "deep_dive"]:
         task = "coding"
             
     try:
-        route_kwargs = {"prompt": prompt, "task": task, **kwargs}
-        if model:
-            route_kwargs["model"] = model
-        result = await provider.route_inference(**route_kwargs)
-
-        return result["content"]
+        alias = model or "default-fast"
+        result = await create_chat_completion(
+            model=alias,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=max_tokens,
+            temperature=kwargs.get("temperature", 0.7),
+        )
+        if not result.choices:
+            raise RuntimeError("LLM response missing choices.")
+        return result.choices[0].message.content or ""
     except Exception as e:
          logger.error("inference_failed", error=str(e), model=model)
          raise e
@@ -64,7 +64,7 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
             topic=topic
         )
         
-        response = await call_model(model, prompt, **kwargs)
+        response = await call_model(model or "technical-primary", prompt, **kwargs)
         
         # Append images if available
         if images:
@@ -82,7 +82,7 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
             topic=topic,
             conversation_context=kwargs.get("conversation_context", "No prior context."),
         )
-        return await call_model(model, prompt, **kwargs)
+        return await call_model(model or "socratic", prompt, **kwargs)
 
     template = PROMPTS.get(level)
     if not template:
@@ -90,12 +90,11 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
         
     prompt = template.format(topic=topic)
         
-    return await call_model(model, prompt, **kwargs)
+    return await call_model(model or "default-fast", prompt, **kwargs)
 
 
 async def generate_stream_explanation(topic: str, level: str, model: str | None = None, **kwargs):
     """Stream explanation for topic at given level."""
-    from services.model_provider import ModelProvider
     mode = normalize_mode(kwargs.get("mode", LEARNING_MODE))
     
     prompt = ""
@@ -128,8 +127,18 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             raise ValueError(f"Unknown level: {level}")
         prompt = template.format(topic=topic)
     
-    provider = ModelProvider.get_instance()
-    async for chunk in provider.route_inference_stream(prompt, **kwargs):
+    alias = model or (
+        "technical-primary"
+        if mode == TECHNICAL_MODE
+        else "socratic"
+        if mode == SOCRATIC_MODE
+        else "default-fast"
+    )
+    async for chunk in stream_chat_completion(
+        model=alias,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=kwargs.get("temperature", 0.7),
+    ):
         yield chunk
 
     # Append random quote if this is a regeneration

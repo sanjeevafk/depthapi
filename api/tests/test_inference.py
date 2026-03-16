@@ -1,7 +1,7 @@
 import pytest
 
 import services.inference as inference_module
-import services.model_provider as model_provider
+import services.llm_client as llm_client
 
 
 @pytest.mark.asyncio
@@ -19,7 +19,10 @@ async def test_generate_stream_explanation_regenerate_appends_quote(monkeypatch)
     async def fake_quote():
         return "---\n*\"Quote\"*"
 
-    monkeypatch.setattr(model_provider.ModelProvider, "get_instance", classmethod(lambda cls: DummyProvider()))
+    async def fake_stream(*_args, **_kwargs):
+        yield "hello"
+
+    monkeypatch.setattr(inference_module, "stream_chat_completion", fake_stream)
     monkeypatch.setattr(inference_module.search_service, "get_regeneration_quote", fake_quote)
 
     chunks = []

@@ -117,9 +117,9 @@ CRITICAL: Base everything strictly on the given context. If context is insuffici
 
 # ====================== MODEL CONFIGS ======================
 LEARNING_CANDIDATE_MODELS = [
-    "gemini-2.5-flash",
-    "qwen/qwen3.5-9b",
-    "openai/gpt-oss-20b",
+    "learning-candidate-1",
+    "learning-candidate-2",
+    "learning-candidate-3",
 ]
 JUDGE_MODEL = "MiniMaxAI/MiniMax-M2.5"
 
