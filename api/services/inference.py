@@ -9,12 +9,13 @@ from prompts import PROMPTS, TECHNICAL_DEPTH_PROMPT
 from logging_config import logger
 from services.search import search_service
 from utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE, normalize_mode
+from services.llm_client import close_llm_client
 
 
 
 async def close_client():
-    """No-op as ModelProvider manages its own clients."""
-    pass
+    """Close shared LLM client resources."""
+    await close_llm_client()
 
 
 @retry(
