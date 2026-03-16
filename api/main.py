@@ -8,11 +8,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-try:
-    from fastapi_limiter import FastAPILimiter
-except Exception:
-    FastAPILimiter = None
 from fastapi_limiter.depends import RateLimiter
+from pyrate_limiter import Limiter, Rate, Duration
 from routers import pinned, query, export, history, webhooks, payments, messages
 from services.cache import close_redis, get_redis
 from services.inference import close_client
@@ -22,6 +19,7 @@ from config import get_settings
 
 
 redis_available = False
+rate_limiter: Limiter | None = None
 
 
 @asynccontextmanager
@@ -30,18 +28,17 @@ async def lifespan(app: FastAPI):
     """App lifespan: startup/shutdown."""
     setup_logging()
     
-    global redis_available
+    global redis_available, rate_limiter
     redis_available = False
+    rate_limiter = None
     
     try:
         r = await get_redis()
         await r.ping()
-        if FastAPILimiter is not None:
-            await FastAPILimiter.init(r)
-            redis_available = True
-            logger.info("redis_connected_rate_limiter_init")
-        else:
-            logger.warning("fastapi_limiter_unavailable_skipping_init")
+        redis_available = True
+        if get_settings().rate_limit_per_user > 0:
+            rate_limiter = Limiter(Rate(get_settings().rate_limit_per_user, Duration.MINUTE))
+        logger.info("redis_connected_rate_limiter_init")
     except Exception as e:
 
         logger.error("redis_connection_failed", error=str(e))
@@ -181,15 +178,15 @@ async def conditional_rate_limit(request: Request, response: Response):
     Apply rate limiting ONLY if Redis is available.
     In development (when Redis fails), this becomes a no-op.
     """
-    if not redis_available:
+    if not redis_available or rate_limiter is None:
         return
 
     try:
         if get_settings().environment == "production":
-             await RateLimiter(times=get_settings().rate_limit_per_user, seconds=60)(request, response)
+             await RateLimiter(rate_limiter)(request, response)
         else:
             try:
-                await RateLimiter(times=get_settings().rate_limit_per_user, seconds=60)(request, response)
+                await RateLimiter(rate_limiter)(request, response)
             except Exception:
                 pass
     except Exception:
