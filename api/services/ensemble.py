@@ -6,7 +6,7 @@ from typing import Any
 
 from prompts import JUDGE_PROMPT, LEARNING_CANDIDATE_MODELS
 from services.inference import generate_explanation
-from services.model_provider import ModelProvider
+from services.llm_client import create_chat_completion
 from utils import LEARNING_MODE, normalize_mode
 
 
@@ -59,8 +59,13 @@ async def judge_responses(topic: str, responses: list[str], mode: str = LEARNING
     response_preview = "\n".join(f"[{index}]: {response[:2000]}" for index, response in enumerate(responses))
     prompt = JUDGE_PROMPT.format(topic=topic, responses=response_preview)
 
-    provider = ModelProvider.get_instance()
-    raw_result = await provider.judge_candidates(prompt)
+    result = await create_chat_completion(
+        model="judge",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0,
+        max_tokens=512,
+    )
+    raw_result = result.choices[0].message.content if result.choices else ""
 
     try:
         parsed = _extract_json(raw_result)
