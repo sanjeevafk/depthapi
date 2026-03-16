@@ -10,7 +10,7 @@ async def test_create_checkout_session(app_client, monkeypatch, fake_user, test_
     app_client.app.dependency_overrides[auth_module.verify_token] = lambda: {"user": fake_user}
     monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
 
-    resp = app_client.post(
+    resp = await app_client.post(
         "/api/payments/create-checkout",
         json={"plan": "pro"}
     )
@@ -28,7 +28,7 @@ async def test_verify_payment_status(app_client, monkeypatch, fake_user, test_se
     monkeypatch.setattr(supabase, "create_client", lambda *_args, **_kwargs: fake_supabase)
     app_client.app.dependency_overrides[auth_module.verify_token] = lambda: {"user": fake_user}
 
-    resp = app_client.get("/api/payments/verify-status")
+    resp = await app_client.get("/api/payments/verify-status")
     assert resp.status_code == 200
     data = resp.json()
     assert data["is_pro"] is True

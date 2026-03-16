@@ -24,7 +24,7 @@ async def test_query_cache_hit_returns_cached(app_client, monkeypatch):
 
     app_client.app.dependency_overrides[auth_module.verify_token_optional] = lambda: None
 
-    resp = app_client.post(
+    resp = await app_client.post(
         "/api/query",
         json={"topic": "Cats", "levels": ["eli5"], "mode": "learning"}
     )
@@ -36,7 +36,7 @@ async def test_query_cache_hit_returns_cached(app_client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_query_invalid_topic(app_client):
-    resp = app_client.post(
+    resp = await app_client.post(
         "/api/query",
         json={"topic": "bad<topic>", "levels": ["eli5"], "mode": "learning"}
     )
@@ -67,7 +67,7 @@ async def test_query_premium_downgrade_and_level_filter(app_client, monkeypatch,
 
     app_client.app.dependency_overrides[auth_module.verify_token_optional] = lambda: {"user": fake_user}
 
-    resp = app_client.post(
+    resp = await app_client.post(
         "/api/query",
         json={
             "topic": "Space",
@@ -95,7 +95,7 @@ async def test_query_stream_emits_done(app_client, monkeypatch):
     monkeypatch.setattr(query_module, "ensemble_stream_generate", fake_stream)
     monkeypatch.setattr(query_module, "cache_get", fake_cache_get)
 
-    resp = app_client.post(
+    resp = await app_client.post(
         "/api/query/stream",
         json={"topic": "Ocean", "levels": ["eli5"], "mode": "learning"}
     )

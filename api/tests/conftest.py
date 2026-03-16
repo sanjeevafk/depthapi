@@ -1,7 +1,7 @@
 import types
 from types import SimpleNamespace
 import pytest
-from fastapi.testclient import TestClient
+import httpx
 
 import main as main_app
 import api.main as api_main_app
@@ -153,7 +153,7 @@ def dummy_redis():
 
 
 @pytest.fixture
-def app_client(monkeypatch, dummy_redis):
+async def app_client(monkeypatch, dummy_redis):
     async def _noop_close():
         return None
 
@@ -168,8 +168,12 @@ def app_client(monkeypatch, dummy_redis):
     )
     monkeypatch.setattr(api_main_app, "redis_available", False)
     main_app.app.dependency_overrides = {}
-    with TestClient(main_app.app) as client:
+
+    transport = httpx.ASGITransport(app=main_app.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        client.app = main_app.app
         yield client
+
     main_app.app.dependency_overrides = {}
 
 

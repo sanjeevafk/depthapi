@@ -19,7 +19,7 @@ async def test_get_history(app_client, monkeypatch, fake_user, fake_supabase):
     monkeypatch.setattr(history_module, "get_supabase_admin", lambda: fake_supabase)
     app_client.app.dependency_overrides[auth_module.verify_token] = lambda: {"user": fake_user}
 
-    resp = app_client.get("/api/history")
+    resp = await app_client.get("/api/history")
     assert resp.status_code == 200
     data = resp.json()
     assert data[0]["topic"] == "Cats"
@@ -40,7 +40,7 @@ async def test_add_history(app_client, monkeypatch, fake_user, fake_supabase):
     monkeypatch.setattr(history_module, "get_supabase_admin", lambda: fake_supabase)
     app_client.app.dependency_overrides[auth_module.verify_token] = lambda: {"user": fake_user}
 
-    resp = app_client.post(
+    resp = await app_client.post(
         "/api/history",
         json={"topic": "Ocean", "levels": ["eli5"], "mode": "technical"}
     )
@@ -54,7 +54,7 @@ async def test_delete_history(app_client, monkeypatch, fake_user, fake_supabase)
     monkeypatch.setattr(history_module, "get_supabase_admin", lambda: fake_supabase)
     app_client.app.dependency_overrides[auth_module.verify_token] = lambda: {"user": fake_user}
 
-    resp = app_client.delete("/api/history/h1")
+    resp = await app_client.delete("/api/history/h1")
     assert resp.status_code == 200
     assert resp.json()["status"] == "deleted"
 
@@ -64,6 +64,6 @@ async def test_clear_history(app_client, monkeypatch, fake_user, fake_supabase):
     monkeypatch.setattr(history_module, "get_supabase_admin", lambda: fake_supabase)
     app_client.app.dependency_overrides[auth_module.verify_token] = lambda: {"user": fake_user}
 
-    resp = app_client.delete("/api/history")
+    resp = await app_client.delete("/api/history")
     assert resp.status_code == 200
     assert resp.json()["status"] == "cleared"

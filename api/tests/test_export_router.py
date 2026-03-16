@@ -12,7 +12,7 @@ async def test_export_requires_pro(app_client, monkeypatch, fake_user):
     monkeypatch.setattr(export_module, "check_is_pro", fake_check_is_pro)
     app_client.app.dependency_overrides[auth_module.verify_token] = lambda: {"user": fake_user}
 
-    resp = app_client.post(
+    resp = await app_client.post(
         "/api/export",
         json={
             "topic": "Cats",
@@ -33,7 +33,7 @@ async def test_export_txt_success(app_client, monkeypatch, fake_user):
     monkeypatch.setattr(export_module, "check_is_pro", fake_check_is_pro)
     app_client.app.dependency_overrides[auth_module.verify_token] = lambda: {"user": fake_user}
 
-    resp = app_client.post(
+    resp = await app_client.post(
         "/api/export",
         json={
             "topic": "Cats",
@@ -68,7 +68,7 @@ async def test_export_missing_levels_triggers_generation(app_client, monkeypatch
 
     app_client.app.dependency_overrides[auth_module.verify_token] = lambda: {"user": fake_user}
 
-    resp = app_client.post(
+    resp = await app_client.post(
         "/api/export",
         json={
             "topic": "Cats",
@@ -91,7 +91,7 @@ async def test_export_invalid_format(app_client, monkeypatch, fake_user):
     monkeypatch.setattr(export_module, "check_is_pro", fake_check_is_pro)
     app_client.app.dependency_overrides[auth_module.verify_token] = lambda: {"user": fake_user}
 
-    resp = app_client.post(
+    resp = await app_client.post(
         "/api/export",
         json={
             "topic": "Cats",
