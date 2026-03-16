@@ -1,0 +1,48 @@
+model_list:
+  - model_name: learning-candidate-1
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: learning-candidate-2
+    litellm_params:
+      model: openrouter/qwen/qwen3.5-9b
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  - model_name: learning-candidate-3
+    litellm_params:
+      model: groq/llama-3.1-8b-instant
+      api_key: os.environ/GROQ_API_KEY
+
+  - model_name: judge
+    litellm_params:
+      model: openrouter/MiniMaxAI/MiniMax-M2.5
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  - model_name: technical-primary
+    litellm_params:
+      model: gemini/gemini-2.5-pro
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: socratic
+    litellm_params:
+      model: openrouter/anthropic/claude-sonnet-4.6
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  - model_name: default-fast
+    litellm_params:
+      model: groq/llama-3.1-8b-instant
+      api_key: os.environ/GROQ_API_KEY
+
+router_settings:
+  fallbacks:
+    technical-primary:
+      - learning-candidate-1
+      - default-fast
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

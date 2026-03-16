@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: litellm-proxy
+    env: docker
+    plan: starter
+    dockerCommand: litellm --config /app/infra/litellm/config.yaml --port $PORT
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: LITELLM_MASTER_KEY
+        sync: false
