@@ -160,7 +160,7 @@ async def app_client(monkeypatch, dummy_redis):
     monkeypatch.setattr(cache_module, "get_redis", lambda: dummy_redis)
     monkeypatch.setattr(api_main_app, "get_redis", lambda: dummy_redis)
     monkeypatch.setattr(api_main_app, "close_redis", _noop_close)
-    monkeypatch.setattr(api_main_app, "FastAPILimiter", DummyLimiter)
+    monkeypatch.setattr(api_main_app, "rate_limiter", None)
     monkeypatch.setattr(
         model_provider_module.ModelProvider,
         "get_instance",
