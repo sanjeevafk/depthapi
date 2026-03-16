@@ -17,7 +17,7 @@ async def test_webhook_invalid_signature(app_client, monkeypatch, test_settings)
     test_settings.dodo_webhook_secret = "secret"
     monkeypatch.setattr(webhooks_module, "get_settings", lambda: test_settings)
 
-    resp = app_client.post(
+    resp = await app_client.post(
         "/webhooks/dodo",
         data=json.dumps({"event": "payment.succeeded", "data": {}}),
         headers={"x-dodo-signature": "bad", "content-type": "application/json"}
@@ -31,7 +31,7 @@ async def test_webhook_invalid_signature(app_client, monkeypatch, test_settings)
 async def test_webhook_invalid_json(app_client, monkeypatch, test_settings):
     monkeypatch.setattr(webhooks_module, "get_settings", lambda: test_settings)
 
-    resp = app_client.post(
+    resp = await app_client.post(
         "/webhooks/dodo",
         data="not-json",
         headers={"content-type": "application/json"}
@@ -61,6 +61,6 @@ async def test_dev_replay_disabled_in_prod(app_client, monkeypatch, test_setting
     test_settings.environment = "production"
     monkeypatch.setattr(webhooks_module, "get_settings", lambda: test_settings)
 
-    resp = app_client.post("/webhooks/dodo/dev-replay", json={"event": "payment.failed", "data": {}})
+    resp = await app_client.post("/webhooks/dodo/dev-replay", json={"event": "payment.failed", "data": {}})
     assert resp.status_code == 404
     test_settings.environment = old_env

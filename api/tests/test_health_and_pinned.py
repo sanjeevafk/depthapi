@@ -14,7 +14,7 @@ async def test_health_ok(app_client, monkeypatch):
         return DummyRedis()
 
     monkeypatch.setattr(main_app, "get_redis", fake_get_redis)
-    resp = app_client.get("/api/health")
+    resp = await app_client.get("/api/health")
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
@@ -34,7 +34,7 @@ async def test_health_redis_failure_in_prod(app_client, monkeypatch, test_settin
         return DummyRedis()
 
     monkeypatch.setattr(main_app, "get_redis", fake_get_redis)
-    resp = app_client.get("/api/health")
+    resp = await app_client.get("/api/health")
     assert resp.status_code == 503
     test_settings.environment = old_env
 
