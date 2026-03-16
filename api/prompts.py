@@ -119,9 +119,8 @@ CRITICAL: Base everything strictly on the given context. If context is insuffici
 LEARNING_CANDIDATE_MODELS = [
     "learning-candidate-1",
     "learning-candidate-2",
-    "learning-candidate-3",
 ]
-JUDGE_MODEL = "MiniMaxAI/MiniMax-M2.5"
+JUDGE_MODEL = "MiniMaxAI/MiniMax-M2."
 
 # Helper for easy access
 ALL_MODES = list(PROMPTS.keys())
