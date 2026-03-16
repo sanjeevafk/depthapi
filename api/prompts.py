@@ -120,7 +120,7 @@ LEARNING_CANDIDATE_MODELS = [
     "learning-candidate-1",
     "learning-candidate-2",
 ]
-JUDGE_MODEL = "MiniMaxAI/MiniMax-M2."
+JUDGE_MODEL = "z-ai/glm-4.5-air:free"
 
 # Helper for easy access
 ALL_MODES = list(PROMPTS.keys())
