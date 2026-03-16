@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import AsyncGenerator
 
 from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletionMessageParam
 
 from config import get_settings
 from services.llm_errors import LLMUnavailable
@@ -58,14 +59,14 @@ async def get_llm_client() -> AsyncOpenAI:
     return _client
 
 
-async def create_chat_completion(model: str, messages: list[dict], **kwargs):
+async def create_chat_completion(model: str, messages: list[ChatCompletionMessageParam], **kwargs):
     """Create a chat completion via LiteLLM."""
     client = await get_llm_client()
     return await client.chat.completions.create(model=model, messages=messages, **kwargs)
 
 
 async def stream_chat_completion(
-    model: str, messages: list[dict], **kwargs
+    model: str, messages: list[ChatCompletionMessageParam], **kwargs
 ) -> AsyncGenerator[str, None]:
     """Stream chat completion text deltas via LiteLLM."""
     client = await get_llm_client()
