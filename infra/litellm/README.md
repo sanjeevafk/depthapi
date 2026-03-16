@@ -9,7 +9,7 @@ Set these for the proxy service:
 - `GROQ_API_KEY`
 - `GEMINI_API_KEY`
 - `OPENROUTER_API_KEY`
-- `LITELLM_MASTER_KEY`
+- `LITELLM_MASTER_KEY` - A secure random key used to authenticate requests to the proxy. Generate with `openssl rand -hex 32` or similar.
 
 ## Render Deployment
 

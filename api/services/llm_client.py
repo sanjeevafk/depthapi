@@ -34,7 +34,7 @@ def _resolve_api_key() -> str:
     return api_key
 
 
-def get_llm_client() -> AsyncOpenAI:
+async def get_llm_client() -> AsyncOpenAI:
     """Return a singleton AsyncOpenAI client configured for LiteLLM."""
     global _client, _client_base_url, _client_api_key
 
@@ -44,6 +44,9 @@ def get_llm_client() -> AsyncOpenAI:
 
     if _client and _client_base_url == base_url and _client_api_key == api_key:
         return _client
+
+    if _client:
+        await _client.close()
 
     _client = AsyncOpenAI(
         api_key=api_key,
@@ -57,7 +60,7 @@ def get_llm_client() -> AsyncOpenAI:
 
 async def create_chat_completion(model: str, messages: list[dict], **kwargs):
     """Create a chat completion via LiteLLM."""
-    client = get_llm_client()
+    client = await get_llm_client()
     return await client.chat.completions.create(model=model, messages=messages, **kwargs)
 
 
@@ -65,7 +68,7 @@ async def stream_chat_completion(
     model: str, messages: list[dict], **kwargs
 ) -> AsyncGenerator[str, None]:
     """Stream chat completion text deltas via LiteLLM."""
-    client = get_llm_client()
+    client = await get_llm_client()
     stream = await client.chat.completions.create(
         model=model,
         messages=messages,
