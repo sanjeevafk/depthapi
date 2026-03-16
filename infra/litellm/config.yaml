@@ -9,11 +9,6 @@ model_list:
       model: groq/openai/gpt-oss-20b
       api_key: os.environ/GROQ_API_KEY
 
-  - model_name: learning-candidate-3
-    litellm_params:
-      model: groq/llama-3.1-8b-instant
-      api_key: os.environ/GROQ_API_KEY
-
   - model_name: judge
     litellm_params:
       model: openrouter/z-ai/glm-4.5-air:free
@@ -40,10 +35,7 @@ model_list:
       api_key: os.environ/GROQ_API_KEY
 
 router_settings:
-  fallbacks:
-    - technical-primary:
-        - technical-fallback
-        - default-fast
+  fallbacks: [{"technical-primary": ["technical-fallback", "default-fast"]}]
 
 litellm_settings:
   drop_params: true
