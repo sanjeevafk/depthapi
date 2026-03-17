@@ -1,7 +1,18 @@
 import pytest
+from fastapi.responses import Response
 
 import auth as auth_module
 import routers.export as export_module
+
+
+def fake_streaming_response(content, **kwargs):
+    body = content.getvalue() if hasattr(content, "getvalue") else content
+    return Response(
+        content=body,
+        media_type=kwargs.get("media_type"),
+        headers=kwargs.get("headers"),
+        status_code=kwargs.get("status_code", 200),
+    )
 
 
 @pytest.mark.asyncio
@@ -10,7 +21,11 @@ async def test_export_requires_pro(app_client, monkeypatch, fake_user):
         return False
 
     monkeypatch.setattr(export_module, "check_is_pro", fake_check_is_pro)
-    app_client.app.dependency_overrides[auth_module.verify_token] = lambda: {"user": fake_user}
+    monkeypatch.setattr(export_module, "StreamingResponse", fake_streaming_response)
+    async def fake_auth():
+        return {"user": fake_user}
+
+    app_client.app.dependency_overrides[auth_module.verify_token] = fake_auth
 
     resp = await app_client.post(
         "/api/export",
@@ -31,7 +46,11 @@ async def test_export_txt_success(app_client, monkeypatch, fake_user):
         return True
 
     monkeypatch.setattr(export_module, "check_is_pro", fake_check_is_pro)
-    app_client.app.dependency_overrides[auth_module.verify_token] = lambda: {"user": fake_user}
+    monkeypatch.setattr(export_module, "StreamingResponse", fake_streaming_response)
+    async def fake_auth():
+        return {"user": fake_user}
+
+    app_client.app.dependency_overrides[auth_module.verify_token] = fake_auth
 
     resp = await app_client.post(
         "/api/export",
@@ -64,9 +83,12 @@ async def test_export_missing_levels_triggers_generation(app_client, monkeypatch
     monkeypatch.setattr(export_module, "check_is_pro", fake_check_is_pro)
     monkeypatch.setattr(export_module, "ensemble_generate", fake_generate)
     monkeypatch.setattr(export_module, "FREE_LEVELS", ["eli5", "eli10"])
-    monkeypatch.setattr(export_module, "PREMIUM_LEVELS", [])
+    monkeypatch.setattr(export_module, "StreamingResponse", fake_streaming_response)
 
-    app_client.app.dependency_overrides[auth_module.verify_token] = lambda: {"user": fake_user}
+    async def fake_auth():
+        return {"user": fake_user}
+
+    app_client.app.dependency_overrides[auth_module.verify_token] = fake_auth
 
     resp = await app_client.post(
         "/api/export",
@@ -89,7 +111,11 @@ async def test_export_invalid_format(app_client, monkeypatch, fake_user):
         return True
 
     monkeypatch.setattr(export_module, "check_is_pro", fake_check_is_pro)
-    app_client.app.dependency_overrides[auth_module.verify_token] = lambda: {"user": fake_user}
+    monkeypatch.setattr(export_module, "StreamingResponse", fake_streaming_response)
+    async def fake_auth():
+        return {"user": fake_user}
+
+    app_client.app.dependency_overrides[auth_module.verify_token] = fake_auth
 
     resp = await app_client.post(
         "/api/export",

@@ -17,7 +17,10 @@ async def test_get_history(app_client, monkeypatch, fake_user, fake_supabase):
     ]
 
     monkeypatch.setattr(history_module, "get_supabase_admin", lambda: fake_supabase)
-    app_client.app.dependency_overrides[auth_module.verify_token] = lambda: {"user": fake_user}
+    async def fake_auth():
+        return {"user": fake_user}
+
+    app_client.app.dependency_overrides[auth_module.verify_token] = fake_auth
 
     resp = await app_client.get("/api/history")
     assert resp.status_code == 200
@@ -38,7 +41,10 @@ async def test_add_history(app_client, monkeypatch, fake_user, fake_supabase):
     ]
 
     monkeypatch.setattr(history_module, "get_supabase_admin", lambda: fake_supabase)
-    app_client.app.dependency_overrides[auth_module.verify_token] = lambda: {"user": fake_user}
+    async def fake_auth():
+        return {"user": fake_user}
+
+    app_client.app.dependency_overrides[auth_module.verify_token] = fake_auth
 
     resp = await app_client.post(
         "/api/history",
@@ -52,7 +58,10 @@ async def test_add_history(app_client, monkeypatch, fake_user, fake_supabase):
 @pytest.mark.asyncio
 async def test_delete_history(app_client, monkeypatch, fake_user, fake_supabase):
     monkeypatch.setattr(history_module, "get_supabase_admin", lambda: fake_supabase)
-    app_client.app.dependency_overrides[auth_module.verify_token] = lambda: {"user": fake_user}
+    async def fake_auth():
+        return {"user": fake_user}
+
+    app_client.app.dependency_overrides[auth_module.verify_token] = fake_auth
 
     resp = await app_client.delete("/api/history/h1")
     assert resp.status_code == 200
@@ -62,7 +71,10 @@ async def test_delete_history(app_client, monkeypatch, fake_user, fake_supabase)
 @pytest.mark.asyncio
 async def test_clear_history(app_client, monkeypatch, fake_user, fake_supabase):
     monkeypatch.setattr(history_module, "get_supabase_admin", lambda: fake_supabase)
-    app_client.app.dependency_overrides[auth_module.verify_token] = lambda: {"user": fake_user}
+    async def fake_auth():
+        return {"user": fake_user}
+
+    app_client.app.dependency_overrides[auth_module.verify_token] = fake_auth
 
     resp = await app_client.delete("/api/history")
     assert resp.status_code == 200
