@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from auth import check_is_pro, ensure_user_exists, get_supabase_admin, verify_token_optional
 from config import get_settings
-from logging_config import logger
+from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from services.cache import cache_get, cache_set
 from services.ensemble import ensemble_generate, ensemble_stream_generate
 from services.inference import generate_explanation, generate_stream_explanation
@@ -79,6 +79,9 @@ async def query_topic(
     request: Request,
     auth_data: dict = Depends(verify_token_optional),
 ) -> QueryResponse:
+    request_started = time.perf_counter()
+    request_id = str(getattr(request.state, "request_id", "") or "")
+    topic_hash = anonymize_text(req.topic)
     config_state = get_litellm_config_state()
     if not bool(config_state.get("chat_enabled", False)):
         raise LLMUnavailable("Chat is disabled because LiteLLM is not configured correctly.")
@@ -106,6 +109,8 @@ async def query_topic(
         levels = ["eli15"]
 
     effective_user_id = auth_data["user"].id if auth_data else None
+    user_id_raw = str(effective_user_id) if effective_user_id else None
+    user_id_hash = anonymize_user_id(user_id_raw)
     estimated_tokens = estimate_tokens_for_text(topic, output_buffer=900 * max(len(levels), 1))
     await enforce_request_controls(
         user_id=str(effective_user_id) if effective_user_id else None,
@@ -132,6 +137,7 @@ async def query_topic(
         return QueryResponse(topic=topic, explanations=explanations, cached=True)
 
     if mode == LEARNING_MODE:
+        level_telemetry: dict[str, dict[str, Any]] = {level: {} for level in missing_levels}
         tasks = {
             level: ensemble_generate(
                 topic,
@@ -140,10 +146,14 @@ async def query_topic(
                 mode=mode,
                 temperature=req.temperature,
                 regenerate=req.regenerate,
+                request_id=request_id,
+                user_id=user_id_raw,
+                telemetry_sink=level_telemetry[level],
             )
             for level in missing_levels
         }
     else:
+        level_telemetry = {level: {} for level in missing_levels}
         tasks = {
             level: generate_explanation(
                 topic,
@@ -151,6 +161,9 @@ async def query_topic(
                 mode=mode,
                 temperature=req.temperature,
                 regenerate=req.regenerate,
+                request_id=request_id,
+                user_id=user_id_raw,
+                telemetry_sink=level_telemetry[level],
             )
             for level in missing_levels
         }
@@ -164,10 +177,58 @@ async def query_topic(
             if isinstance(result, LLMError):
                 raise result
             explanations[level] = f"Error generating {level}: Please try again."
-            logger.error("query_generation_failed", level=level, error=str(result), mode=mode)
+            logger.error(
+                "query_generation_failed",
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+                level=level,
+                topic_hash=topic_hash,
+                error=str(result),
+                mode=mode,
+                retry=bool(req.regenerate),
+                sampled=False,
+            )
 
     if auth_data:
         asyncio.create_task(save_to_history(auth_data["user"], topic, levels, mode))
+
+    token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    estimated_cost_usd = 0.0
+    has_cost = False
+    model_inference_values: list[float] = []
+    model_alias = None
+    for telemetry in level_telemetry.values():
+        usage = telemetry.get("token_usage")
+        if isinstance(usage, dict):
+            token_usage["prompt_tokens"] += int(usage.get("prompt_tokens") or 0)
+            token_usage["completion_tokens"] += int(usage.get("completion_tokens") or 0)
+            token_usage["total_tokens"] += int(usage.get("total_tokens") or 0)
+        cost_value = telemetry.get("estimated_cost_usd")
+        if isinstance(cost_value, (int, float)):
+            estimated_cost_usd += float(cost_value)
+            has_cost = True
+        model_ms = telemetry.get("model_inference_ms")
+        if isinstance(model_ms, (int, float)):
+            model_inference_values.append(float(model_ms))
+        if not model_alias and isinstance(telemetry.get("model_alias"), str):
+            model_alias = str(telemetry.get("model_alias"))
+
+    queue_time_ms = round((time.perf_counter() - request_started) * 1000, 2)
+    model_inference_ms = round(max(model_inference_values), 2) if model_inference_values else None
+    log_sampled_success(
+        "query_observed",
+        request_id=request_id,
+        user_id_hash=user_id_hash,
+        model_alias=model_alias or mode,
+        latency_ms=queue_time_ms,
+        queue_time_ms=queue_time_ms,
+        model_inference_ms=model_inference_ms,
+        stream_duration_ms=None,
+        token_usage=token_usage,
+        estimated_cost_usd=round(estimated_cost_usd, 8) if has_cost else None,
+        retry=bool(req.regenerate),
+        sampled=True,
+    )
 
     return QueryResponse(topic=topic, explanations=explanations, cached=False)
 
@@ -179,6 +240,9 @@ async def query_topic_stream(
     auth_data: dict = Depends(verify_token_optional),
 ):
     """Stream the final judged response in chunks."""
+    request_received = time.perf_counter()
+    request_id = str(getattr(request.state, "request_id", "") or "")
+    topic_hash = anonymize_text(req.topic)
     config_state = get_litellm_config_state()
     if not bool(config_state.get("chat_enabled", False)):
         raise LLMUnavailable("Chat is disabled because LiteLLM is not configured correctly.")
@@ -205,6 +269,8 @@ async def query_topic_stream(
     level = normalized_levels[0] if normalized_levels else "eli15"
 
     effective_user_id = auth_data["user"].id if auth_data else None
+    user_id_raw = str(effective_user_id) if effective_user_id else None
+    user_id_hash = anonymize_user_id(user_id_raw)
     estimated_tokens = estimate_tokens_for_text(topic)
     await enforce_request_controls(
         user_id=str(effective_user_id) if effective_user_id else None,
@@ -240,6 +306,7 @@ async def query_topic_stream(
         full_content = ""
         builder = SseEventBuilder()
         start_time = time.perf_counter()
+        queue_started = start_time
         first_event_ms = None
         first_token_ms = None
         last_chunk_time = None
@@ -249,6 +316,8 @@ async def query_topic_stream(
         timed_out = False
         start_timeout = False
         fallback_used = False
+        telemetry_sink: dict[str, Any] = {}
+        model_alias: str | None = None
 
         def record_chunk():
             nonlocal first_token_ms, last_chunk_time, total_chunk_interval_ms, chunk_count
@@ -301,6 +370,9 @@ async def query_topic_stream(
                     use_premium=req.premium,
                     temperature=req.temperature,
                     regenerate=req.regenerate,
+                    request_id=request_id,
+                    user_id=user_id_raw,
+                    telemetry_sink=telemetry_sink,
                 )
                 if mode == LEARNING_MODE
                 else generate_stream_explanation(
@@ -309,6 +381,9 @@ async def query_topic_stream(
                     mode=mode,
                     temperature=req.temperature,
                     regenerate=req.regenerate,
+                    request_id=request_id,
+                    user_id=user_id_raw,
+                    telemetry_sink=telemetry_sink,
                 )
             )
             stream_iter = _stream_chunks(stream)
@@ -358,6 +433,9 @@ async def query_topic_stream(
                                 mode=mode,
                                 temperature=req.temperature,
                                 regenerate=req.regenerate,
+                                request_id=request_id,
+                                user_id=user_id_raw,
+                                telemetry_sink=telemetry_sink,
                             )
                             if mode == LEARNING_MODE
                             else generate_explanation(
@@ -366,12 +444,24 @@ async def query_topic_stream(
                                 mode=mode,
                                 temperature=req.temperature,
                                 regenerate=req.regenerate,
+                                request_id=request_id,
+                                user_id=user_id_raw,
+                                telemetry_sink=telemetry_sink,
                             )
                         ),
                         timeout=max(stream_max_seconds - (time.perf_counter() - start_time), 1),
                     )
                 except Exception as exc:
-                    logger.error("streaming_fallback_failed", error=str(exc), topic=topic, mode=mode)
+                    logger.error(
+                        "streaming_fallback_failed",
+                        request_id=request_id,
+                        user_id_hash=user_id_hash,
+                        topic_hash=topic_hash,
+                        error=str(exc),
+                        mode=mode,
+                        retry=bool(req.regenerate),
+                        sampled=False,
+                    )
                     yield emit("error", {"error": "Streaming timed out. Please retry."})
                     yield emit("done", "[DONE]")
                     return
@@ -398,7 +488,16 @@ async def query_topic_stream(
 
             yield emit("done", "[DONE]")
         except Exception as exc:
-            logger.error("streaming_failed", error=str(exc), topic=topic, mode=mode)
+            logger.error(
+                "streaming_failed",
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+                topic_hash=topic_hash,
+                error=str(exc),
+                mode=mode,
+                retry=bool(req.regenerate),
+                sampled=False,
+            )
             yield emit("error", {"error": "An error occurred while streaming. Please try again."})
             yield emit("done", "[DONE]")
         finally:
@@ -406,11 +505,25 @@ async def query_topic_stream(
             avg_chunk_interval_ms = None
             if chunk_count > 1:
                 avg_chunk_interval_ms = total_chunk_interval_ms / (chunk_count - 1)
-            logger.info(
-                "query_stream_latency",
-                mode=mode,
+            queue_time_ms = round((queue_started - request_received) * 1000, 2)
+            model_alias = str(telemetry_sink.get("model_alias") or mode)
+            model_inference_ms = telemetry_sink.get("model_inference_ms")
+            stream_duration_ms = telemetry_sink.get("stream_duration_ms")
+            token_usage = telemetry_sink.get("token_usage")
+            estimated_cost_usd = telemetry_sink.get("estimated_cost_usd")
+            log_sampled_success(
+                "query_stream_observed",
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+                model_alias=model_alias,
                 level=level,
-                total_ms=round(total_ms, 2),
+                latency_ms=round(total_ms, 2),
+                queue_time_ms=queue_time_ms,
+                model_inference_ms=model_inference_ms,
+                stream_duration_ms=stream_duration_ms,
+                token_usage=token_usage,
+                estimated_cost_usd=estimated_cost_usd,
+                retry=bool(req.regenerate),
                 first_event_ms=round(first_event_ms, 2) if first_event_ms is not None else None,
                 first_token_ms=round(first_token_ms, 2) if first_token_ms is not None else None,
                 avg_chunk_interval_ms=round(avg_chunk_interval_ms, 2) if avg_chunk_interval_ms is not None else None,
@@ -420,6 +533,7 @@ async def query_topic_stream(
                 timed_out=timed_out,
                 fallback_used=fallback_used,
                 stream_max_seconds=stream_max_seconds,
+                sampled=True,
             )
 
     return StreamingResponse(
@@ -475,4 +589,10 @@ async def save_to_history(user, topic: str, levels: list[str], mode: str):
 
             await asyncio.to_thread(_insert_new)
     except Exception as exc:
-        logger.error("save_to_history_task_error", error=str(exc), user_id=user.id, topic=topic)
+        logger.error(
+            "save_to_history_task_error",
+            error=str(exc),
+            user_id_hash=anonymize_user_id(str(getattr(user, "id", "") or "") or None),
+            topic_hash=anonymize_text(topic),
+            sampled=False,
+        )

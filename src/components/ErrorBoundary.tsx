@@ -1,5 +1,6 @@
 import { Component, ReactNode, type ErrorInfo } from 'react'
 import { AlertTriangle, RefreshCcw, Home } from 'lucide-react'
+import { captureFrontendError } from '../lib/monitoring'
 
 interface Props {
     children: ReactNode
@@ -31,6 +32,10 @@ export class ErrorBoundary extends Component<Props, State> {
 
     componentDidCatch(error: Error, errorInfo: ErrorInfo) {
         console.error('ErrorBoundary caught an error:', error, errorInfo)
+        captureFrontendError(error, {
+            source: 'react.error_boundary',
+            componentStack: errorInfo.componentStack,
+        })
         this.setState({
             error,
             errorInfo

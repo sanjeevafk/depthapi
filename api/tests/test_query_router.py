@@ -176,12 +176,20 @@ async def test_query_quota_exhaustion_blocks_inference(app_client, monkeypatch, 
     async def fail_if_called(*_args, **_kwargs):
         pytest.fail("inference must not run when quota is exceeded")
 
+    async def fake_cache_get(_key):
+        return None
+
+    async def fake_cache_set(_key, _value):
+        return True
+
     async def fake_auth():
         return {"user": SimpleNamespace(id="quota-user", email="quota@example.com", user_metadata={})}
 
     app_client.app.dependency_overrides[auth_module.verify_token_optional] = fake_auth
     monkeypatch.setattr(query_module, "ensemble_generate", fail_if_called)
     monkeypatch.setattr(query_module, "generate_explanation", fail_if_called)
+    monkeypatch.setattr(query_module, "cache_get", fake_cache_get)
+    monkeypatch.setattr(query_module, "cache_set", fake_cache_set)
     monkeypatch.setattr(rate_limit_module, "get_settings", lambda: test_settings)
 
     try:

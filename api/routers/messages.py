@@ -13,7 +13,8 @@ from pydantic import BaseModel, Field
 
 from auth import check_is_pro, get_supabase_admin, verify_token
 from config import get_settings
-from logging_config import logger
+from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
+from monitoring import capture_telemetry_event
 from services.cache import cache_get, cache_set, cache_set_if_absent
 from services.ensemble import ensemble_stream_generate
 from services.ensemble import ensemble_generate
@@ -34,6 +35,24 @@ from utils import (
 )
 
 router = APIRouter(tags=["messages"])
+
+
+def _trusted_proxies_from_settings(config_settings: Any) -> set[str]:
+    raw = str(getattr(config_settings, "trusted_proxies", "") or "")
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
+
+def _resolve_client_ip(request: Request, *, trusted_proxies: set[str]) -> str:
+    peer_host = (request.client.host if request.client else "") or ""
+    if peer_host in trusted_proxies:
+        forwarded_for = request.headers.get("x-forwarded-for", "")
+        forwarded_chain = [part.strip() for part in forwarded_for.split(",") if part.strip()]
+        # Use the leftmost forwarded IP (original client) when behind trusted proxy.
+        forwarded_ip = forwarded_chain[0] if forwarded_chain else None
+        real_ip = (request.headers.get("x-real-ip") or "").strip() or None
+        return str(forwarded_ip or real_ip or peer_host or "unknown")
+
+    return str(peer_host or "unknown")
 
 
 class MessageRequest(BaseModel):
@@ -98,6 +117,8 @@ def _build_replay_response(
 
 @router.post("/messages")
 async def send_message(req: MessageRequest, request: Request, auth_data: dict = Depends(verify_token)):
+    request_received = time.perf_counter()
+    request_id = str(getattr(request.state, "request_id", "") or "")
     config_state = get_litellm_config_state()
     if not bool(config_state.get("chat_enabled", False)):
         raise LLMUnavailable("Chat is disabled because LiteLLM is not configured correctly.")
@@ -108,6 +129,18 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         raise HTTPException(status_code=401, detail="Authenticated user id is missing")
 
     content = (req.content or "").strip()
+    user_id_hash = anonymize_user_id(user_id)
+    content_hash = anonymize_text(content)
+
+    capture_telemetry_event(
+        "message_send",
+        request_id=request_id,
+        user_id_hash=user_id_hash,
+        mode=req.mode,
+        prompt_mode=req.prompt_mode,
+        regenerate=bool(req.regenerate),
+    )
+
     if not content:
         raise HTTPException(status_code=400, detail="Content is required")
 
@@ -153,11 +186,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
 
     estimated_tokens = estimate_tokens_for_text(content)
-    forwarded_for = request.headers.get("x-forwarded-for", "")
-    forwarded_ip = next((part.strip() for part in forwarded_for.split(",") if part.strip()), None)
-    real_ip = (request.headers.get("x-real-ip") or "").strip() or None
-    raw_client_ip = forwarded_ip or real_ip or (request.client.host if request.client else None)
-    client_ip = str(raw_client_ip or "unknown")
+    client_ip = _resolve_client_ip(request, trusted_proxies=trusted_proxies)
     await enforce_request_controls(
         user_id=user_id,
         client_ip=client_ip,
@@ -183,7 +212,15 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("messages_conversation_fetch_failed", error=str(exc), conversation_id=req.conversation_id)
+        logger.error(
+            "messages_conversation_fetch_failed",
+            error=str(exc),
+            request_id=request_id,
+            user_id_hash=user_id_hash,
+            conversation_id=req.conversation_id,
+            retry=bool(req.regenerate),
+            sampled=False,
+        )
         raise HTTPException(status_code=500, detail="Failed to load conversation") from exc
 
     selected_mode = normalize_mode(req.mode or conversation.get("mode") or conversation.get("settings", {}).get("mode"))
@@ -259,7 +296,15 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             .execute
         )
     except Exception as exc:
-        logger.error("messages_user_insert_failed", error=str(exc), conversation_id=req.conversation_id)
+        logger.error(
+            "messages_user_insert_failed",
+            error=str(exc),
+            request_id=request_id,
+            user_id_hash=user_id_hash,
+            conversation_id=req.conversation_id,
+            retry=bool(req.regenerate),
+            sampled=False,
+        )
         await cache_set(
             idempotency_key,
             {"status": "failed", "message_id": client_message_id},
@@ -278,7 +323,15 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             supabase.table("conversations").update(update_payload).eq("id", conversation.get("id")).execute
         )
     except Exception as exc:
-        logger.warning("messages_conversation_update_failed", error=str(exc), conversation_id=req.conversation_id)
+        logger.warning(
+            "messages_conversation_update_failed",
+            error=str(exc),
+            request_id=request_id,
+            user_id_hash=user_id_hash,
+            conversation_id=req.conversation_id,
+            retry=bool(req.regenerate),
+            sampled=False,
+        )
 
     assistant_metadata = {
         "assistant_client_id": assistant_client_id,
@@ -313,7 +366,15 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             ttl=idempotency_ttl_seconds,
         )
     except Exception as exc:
-        logger.error("messages_assistant_insert_failed", error=str(exc), conversation_id=req.conversation_id)
+        logger.error(
+            "messages_assistant_insert_failed",
+            error=str(exc),
+            request_id=request_id,
+            user_id_hash=user_id_hash,
+            conversation_id=req.conversation_id,
+            retry=bool(req.regenerate),
+            sampled=False,
+        )
         await cache_set(
             idempotency_key,
             {"status": "failed", "message_id": client_message_id},
@@ -338,6 +399,17 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         timed_out = False
         fallback_used = False
         start_timeout = False
+        telemetry_sink: dict[str, Any] = {}
+        stream_failed = False
+
+        capture_telemetry_event(
+            "stream_start",
+            request_id=request_id,
+            user_id_hash=user_id_hash,
+            mode=selected_mode,
+            prompt_mode=prompt_mode,
+            regenerate=bool(req.regenerate),
+        )
 
         def record_chunk():
             nonlocal first_token_ms, last_chunk_time, total_chunk_interval_ms, chunk_count
@@ -375,7 +447,18 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             yield emit("meta", meta_payload)
 
             if cached_response:
-                logger.info("messages_cache_hit", conversation_id=req.conversation_id, cache_key=cache_key)
+                log_sampled_success(
+                    "messages_cache_hit",
+                    request_id=request_id,
+                    user_id_hash=user_id_hash,
+                    model_alias="cache",
+                    latency_ms=round((time.perf_counter() - start_time) * 1000, 2),
+                    token_usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                    estimated_cost_usd=0.0,
+                    retry=bool(req.regenerate),
+                    conversation_id=req.conversation_id,
+                    sampled=True,
+                )
                 full_content = cached_response
                 await cache_set(
                     idempotency_key,
@@ -402,13 +485,22 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     prompt_mode,
                     mode=selected_mode,
                     use_premium=is_pro,
+                    temperature=request_temperature,
+                    regenerate=req.regenerate,
+                    request_id=request_id,
+                    user_id=user_id,
+                    telemetry_sink=telemetry_sink,
                 )
                 if selected_mode == LEARNING_MODE
                 else generate_stream_explanation(
                     content,
                     prompt_mode,
                     mode=selected_mode,
-                    regenerate=False,
+                    temperature=request_temperature,
+                    regenerate=req.regenerate,
+                    request_id=request_id,
+                    user_id=user_id,
+                    telemetry_sink=telemetry_sink,
                 )
             )
             stream_iter = stream.__aiter__()
@@ -461,9 +553,13 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 fallback_used = True
                 logger.warning(
                     "messages_stream_fallback",
+                    request_id=request_id,
+                    user_id_hash=user_id_hash,
                     reason="start_timeout" if start_timeout else "max_duration",
                     conversation_id=req.conversation_id,
                     message_id=client_message_id,
+                    retry=bool(req.regenerate),
+                    sampled=False,
                 )
                 try:
                     fallback_content = await asyncio.wait_for(
@@ -473,18 +569,37 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                                 prompt_mode,
                                 mode=selected_mode,
                                 use_premium=is_pro,
+                                temperature=request_temperature,
+                                regenerate=req.regenerate,
+                                request_id=request_id,
+                                user_id=user_id,
+                                telemetry_sink=telemetry_sink,
                             )
                             if selected_mode == LEARNING_MODE
                             else generate_explanation(
                                 content,
                                 prompt_mode,
                                 mode=selected_mode,
+                                temperature=request_temperature,
+                                regenerate=req.regenerate,
+                                request_id=request_id,
+                                user_id=user_id,
+                                telemetry_sink=telemetry_sink,
                             )
                         ),
                         timeout=max(stream_max_seconds - (time.perf_counter() - start_time), 1),
                     )
                 except Exception as exc:
-                    logger.error("messages_fallback_failed", error=str(exc), conversation_id=req.conversation_id)
+                    logger.error(
+                        "messages_fallback_failed",
+                        error=str(exc),
+                        request_id=request_id,
+                        user_id_hash=user_id_hash,
+                        conversation_id=req.conversation_id,
+                        content_hash=content_hash,
+                        retry=bool(req.regenerate),
+                        sampled=False,
+                    )
                     yield emit("error", {"error": "Streaming timed out. Please retry."})
                     yield emit("done", "[DONE]")
                     return
@@ -541,7 +656,17 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             if not aborted:
                 yield emit("done", "[DONE]")
         except Exception as exc:
-            logger.error("messages_stream_failed", error=str(exc), conversation_id=req.conversation_id)
+            stream_failed = True
+            logger.error(
+                "messages_stream_failed",
+                error=str(exc),
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+                conversation_id=req.conversation_id,
+                content_hash=content_hash,
+                retry=bool(req.regenerate),
+                sampled=False,
+            )
             await cache_set(
                 idempotency_key,
                 {"status": "failed", "message_id": client_message_id},
@@ -558,17 +683,33 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             if aborted:
                 logger.info(
                     "messages_abort_confirmed",
+                    request_id=request_id,
+                    user_id_hash=user_id_hash,
                     conversation_id=req.conversation_id,
                     message_id=client_message_id,
                     abort_confirmed=True,
                     tokens_after_abort=tokens_after_abort,
                     reason=abort_reason,
                 )
-            logger.info(
-                "messages_latency",
+            queue_time_ms = round((start_time - request_received) * 1000, 2)
+            model_inference_ms = telemetry_sink.get("model_inference_ms")
+            stream_duration_ms = telemetry_sink.get("stream_duration_ms")
+            token_usage = telemetry_sink.get("token_usage")
+            estimated_cost_usd = telemetry_sink.get("estimated_cost_usd")
+            log_sampled_success(
+                "messages_stream_observed",
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+                model_alias=str(telemetry_sink.get("model_alias") or selected_mode),
                 mode=selected_mode,
                 prompt_mode=prompt_mode,
-                total_ms=round(total_ms, 2),
+                latency_ms=round(total_ms, 2),
+                queue_time_ms=queue_time_ms,
+                model_inference_ms=model_inference_ms,
+                stream_duration_ms=stream_duration_ms,
+                token_usage=token_usage,
+                estimated_cost_usd=estimated_cost_usd,
+                retry=bool(req.regenerate),
                 first_event_ms=round(first_event_ms, 2) if first_event_ms is not None else None,
                 first_token_ms=round(first_token_ms, 2) if first_token_ms is not None else None,
                 avg_chunk_interval_ms=round(avg_chunk_interval_ms, 2) if avg_chunk_interval_ms is not None else None,
@@ -581,6 +722,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 timed_out=timed_out,
                 fallback_used=fallback_used,
                 stream_max_seconds=stream_max_seconds,
+                sampled=True,
             )
             if assistant_message_id:
                 try:
@@ -588,7 +730,34 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                         supabase.table("messages").update({"content": full_content}).eq("id", assistant_message_id).execute
                     )
                 except Exception as exc:
-                    logger.error("messages_assistant_update_failed", error=str(exc), message_id=assistant_message_id)
+                    logger.error(
+                        "messages_assistant_update_failed",
+                        error=str(exc),
+                        request_id=request_id,
+                        user_id_hash=user_id_hash,
+                        message_id=assistant_message_id,
+                        retry=bool(req.regenerate),
+                        sampled=False,
+                    )
+
+            status = "success"
+            if aborted:
+                status = "aborted"
+            elif timed_out or start_timeout:
+                status = "timed_out"
+            elif stream_failed:
+                status = "error"
+            capture_telemetry_event(
+                "stream_end",
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+                mode=selected_mode,
+                prompt_mode=prompt_mode,
+                regenerate=bool(req.regenerate),
+                status=status,
+                duration_ms=round(total_ms, 2),
+                fallback_used=fallback_used,
+            )
 
     return StreamingResponse(
         event_generator(),

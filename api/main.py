@@ -15,8 +15,15 @@ from services.cache import close_redis, get_redis
 from services.inference import close_client
 from services.llm_client import get_litellm_config_state
 from services.llm_errors import LLMError, LLMBadRequest, LLMInvalidAPIKey, LLMUnavailable
-from logging_config import setup_logging, logger
+from logging_config import (
+    setup_logging,
+    logger,
+    generate_request_id,
+    is_valid_request_id,
+    log_sampled_success,
+)
 from config import get_settings
+from monitoring import init_sentry, capture_exception, continue_trace_from_headers, set_request_context
 
 
 redis_available = False
@@ -27,6 +34,7 @@ async def lifespan(app: FastAPI):
 
     """App lifespan: startup/shutdown."""
     setup_logging()
+    init_sentry(get_settings())
     
     global redis_available
     redis_available = False
@@ -92,7 +100,7 @@ app.add_middleware(
     allow_origins=[origin.strip() for origin in allowed_origins],
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["content-type", "authorization"],
+    allow_headers=["content-type", "authorization", "x-request-id"],
     max_age=3600,
 )
 
@@ -129,8 +137,26 @@ async def security_headers(request: Request, call_next):
 @app.middleware("http")
 async def structlog_middleware(request: Request, call_next):
     """Log requests with structlog."""
+    start = time.perf_counter()
+    incoming_request_id = request.headers.get("x-request-id")
+    request_id = incoming_request_id if is_valid_request_id(incoming_request_id) else generate_request_id()
+    request.state.request_id = request_id
+
     structlog.contextvars.clear_contextvars()
+    continue_trace_from_headers(
+        {
+            "sentry-trace": request.headers.get("sentry-trace", ""),
+            "baggage": request.headers.get("baggage", ""),
+        }
+    )
+    set_request_context(
+        request_id=request_id,
+        path=request.url.path,
+        method=request.method,
+        client_ip=request.client.host if request.client else None,
+    )
     structlog.contextvars.bind_contextvars(
+        request_id=request_id,
         path=request.url.path,
         method=request.method,
         client_ip=request.client.host if request.client else None,
@@ -138,22 +164,33 @@ async def structlog_middleware(request: Request, call_next):
     
     try:
         response = await call_next(request)
+        duration_ms = round((time.perf_counter() - start) * 1000, 2)
         structlog.contextvars.bind_contextvars(
             status_code=response.status_code,
+            latency_ms=duration_ms,
         )
+        response.headers["X-Request-ID"] = request_id
         if response.status_code >= 400:
-             logger.warning("http_request_failed")
+            logger.warning("http_request_failed", request_id=request_id, sampled=False)
         else:
-             logger.info("http_request_success")
+            log_sampled_success(
+                "http_request_success",
+                request_id=request_id,
+                status_code=response.status_code,
+                latency_ms=duration_ms,
+                sampled=True,
+            )
         return response
     except Exception as e:
-        logger.error("http_request_exception", error=str(e))
+        capture_exception(e, request_id=request_id, path=request.url.path, method=request.method)
+        logger.error("http_request_exception", request_id=request_id, error=str(e), sampled=False)
         raise
 
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Global error handler."""
+    capture_exception(exc, request_id=getattr(request.state, "request_id", None), path=request.url.path)
     logger.error("global_exception", error=str(exc))
     return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
@@ -161,6 +198,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.exception_handler(LLMUnavailable)
 async def llm_unavailable_handler(request: Request, exc: LLMUnavailable):
     """Handle missing LLM configuration."""
+    capture_exception(exc, request_id=getattr(request.state, "request_id", None), handler="llm_unavailable")
     logger.warning("llm_unavailable", error=str(exc))
     return JSONResponse(
         status_code=503,
@@ -178,6 +216,7 @@ async def llm_unavailable_handler(request: Request, exc: LLMUnavailable):
 @app.exception_handler(LLMInvalidAPIKey)
 async def llm_invalid_api_key_handler(request: Request, exc: LLMInvalidAPIKey):
     """Handle invalid LiteLLM credentials."""
+    capture_exception(exc, request_id=getattr(request.state, "request_id", None), handler="llm_invalid_api_key")
     logger.error("llm_invalid_api_key", error=str(exc))
     return JSONResponse(
         status_code=502,
@@ -195,6 +234,7 @@ async def llm_invalid_api_key_handler(request: Request, exc: LLMInvalidAPIKey):
 @app.exception_handler(LLMBadRequest)
 async def llm_bad_request_handler(request: Request, exc: LLMBadRequest):
     """Handle invalid LLM requests."""
+    capture_exception(exc, request_id=getattr(request.state, "request_id", None), handler="llm_bad_request")
     logger.error("llm_bad_request", error=str(exc))
     return JSONResponse(
         status_code=400,
@@ -212,6 +252,7 @@ async def llm_bad_request_handler(request: Request, exc: LLMBadRequest):
 @app.exception_handler(LLMError)
 async def llm_error_handler(request: Request, exc: LLMError):
     """Handle general LLM errors."""
+    capture_exception(exc, request_id=getattr(request.state, "request_id", None), handler="llm_error")
     logger.error("llm_error", error=str(exc))
     return JSONResponse(
         status_code=400,

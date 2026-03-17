@@ -107,6 +107,18 @@ All model calls go through a LiteLLM proxy that exposes stable aliases. The back
 }
 ```
 
+## Monitoring and Telemetry (Sentry)
+
+- Backend Sentry is enabled only when `SENTRY_DSN` is present and `SENTRY_ENABLED` is not `false`.
+- Frontend Sentry is enabled only when `VITE_SENTRY_DSN` is present and `VITE_SENTRY_ENABLED` is not `false`.
+- Sampling is enabled by default to reduce noise:
+  - Backend: `SENTRY_TRACES_SAMPLE_RATE` and `SENTRY_PROFILES_SAMPLE_RATE`
+  - Frontend: `VITE_SENTRY_TRACES_SAMPLE_RATE`
+- PII and secrets are redacted before telemetry is emitted:
+  - Emails, auth tokens, cookies, and headers are scrubbed.
+  - Query strings are removed from request URLs.
+- Telemetry hooks include `message_send`, `stream_start`, `stream_end`, and payment flow events.
+
 ## Payments and Pro Verification
 
 - Upgrade CTA calls backend `POST /api/payments/create-checkout` and redirects to the provider checkout URL.

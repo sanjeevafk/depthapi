@@ -12,4 +12,5 @@ structlog>=24.1.0
 fastapi-limiter>=0.1.6
 markdown>=3.5.2
 openai>=1.51.0
+sentry-sdk[fastapi]>=2.20.0
 

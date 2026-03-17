@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment."""
 
     environment: str = "development"
+    log_user_hash_salt: str = ""
     litellm_base_url: str = ""
     litellm_virtual_key: str = ""
     litellm_master_key: str = ""
@@ -18,6 +19,7 @@ class Settings(BaseSettings):
     stream_heartbeat_seconds: int = 2
     stream_start_timeout_seconds: int = 2
     stream_idempotency_ttl_seconds: int = 90
+    trusted_proxies: str = ""
 
     redis_url: str = "redis://localhost:6379"
     upstash_redis_rest_url: str = ""
@@ -47,6 +49,12 @@ class Settings(BaseSettings):
     tavily_api_key: str = ""
     serper_api_key: str = ""
     exa_api_key: str = ""
+
+    sentry_dsn: str = ""
+    sentry_enabled: bool = True
+    sentry_traces_sample_rate: float = 0.1
+    sentry_profiles_sample_rate: float = 0.0
+    sentry_release: str = ""
     
     # Dodo Payments Configuration
     dodo_api_key: str = ""

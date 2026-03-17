@@ -1,6 +1,7 @@
 import type { PinnedTopic, QueryRequest, QueryResponse, ExportRequest, HistoryItem } from './types'
 import { LegacyStreamChunkSchema } from './lib/sseSchemas'
 import type { Session } from '@supabase/supabase-js'
+import { getTracePropagationHeaders } from './lib/monitoring'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 const SUPABASE_CONFIGURED = Boolean(import.meta.env.VITE_SUPABASE_URL) && Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY)
@@ -26,6 +27,25 @@ const isAbortError = (err: unknown): boolean => {
     return typeof err === 'object' && err !== null && 'name' in err && (err as { name?: string }).name === 'AbortError'
 }
 
+const createRequestId = (): string => {
+    const webCrypto = globalThis.crypto
+    if (webCrypto?.randomUUID) {
+        return webCrypto.randomUUID()
+    }
+    const bytes = new Uint8Array(16)
+    if (webCrypto?.getRandomValues) {
+        webCrypto.getRandomValues(bytes)
+    } else {
+        for (let i = 0; i < bytes.length; i += 1) {
+            bytes[i] = Math.floor(Math.random() * 256)
+        }
+    }
+    bytes[6] = (bytes[6] & 0x0f) | 0x40
+    bytes[8] = (bytes[8] & 0x3f) | 0x80
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0'))
+    return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10, 16).join('')}`
+}
+
 const normalizeError = (err: unknown): Error => {
     return err instanceof Error ? err : new Error('Unexpected error')
 }
@@ -45,6 +65,8 @@ async function fetchAPI<T>(path: string, options?: RequestInit & { responseType?
     if (session?.access_token) {
         headers['Authorization'] = `Bearer ${session.access_token}`
     }
+    Object.assign(headers, getTracePropagationHeaders())
+    headers['x-request-id'] = createRequestId()
 
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 90000) // 90 seconds
@@ -125,6 +147,8 @@ export async function queryTopicStream(
     if (session?.access_token) {
         headers['Authorization'] = `Bearer ${session.access_token}`
     }
+    Object.assign(headers, getTracePropagationHeaders())
+    headers['x-request-id'] = createRequestId()
 
     let retries = 0
     const maxRetries = 2

@@ -10,6 +10,7 @@ import { ModeProvider } from './context/ModeContext'
 import './index.css'
 import App from './App.tsx'
 import { QUERY_PERSIST_KEY } from './lib/queryPersistence'
+import { initMonitoring } from './lib/monitoring'
 
 const root = document.getElementById('root')
 const queryClient = new QueryClient({
@@ -36,6 +37,8 @@ if (typeof window !== 'undefined') {
 if (!root) {
     throw new Error('Root element not found')
 }
+
+initMonitoring()
 
 createRoot(root).render(
     <StrictMode>

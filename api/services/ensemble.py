@@ -40,7 +40,7 @@ async def ensemble_generate(topic: str, level: str, use_premium: bool = False, m
         errors = [str(result) for result in results]
         raise RuntimeError(f"All candidate providers failed. Errors: {errors}")
 
-    return await judge_responses(topic, valid, mode=mode)
+    return await judge_responses(topic, valid, mode=mode, **kwargs)
 
 
 async def ensemble_stream_generate(
@@ -83,7 +83,6 @@ async def judge_responses(topic: str, responses: list[str], mode: str = LEARNING
             error=str(exc),
         )
         return responses[0]
-
     usage = None
     usage_obj = getattr(result, "usage", None)
     if usage_obj is not None:
@@ -93,7 +92,6 @@ async def judge_responses(topic: str, responses: list[str], mode: str = LEARNING
             usage = usage_obj.dict()
         else:
             usage = usage_obj
-
     usage_summary = None
     if isinstance(usage, dict):
         usage_summary = {
@@ -101,12 +99,10 @@ async def judge_responses(topic: str, responses: list[str], mode: str = LEARNING
             "completion_tokens": int(usage.get("completion_tokens") or 0),
             "total_tokens": int(usage.get("total_tokens") or 0),
         }
-
     estimated_cost_usd = None
     direct_cost = getattr(result, "response_cost", None)
     if isinstance(direct_cost, (int, float)):
         estimated_cost_usd = float(direct_cost)
-
     model_inference_ms = round((time.perf_counter() - model_start) * 1000, 2)
     model_name = getattr(result, "model", None)
     if telemetry_sink is not None:
@@ -127,7 +123,6 @@ async def judge_responses(topic: str, responses: list[str], mode: str = LEARNING
         retry=retry_flag,
         sampled=True,
     )
-
     raw_result = result.choices[0].message.content if result.choices else ""
 
     try:
