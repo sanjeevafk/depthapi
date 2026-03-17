@@ -2,10 +2,11 @@
 
 import asyncio
 import json
+import time
 from typing import Any
 
 from prompts import JUDGE_PROMPT, LEARNING_CANDIDATE_MODELS
-from logging_config import logger
+from logging_config import anonymize_user_id, logger, log_sampled_success
 from services.inference import generate_explanation
 from services.llm_client import create_chat_completion
 from utils import LEARNING_MODE, normalize_mode
@@ -55,17 +56,34 @@ async def ensemble_stream_generate(
         yield result[index : index + chunk_size]
 
 
-async def judge_responses(topic: str, responses: list[str], mode: str = LEARNING_MODE) -> str:
+async def judge_responses(topic: str, responses: list[str], mode: str = LEARNING_MODE, **kwargs) -> str:
     """Use the HuggingFace judge model to select or synthesize the final response."""
     response_preview = "\n".join(f"[{index}]: {response[:2000]}" for index, response in enumerate(responses))
     prompt = JUDGE_PROMPT.format(topic=topic, responses=response_preview)
 
-    result = await create_chat_completion(
-        model="judge",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0,
-        max_tokens=512,
-    )
+    request_id = kwargs.get("request_id")
+    retry_flag = bool(kwargs.get("regenerate", False))
+    anonymized_user_id = anonymize_user_id(str(kwargs.get("user_id") or "") or None)
+    telemetry_sink = kwargs.get("telemetry_sink") if isinstance(kwargs.get("telemetry_sink"), dict) else None
+
+    model_start = time.perf_counter()
+    try:
+        result = await create_chat_completion(
+            model="judge",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=512,
+            request_id=request_id,
+        )
+    except Exception as exc:
+        logger.warning(
+            "judge_completion_failed",
+            request_id=request_id,
+            user_id_hash=anonymized_user_id,
+            error=str(exc),
+        )
+        return responses[0]
+
     usage = None
     usage_obj = getattr(result, "usage", None)
     if usage_obj is not None:
@@ -75,8 +93,41 @@ async def judge_responses(topic: str, responses: list[str], mode: str = LEARNING
             usage = usage_obj.dict()
         else:
             usage = usage_obj
+
+    usage_summary = None
+    if isinstance(usage, dict):
+        usage_summary = {
+            "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+            "completion_tokens": int(usage.get("completion_tokens") or 0),
+            "total_tokens": int(usage.get("total_tokens") or 0),
+        }
+
+    estimated_cost_usd = None
+    direct_cost = getattr(result, "response_cost", None)
+    if isinstance(direct_cost, (int, float)):
+        estimated_cost_usd = float(direct_cost)
+
+    model_inference_ms = round((time.perf_counter() - model_start) * 1000, 2)
     model_name = getattr(result, "model", None)
-    logger.info("llm_completion", alias="judge", model=model_name, usage=usage)
+    if telemetry_sink is not None:
+        telemetry_sink["token_usage"] = usage_summary
+        telemetry_sink["estimated_cost_usd"] = estimated_cost_usd
+        telemetry_sink["model_inference_ms"] = model_inference_ms
+        telemetry_sink["model_alias"] = "judge"
+
+    log_sampled_success(
+        "llm_judge_completion_observed",
+        request_id=request_id,
+        user_id_hash=anonymized_user_id,
+        model_alias="judge",
+        model=model_name,
+        latency_ms=model_inference_ms,
+        token_usage=usage_summary,
+        estimated_cost_usd=estimated_cost_usd,
+        retry=retry_flag,
+        sampled=True,
+    )
+
     raw_result = result.choices[0].message.content if result.choices else ""
 
     try:

@@ -16,6 +16,8 @@ from logging_config import logger
 from services.cache import cache_get, cache_set
 from services.ensemble import ensemble_generate, ensemble_stream_generate
 from services.inference import generate_explanation, generate_stream_explanation
+from services.llm_client import get_litellm_config_state
+from services.llm_errors import LLMError, LLMUnavailable
 from services.rate_limit import enforce_request_controls, estimate_tokens_for_text
 from services.streaming import SseEventBuilder
 from utils import (
@@ -77,6 +79,10 @@ async def query_topic(
     request: Request,
     auth_data: dict = Depends(verify_token_optional),
 ) -> QueryResponse:
+    config_state = get_litellm_config_state()
+    if not bool(config_state.get("chat_enabled", False)):
+        raise LLMUnavailable("Chat is disabled because LiteLLM is not configured correctly.")
+
     try:
         topic = sanitize_topic(req.topic)
     except ValueError as exc:
@@ -155,6 +161,8 @@ async def query_topic(
             explanations[level] = result
             await cache_set(_cache_key(topic, level, mode), {"text": result})
         else:
+            if isinstance(result, LLMError):
+                raise result
             explanations[level] = f"Error generating {level}: Please try again."
             logger.error("query_generation_failed", level=level, error=str(result), mode=mode)
 
@@ -171,6 +179,10 @@ async def query_topic_stream(
     auth_data: dict = Depends(verify_token_optional),
 ):
     """Stream the final judged response in chunks."""
+    config_state = get_litellm_config_state()
+    if not bool(config_state.get("chat_enabled", False)):
+        raise LLMUnavailable("Chat is disabled because LiteLLM is not configured correctly.")
+
     try:
         topic = sanitize_topic(req.topic)
     except ValueError as exc:
@@ -333,7 +345,8 @@ async def query_topic_stream(
                 record_chunk()
                 yield emit("chunk", {"chunk": chunk})
 
-            if (start_timeout or timed_out) and not full_content.strip():
+            no_chunks = chunk_count == 0 and not full_content.strip()
+            if (start_timeout or timed_out or no_chunks) and not full_content.strip():
                 fallback_used = True
                 try:
                     fallback_content = await asyncio.wait_for(

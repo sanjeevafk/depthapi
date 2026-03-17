@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { BrainCircuit, HelpCircle, Menu, Sparkles } from "lucide-react";
 import MessageList from "../components/chat/MessageList";
 import RegenerationModal from "../components/chat/RegenerationModal";
@@ -8,6 +9,7 @@ import { UpgradeModal } from "../components/UpgradeModal";
 import { useAuth } from "../context/AuthContext";
 import { createCheckoutSession } from "../lib/payments";
 import { notifyToast } from "../lib/toast";
+import { getHealth } from "../api";
 import { useConversations } from "../hooks/useConversations";
 import { useMessages } from "../hooks/useMessages";
 import { useChatStore } from "../stores/useChatStore";
@@ -87,6 +89,8 @@ export default function ChatPage(): JSX.Element {
   const setIsSidebarOpen = useChatStore((state) => state.setIsSidebarOpen);
   const startNewThread = useChatStore((state) => state.startNewThread);
   const deleteConversation = useChatStore((state) => state.deleteConversation);
+  const [chatEnabled, setChatEnabled] = useState(true);
+  const [healthMessage, setHealthMessage] = useState<string | null>(null);
 
   const upgradeModalOpen = useChatStore((state) => state.upgradeModalOpen);
   const closeUpgradeModal = useChatStore((state) => state.closeUpgradeModal);
@@ -115,6 +119,46 @@ export default function ChatPage(): JSX.Element {
   };
 
   useMessages();
+
+  useEffect(() => {
+    let disposed = false;
+
+    const refreshHealth = async () => {
+      try {
+        const health = await getHealth();
+        const backendChatEnabled =
+          typeof health.chat_enabled === "boolean"
+            ? health.chat_enabled
+            : health.litellm?.status === "ok";
+        if (disposed) return;
+        setChatEnabled(backendChatEnabled);
+
+        if (!backendChatEnabled) {
+          const message = health.key_valid === false
+            ? "Chat is temporarily unavailable because LiteLLM credentials are invalid."
+            : "Chat is temporarily unavailable because LiteLLM is not configured.";
+          setHealthMessage(message);
+          return;
+        }
+
+        setHealthMessage(null);
+      } catch {
+        if (disposed) return;
+        setChatEnabled(false);
+        setHealthMessage("Chat is temporarily unavailable while health checks are recovering.");
+      }
+    };
+
+    void refreshHealth();
+    const timer = window.setInterval(() => {
+      void refreshHealth();
+    }, 15000);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   if (!user) {
     return (
@@ -193,6 +237,11 @@ export default function ChatPage(): JSX.Element {
           </header>
 
           <main className="min-h-0 flex-1">
+            {healthMessage && (
+              <div className="mx-auto mt-4 w-full max-w-3xl rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100">
+                {healthMessage}
+              </div>
+            )}
             {hasMessages ? (
               <MessageList />
             ) : (
@@ -204,6 +253,8 @@ export default function ChatPage(): JSX.Element {
             workspace={workspace}
             depthLevel={depthLevel}
             onDepthChange={setDepthLevel}
+            disabled={!chatEnabled}
+            disabledReason="Chat is disabled while LiteLLM configuration is degraded."
           />
         </div>
       </div>

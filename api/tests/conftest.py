@@ -15,6 +15,17 @@ import services.ensemble as ensemble_module
 import services.rate_limit as rate_limit_module
 
 
+class AppClientWrapper:
+    """Expose FastAPI app for dependency overrides while delegating to AsyncClient."""
+
+    def __init__(self, client: httpx.AsyncClient, app):
+        self._client = client
+        self.app = app
+
+    def __getattr__(self, name):
+        return getattr(self._client, name)
+
+
 class DummyRedis:
     def __init__(self):
         self.store = {}
@@ -157,6 +168,7 @@ def patch_settings(monkeypatch, test_settings):
     monkeypatch.setattr(api_main_app, "get_settings", lambda: test_settings)
     monkeypatch.setattr(cache_module, "get_settings", lambda: test_settings)
     monkeypatch.setattr(auth_module, "get_settings", lambda: test_settings)
+    monkeypatch.setattr(llm_client_module, "get_settings", lambda: test_settings)
     search_module.settings = test_settings
     return test_settings
 
@@ -216,8 +228,7 @@ async def app_client(monkeypatch, dummy_redis):
 
     transport = httpx.ASGITransport(app=main_app.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        client.app = main_app.app
-        yield client
+        yield AppClientWrapper(client, main_app.app)
 
     main_app.app.dependency_overrides = {}
 

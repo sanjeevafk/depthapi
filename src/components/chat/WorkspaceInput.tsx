@@ -9,6 +9,8 @@ interface WorkspaceInputProps {
   workspace: Workspace;
   depthLevel: DepthLevel;
   onDepthChange: (level: DepthLevel) => void;
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
 const WORKSPACE_PLACEHOLDERS: Record<Workspace, string> = {
@@ -27,6 +29,8 @@ export default function WorkspaceInput({
   workspace,
   depthLevel,
   onDepthChange,
+  disabled = false,
+  disabledReason,
 }: WorkspaceInputProps): JSX.Element {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -34,11 +38,11 @@ export default function WorkspaceInput({
   const isLoading = useChatStore((state) => state.isLoading);
   const currentPromptMode = useChatStore((state) => state.currentPromptMode);
 
-  const isSendDisabled = isLoading || value.trim().length === 0;
+  const isSendDisabled = disabled || isLoading || value.trim().length === 0;
 
   const placeholder = useMemo(
-    () => WORKSPACE_PLACEHOLDERS[workspace],
-    [workspace],
+    () => (disabled && disabledReason ? disabledReason : WORKSPACE_PLACEHOLDERS[workspace]),
+    [disabled, disabledReason, workspace],
   );
 
   const handleSend = async () => {
@@ -77,6 +81,7 @@ export default function WorkspaceInput({
             }}
             placeholder={placeholder}
             aria-label="Message input"
+            disabled={disabled}
             className="w-full resize-none bg-transparent text-base text-slate-700 placeholder:text-slate-400 focus:outline-none dark:text-slate-200 dark:placeholder:text-slate-500"
           />
 

@@ -7,6 +7,15 @@ const SUPABASE_CONFIGURED = Boolean(import.meta.env.VITE_SUPABASE_URL) && Boolea
 
 import { supabase } from './lib/supabase'
 
+export interface HealthResponse {
+    status: 'ok' | 'degraded' | 'down'
+    litellm: { status: 'ok' | 'degraded' | 'down'; latency_ms: number }
+    rate_limit: { status: 'ok' | 'degraded' | 'down' }
+    db: { status: 'ok' | 'degraded' | 'down' }
+    chat_enabled?: boolean
+    key_valid?: boolean
+}
+
 const getSupabaseSession = async (): Promise<Session | null> => {
     if (!SUPABASE_CONFIGURED) return null
     const { data } = await supabase.auth.getSession()
@@ -39,14 +48,40 @@ async function fetchAPI<T>(path: string, options?: RequestInit & { responseType?
 
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 90000) // 90 seconds
+    const externalSignal = options?.signal
+    const abortSignalAny = (AbortSignal as unknown as {
+        any?: (signals: AbortSignal[]) => AbortSignal
+    }).any
+    const combinedSignal = externalSignal
+        ? (abortSignalAny
+            ? abortSignalAny([controller.signal, externalSignal])
+            : controller.signal)
+        : controller.signal
+
+    let onExternalAbort: (() => void) | null = null
+    if (externalSignal && !abortSignalAny) {
+        if (externalSignal.aborted) {
+            controller.abort()
+        } else {
+            onExternalAbort = () => controller.abort()
+            externalSignal.addEventListener('abort', onExternalAbort, { once: true })
+        }
+    }
+
+    const cleanup = () => {
+        clearTimeout(timeoutId)
+        if (externalSignal && onExternalAbort) {
+            externalSignal.removeEventListener('abort', onExternalAbort)
+        }
+    }
 
     try {
         const res = await fetch(`${API_URL}${path}`, {
             ...options,
             headers,
-            signal: controller.signal,
+            signal: combinedSignal,
         })
-        clearTimeout(timeoutId)
+        cleanup()
 
         if (res.status === 429) throw new Error('You are sending requests too quickly. Please wait a moment.')
         if (!res.ok) throw new Error(`API error: ${res.status}`)
@@ -56,7 +91,7 @@ async function fetchAPI<T>(path: string, options?: RequestInit & { responseType?
         }
         return await res.json()
     } catch (err) {
-        clearTimeout(timeoutId)
+        cleanup()
         if (isAbortError(err)) throw new Error('Request timed out. Please try again.')
         throw normalizeError(err)
     }
@@ -66,6 +101,9 @@ export async function getPinnedTopics(): Promise<PinnedTopic[]> {
     return fetchAPI('/api/pinned')
 }
 
+export async function getHealth(): Promise<HealthResponse> {
+    return fetchAPI('/api/health')
+}
 export async function queryTopic(req: QueryRequest): Promise<QueryResponse> {
     return fetchAPI('/api/query', {
         method: 'POST',
@@ -232,7 +270,7 @@ export async function getHistory(): Promise<HistoryItem[]> {
 }
 
 export async function deleteHistoryItem(id: string): Promise<void> {
-    return fetchAPI(`/api/history/${id}`, { method: 'DELETE' })
+    return fetchAPI(`/api/history/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 export async function clearHistory(): Promise<void> {
