@@ -214,8 +214,6 @@ async def enforce_request_controls(
             quota_result = await check_daily_quota(user_id=str(user_id), estimated_tokens=estimated_tokens)
         except Exception as exc:
             logger.warning("quota_check_failed", user_id=user_id, fail_open=fail_open, error=str(exc))
-            if not fail_open:
-                raise HTTPException(status_code=503, detail={"type": "rate_limiter_unavailable"}) from exc
             quota_result = QuotaResult(allowed=True, consumed=0, limit=0, retry_after=0)
 
         if not quota_result.allowed:
@@ -230,7 +228,15 @@ async def enforce_request_controls(
                 headers={"Retry-After": str(quota_result.retry_after)},
             )
 
-    identifier = f"user:{user_id}" if is_authenticated else f"ip:{client_ip or 'unknown'}"
+    if is_authenticated:
+        identifier = f"user:{user_id}"
+    elif client_ip:
+        identifier = f"ip:{client_ip}"
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail={"type": "missing_client_identifier"},
+        )
     burst_limit = max(
         int(getattr(settings, "rate_limit_burst", 5))
         if is_authenticated

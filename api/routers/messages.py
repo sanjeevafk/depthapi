@@ -18,6 +18,8 @@ from services.cache import cache_get, cache_set, cache_set_if_absent
 from services.ensemble import ensemble_stream_generate
 from services.ensemble import ensemble_generate
 from services.inference import generate_explanation, generate_stream_explanation
+from services.llm_client import get_litellm_config_state
+from services.llm_errors import LLMUnavailable
 from services.rate_limit import enforce_request_controls, estimate_tokens_for_text
 from services.streaming import SseEventBuilder
 from utils import (
@@ -96,7 +98,15 @@ def _build_replay_response(
 
 @router.post("/messages")
 async def send_message(req: MessageRequest, request: Request, auth_data: dict = Depends(verify_token)):
+    config_state = get_litellm_config_state()
+    if not bool(config_state.get("chat_enabled", False)):
+        raise LLMUnavailable("Chat is disabled because LiteLLM is not configured correctly.")
+
     user = auth_data["user"]
+    user_id = str(getattr(user, "id", "") or "").strip()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authenticated user id is missing")
+
     content = (req.content or "").strip()
     if not content:
         raise HTTPException(status_code=400, detail="Content is required")
@@ -122,7 +132,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     )
     trusted_proxies = _trusted_proxies_from_settings(config_settings)
 
-    idempotency_key = _idempotency_key(user.id, client_message_id)
+    idempotency_key = _idempotency_key(user_id, client_message_id)
     idempotency_payload = await cache_get(idempotency_key)
     if idempotency_payload:
         status = idempotency_payload.get("status")
@@ -143,9 +153,14 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
 
     estimated_tokens = estimate_tokens_for_text(content)
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    forwarded_ip = next((part.strip() for part in forwarded_for.split(",") if part.strip()), None)
+    real_ip = (request.headers.get("x-real-ip") or "").strip() or None
+    raw_client_ip = forwarded_ip or real_ip or (request.client.host if request.client else None)
+    client_ip = str(raw_client_ip or "unknown")
     await enforce_request_controls(
-        user_id=str(getattr(user, "id", "") or ""),
-        client_ip=request.client.host if request.client else "unknown",
+        user_id=user_id,
+        client_ip=client_ip,
         estimated_tokens=estimated_tokens,
     )
 
@@ -158,7 +173,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             supabase.table("conversations")
             .select("id, user_id, mode, settings")
             .eq("id", req.conversation_id)
-            .eq("user_id", user.id)
+            .eq("user_id", user_id)
             .single()
             .execute
         )
@@ -189,7 +204,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     if prompt_mode not in SUPPORTED_PROMPT_MODES:
         prompt_mode = normalize_prompt_level(None)
 
-    is_pro = await check_is_pro(user.id)
+    is_pro = await check_is_pro(user_id)
     if selected_mode == TECHNICAL_MODE and not is_pro:
         raise HTTPException(status_code=403, detail="Technical mode is a Pro feature")
     cache_key = _message_cache_key(content=content, mode=selected_mode, prompt_mode=prompt_mode)

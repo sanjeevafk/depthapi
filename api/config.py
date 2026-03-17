@@ -1,7 +1,6 @@
 """Configuration and environment variables."""
 
 import os
-import sys
 from functools import lru_cache
 from pydantic_settings import BaseSettings
 
@@ -66,12 +65,4 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """Cached settings instance."""
-    settings = Settings()
-    if not settings.litellm_base_url:
-        print("WARNING: LITELLM_BASE_URL not set. LiteLLM client will be unavailable.", file=sys.stderr)
-    if not settings.litellm_virtual_key and not settings.litellm_master_key:
-        print(
-            "WARNING: LITELLM_VIRTUAL_KEY or LITELLM_MASTER_KEY not set. LiteLLM client will be unavailable.",
-            file=sys.stderr,
-        )
-    return settings
+    return Settings()

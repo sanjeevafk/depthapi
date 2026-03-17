@@ -76,7 +76,7 @@ All model calls go through a LiteLLM proxy that exposes stable aliases. The back
 
 | Method | Path                | Description                                    | Auth? | Rate-limited? |
 |--------|---------------------|------------------------------------------------|-------|---------------|
-| GET    | `/api/health`       | Redis and dependency status                    | No    | No            |
+| GET    | `/api/health`       | Dependency status (`ok|degraded|down`)         | No    | No            |
 | GET    | `/api/pinned`       | Curated & trending topics                      | No    | Light         |
 | POST   | `/api/query`        | Main query endpoint — returns layered output   | Optional | Yes        |
 | POST   | `/api/export`       | Convert result to file (txt/md)                | No    | Yes           |
@@ -88,6 +88,32 @@ All model calls go through a LiteLLM proxy that exposes stable aliases. The back
 - Streaming responses are capped at 25s and emit a graceful cutoff message on timeout.
 - If streaming cannot start within the startup timeout, the backend falls back to non-streaming output.
 - Partial responses are treated as final; retries are user-triggered and idempotent by message id.
+
+## Degraded Mode (LiteLLM)
+
+- On startup, the backend validates LiteLLM config (`LITELLM_BASE_URL` format and API key presence) and logs structured warning/error events.
+- Missing LiteLLM config disables chat endpoints in degraded mode (`503`) while keeping the rest of the app available.
+- Invalid LiteLLM credentials return structured errors (`invalid_api_key`) instead of silent failures.
+- Frontend polls `/api/health` and shows a banner when chat is unavailable.
+
+`/api/health` response shape:
+
+```json
+{
+  "status": "ok|degraded|down",
+  "litellm": { "status": "ok|degraded|down", "latency_ms": 0 },
+  "rate_limit": { "status": "ok|degraded|down" },
+  "db": { "status": "ok|degraded|down" }
+}
+```
+
+## Payments and Pro Verification
+
+- Upgrade CTA calls backend `POST /api/payments/create-checkout` and redirects to the provider checkout URL.
+- Pro status is updated only by verified webhook events (`POST /api/payments/webhook/dodo` or legacy `/webhooks/dodo`).
+- Webhook events require valid HMAC signature verification and are processed idempotently to ignore duplicates safely.
+- Payment success grants Pro, while failed payments do not grant Pro; cancellation and renewal failure revoke Pro.
+- `/success` only refreshes profile state and redirects to `/app`; it never grants Pro by redirect alone.
 
 ## 🛠 Tech Stack
 
