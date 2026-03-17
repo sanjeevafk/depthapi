@@ -1,6 +1,7 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
+import { useChatStore } from '../stores/useChatStore';
 
 type UserProfile = {
     is_pro?: boolean;
@@ -14,7 +15,7 @@ interface AuthContextType {
     error: Error | null;
     signInWithGoogle: () => Promise<void>;
     signOut: () => Promise<void>;
-    refreshProfile: () => Promise<void>;
+    refreshProfile: (options?: { force?: boolean }) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -25,14 +26,25 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<Error | null>(null);
+    const setIsPro = useChatStore(state => state.setIsPro);
     const supabaseConfigured = Boolean(import.meta.env.VITE_SUPABASE_URL) && Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY)
     const AUTH_TIMEOUT_MS = 3500
+    const PROFILE_CACHE_TTL_MS = 30_000
+    const profileCacheRef = useRef(new Map<string, { profile: UserProfile | null; fetchedAt: number }>())
 
     const normalizeError = (err: unknown): Error => {
         return err instanceof Error ? err : new Error('Unknown error')
     }
 
-    const fetchProfile = async (userId: string) => {
+    const fetchProfile = async (userId: string, options?: { force?: boolean }) => {
+        const forceRefresh = options?.force === true
+        const profileCache = profileCacheRef.current
+        const cached = profileCache.get(userId)
+        if (!forceRefresh && cached && Date.now() - cached.fetchedAt <= PROFILE_CACHE_TTL_MS) {
+            setProfile(cached.profile)
+            return
+        }
+
         try {
             const { data, error } = await supabase
                 .from('users')
@@ -42,24 +54,28 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
 
             if (error) {
                 console.error('CRITICAL: Error fetching profile:', error);
-                // If profile doesn't exist yet, it's okay, backend will create it
                 setProfile(null);
+                profileCache.set(userId, { profile: null, fetchedAt: Date.now() })
             } else {
                 setProfile(data);
-                if (data?.is_pro) {
-                    localStorage.setItem('knowbear_pro_status', 'true');
-                } else {
-                    localStorage.removeItem('knowbear_pro_status');
-                }
+                profileCache.set(userId, { profile: data, fetchedAt: Date.now() })
             }
         } catch (err) {
             console.error('Failed to fetch profile:', err);
+            if (typeof navigator !== 'undefined' && !navigator.onLine) {
+                return
+            }
+            setProfile(null)
         }
     };
 
-    const refreshProfile = async () => {
-        if (user) await fetchProfile(user.id);
+    const refreshProfile = async (options?: { force?: boolean }) => {
+        if (user) await fetchProfile(user.id, options);
     };
+
+    useEffect(() => {
+        setIsPro(profile?.is_pro === true)
+    }, [profile, setIsPro])
 
     useEffect(() => {
         if (!supabaseConfigured) {
@@ -108,10 +124,11 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
             setSession(session);
             setUser(session?.user ?? null);
             if (session?.user) {
-                fetchProfile(session.user.id);
+                void fetchProfile(session.user.id, { force: true });
             } else {
                 setProfile(null);
-                localStorage.removeItem('knowbear_pro_status');
+                profileCacheRef.current.clear()
+                setIsPro(false)
             }
             setLoading(false);
         });
@@ -121,7 +138,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
             window.clearTimeout(timeoutId);
             subscription.unsubscribe();
         };
-    }, [supabaseConfigured]);
+    }, [setIsPro, supabaseConfigured]);
 
     const signInWithGoogle = async () => {
         try {
@@ -151,10 +168,11 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
             }
             await supabase.auth.signOut();
             // Clear local storage items that should reset on logout
-            localStorage.removeItem('knowbear_pro_status');
             localStorage.removeItem('guest_usage_count');
             localStorage.removeItem('deep_dive_usage');
             localStorage.removeItem('kb_history_cache');
+            profileCacheRef.current.clear()
+            setIsPro(false)
 
             // Redirect to home or reload for clean state
             window.location.href = '/';

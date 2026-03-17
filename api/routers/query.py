@@ -81,12 +81,13 @@ async def query_topic(req: QueryRequest, auth_data: dict = Depends(verify_token_
     if mode not in SUPPORTED_CHAT_MODES:
         mode = DEFAULT_CHAT_MODE
 
-    is_verified_pro = False
-    if req.premium and auth_data:
-        is_verified_pro = await check_is_pro(auth_data["user"].id)
-    req.premium = bool(req.premium and is_verified_pro)
-    if mode == TECHNICAL_MODE and not is_verified_pro:
-        mode = DEFAULT_CHAT_MODE
+    is_verified_pro = bool(auth_data and await check_is_pro(auth_data["user"].id))
+    req.premium = is_verified_pro
+    if mode == TECHNICAL_MODE:
+        if not auth_data:
+            raise HTTPException(status_code=401, detail="Authentication required for technical mode")
+        if not is_verified_pro:
+            raise HTTPException(status_code=403, detail="Technical mode is a Pro feature")
 
     allowed_levels = FREE_LEVELS
     levels = [level for level in _normalize_levels(req.levels) if level in allowed_levels]
@@ -162,12 +163,13 @@ async def query_topic_stream(req: QueryRequest, auth_data: dict = Depends(verify
     if mode not in SUPPORTED_CHAT_MODES:
         mode = DEFAULT_CHAT_MODE
 
-    is_verified_pro = False
-    if req.premium and auth_data:
-        is_verified_pro = await check_is_pro(auth_data["user"].id)
-    req.premium = bool(req.premium and is_verified_pro)
-    if mode == TECHNICAL_MODE and not is_verified_pro:
-        mode = DEFAULT_CHAT_MODE
+    is_verified_pro = bool(auth_data and await check_is_pro(auth_data["user"].id))
+    req.premium = is_verified_pro
+    if mode == TECHNICAL_MODE:
+        if not auth_data:
+            raise HTTPException(status_code=401, detail="Authentication required for technical mode")
+        if not is_verified_pro:
+            raise HTTPException(status_code=403, detail="Technical mode is a Pro feature")
 
     allowed_levels = FREE_LEVELS
     normalized_levels = [level for level in _normalize_levels(req.levels) if level in allowed_levels]

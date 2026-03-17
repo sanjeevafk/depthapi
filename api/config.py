@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     message_rate_limit_max: int = 30
     message_rate_limit_window_seconds: int = 60
     message_cache_ttl_seconds: int = 3600
+    pro_state_cache_ttl_seconds: int = 30
     supabase_url: str = ""
     supabase_anon_key: str = ""
     supabase_service_role_key: str = ""

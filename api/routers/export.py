@@ -34,9 +34,6 @@ async def export_explanations(req: ExportRequest, auth_data: dict = Depends(veri
     if not is_verified_pro:
         raise HTTPException(status_code=403, detail="Exporting is a premium feature. Please upgrade to use this functionality.")
         
-    if not req.premium:
-        raise HTTPException(status_code=403, detail="Exporting is a premium feature. Please upgrade to use this functionality.")
-
     req.mode = normalize_mode(req.mode)
     if req.mode not in SUPPORTED_CHAT_MODES:
         req.mode = DEFAULT_CHAT_MODE

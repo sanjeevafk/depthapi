@@ -109,7 +109,7 @@ export const verifyPaymentStatus = async (): Promise<boolean> => {
 };
 
 /**
- * Poll payment status until user is upgraded (max 30 seconds)
+ * Poll payment status until user is upgraded (max ~30 seconds by default)
  */
 export const waitForPaymentConfirmation = async (
     maxAttempts: number = 15,

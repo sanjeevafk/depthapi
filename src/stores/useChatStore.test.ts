@@ -50,8 +50,8 @@ describe("useChatStore", () => {
     useChatStore.setState(initialState, true);
   });
 
-  it("defaults isPro to true when VITE_DEFAULT_IS_PRO is not set", () => {
-    expect(useChatStore.getState().isPro).toBe(true);
+  it("defaults isPro to false when VITE_DEFAULT_IS_PRO is not set", () => {
+    expect(useChatStore.getState().isPro).toBe(false);
   });
 
   it("aborts active streams when starting a new thread", () => {

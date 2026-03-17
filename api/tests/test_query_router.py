@@ -47,7 +47,7 @@ async def test_query_invalid_topic(app_client):
 
 
 @pytest.mark.asyncio
-async def test_query_premium_downgrade_and_level_filter(app_client, monkeypatch, fake_user):
+async def test_query_technical_mode_rejects_non_pro_user(app_client, monkeypatch, fake_user):
     calls = []
 
     async def fake_ensemble_generate(_topic, _level, use_premium, mode, **_kwargs):
@@ -87,10 +87,24 @@ async def test_query_premium_downgrade_and_level_filter(app_client, monkeypatch,
         }
     )
 
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "eli5" in data["explanations"]
-    assert calls and calls[0] == (False, "learning")
+    assert resp.status_code == 403
+    assert "Pro feature" in resp.json()["detail"]
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_query_technical_mode_requires_authentication(app_client):
+    resp = await app_client.post(
+        "/api/query",
+        json={
+            "topic": "Space",
+            "levels": ["eli5"],
+            "mode": "technical",
+        }
+    )
+
+    assert resp.status_code == 401
+    assert "Authentication required" in resp.json()["detail"]
 
 
 @pytest.mark.asyncio

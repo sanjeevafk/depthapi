@@ -156,3 +156,87 @@ async def test_messages_abort_logs_confirmation(app_client, monkeypatch, test_se
         assert abort_logs[0][1].get("tokens_after_abort") == 0
     finally:
         main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
+
+
+@pytest.mark.asyncio
+async def test_messages_technical_mode_blocks_free_user(app_client, monkeypatch, test_settings):
+    user = SimpleNamespace(id="user-free", email="free@example.com", user_metadata={})
+
+    async def fake_verify_token():
+        return {"user": user}
+
+    async def fake_is_pro(*_args, **_kwargs):
+        return False
+
+    fake_supabase = FakeSupabase(
+        responses={
+            "conversations": {"id": "conv-tech", "user_id": user.id, "mode": "learning", "settings": {}},
+            "users": {"is_pro": False},
+        }
+    )
+
+    main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
+    monkeypatch.setattr(messages_module, "check_is_pro", fake_is_pro)
+    monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: fake_supabase)
+    monkeypatch.setattr(messages_module, "get_settings", lambda: test_settings)
+
+    try:
+        payload = {
+            "conversation_id": "conv-tech",
+            "content": "debug this",
+            "client_generated_id": "f03b3af7-30d6-490f-9a9f-2f683f8ef713",
+            "assistant_client_id": "03de0b9c-8514-429f-b97d-45f327cd5f57",
+            "mode": "technical",
+            "prompt_mode": "eli5",
+        }
+
+        resp = await app_client.post("/api/messages", json=payload)
+        assert resp.status_code == 403
+        assert "Pro feature" in resp.json()["detail"]
+    finally:
+        main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
+
+
+@pytest.mark.asyncio
+async def test_messages_technical_mode_allows_pro_user(app_client, monkeypatch, test_settings):
+    user = SimpleNamespace(id="user-pro", email="pro@example.com", user_metadata={})
+
+    async def fake_verify_token():
+        return {"user": user}
+
+    async def fake_is_pro(*_args, **_kwargs):
+        return True
+
+    async def fast_stream(*_args, **_kwargs):
+        yield "ok"
+
+    fake_supabase = FakeSupabase(
+        responses={
+            "conversations": {"id": "conv-tech-pro", "user_id": user.id, "mode": "technical", "settings": {}},
+            "messages": [{"id": "assistant-tech"}],
+            "users": {"is_pro": True},
+        }
+    )
+
+    main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
+    monkeypatch.setattr(messages_module, "check_is_pro", fake_is_pro)
+    monkeypatch.setattr(messages_module, "generate_stream_explanation", fast_stream)
+    monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: fake_supabase)
+    monkeypatch.setattr(messages_module, "get_settings", lambda: test_settings)
+
+    try:
+        payload = {
+            "conversation_id": "conv-tech-pro",
+            "content": "debug this",
+            "client_generated_id": "3f76fe87-bd73-4709-9fa2-703af1eedf04",
+            "assistant_client_id": "5f2f8e82-b394-4f07-956d-c60f9584381a",
+            "mode": "technical",
+            "prompt_mode": "eli5",
+        }
+
+        resp = await app_client.post("/api/messages", json=payload)
+        assert resp.status_code == 200
+        assert "event: delta" in resp.text
+        assert "ok" in resp.text
+    finally:
+        main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
