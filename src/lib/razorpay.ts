@@ -15,9 +15,14 @@ interface RazorpayOptions {
     };
 }
 
+interface RazorpayInstance {
+    open: () => void;
+    close: () => void;
+}
+
 declare global {
     interface Window {
-        Razorpay: new (options: RazorpayOptions) => unknown;
+        Razorpay: new (options: RazorpayOptions) => RazorpayInstance;
     }
 }
 

@@ -49,8 +49,16 @@ export const createCheckoutSession = async (
         });
 
         if (!response.ok) {
-            const errorPayload = await response.json() as { detail?: string };
-            throw new Error(errorPayload.detail || 'Failed to create checkout session');
+            let message = 'Failed to create checkout session';
+            try {
+                const errorPayload = await response.json() as { detail?: string };
+                if (errorPayload.detail) {
+                    message = errorPayload.detail;
+                }
+            } catch {
+                // Response body is not valid JSON, use default message
+            }
+            throw new Error(message);
         }
 
         const data: CheckoutResponse = await response.json();
