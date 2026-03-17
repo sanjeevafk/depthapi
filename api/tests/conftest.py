@@ -175,7 +175,6 @@ async def app_client(monkeypatch, dummy_redis):
 
     transport = httpx.ASGITransport(app=main_app.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        client.app = main_app.app
         yield client
 
     main_app.app.dependency_overrides = {}
