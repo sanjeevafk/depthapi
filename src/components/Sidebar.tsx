@@ -16,20 +16,13 @@ import {
     AlertTriangle
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import type { Mode, Level } from '../types'
+import type { Mode, Level, HistoryItem } from '../types'
 
 interface SidebarProps {
     onSelectTopic: (topic: string, mode?: Mode, level?: Level) => void
     refreshTrigger?: number
     isOpen: boolean
     onToggle: () => void
-}
-
-type HistoryItem = {
-    id: string
-    topic: string
-    mode?: string
-    levels?: Level[]
 }
 
 export default function Sidebar({ onSelectTopic, refreshTrigger, isOpen, onToggle }: SidebarProps): JSX.Element {
@@ -39,16 +32,18 @@ export default function Sidebar({ onSelectTopic, refreshTrigger, isOpen, onToggl
     const navigate = useNavigate()
     const queryClient = useQueryClient()
 
-    const cachedHistory = useMemo(() => {
+    const cachedHistory = useMemo<HistoryItem[]>(() => {
         try {
             const cached = localStorage.getItem('kb_history_cache')
-            return cached ? JSON.parse(cached) : []
+            if (!cached) return []
+            const parsed = JSON.parse(cached) as unknown
+            return Array.isArray(parsed) ? (parsed as HistoryItem[]) : []
         } catch {
             return []
         }
     }, [])
 
-    const historyKey = ['history', user?.id]
+    const historyKey = useMemo(() => ['history', user?.id] as const, [user?.id])
     const historyQuery = useQuery<HistoryItem[]>({
         queryKey: historyKey,
         enabled: Boolean(user),
@@ -57,7 +52,7 @@ export default function Sidebar({ onSelectTopic, refreshTrigger, isOpen, onToggl
         staleTime: 30_000,
     })
 
-    const history = historyQuery.data ?? []
+    const history = useMemo(() => historyQuery.data ?? [], [historyQuery.data])
     const isLoading = historyQuery.isLoading
 
     useEffect(() => {
@@ -70,14 +65,14 @@ export default function Sidebar({ onSelectTopic, refreshTrigger, isOpen, onToggl
 
     useEffect(() => {
         if (!user) return
-        queryClient.invalidateQueries({ queryKey: ['history', user.id] })
-    }, [refreshTrigger, user?.id, queryClient])
+        queryClient.invalidateQueries({ queryKey: historyKey })
+    }, [refreshTrigger, user, queryClient, historyKey])
 
     const handleDelete = async (e: React.MouseEvent, id: string) => {
         e.stopPropagation()
         try {
             await deleteHistoryItem(id)
-            queryClient.setQueryData(historyKey, (prev: any[] = []) => prev.filter(item => item.id !== id))
+            queryClient.setQueryData<HistoryItem[]>(historyKey, (prev = []) => prev.filter(item => item.id !== id))
         } catch (err) {
             console.error('Failed to delete history item:', err)
         }

@@ -11,11 +11,15 @@ interface CheckoutResponse {
     session_id: string;
 }
 
+const normalizeError = (error: unknown): Error => {
+    return error instanceof Error ? error : new Error('Unknown error')
+}
+
 /**
  * Create a checkout session and redirect user to Dodo Payments
  */
 export const createCheckoutSession = async (
-    onError?: (error: any) => void
+    onError?: (error: Error) => void
 ): Promise<void> => {
     try {
         // Get current user session
@@ -45,8 +49,8 @@ export const createCheckoutSession = async (
         });
 
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'Failed to create checkout session');
+            const errorPayload = await response.json() as { detail?: string };
+            throw new Error(errorPayload.detail || 'Failed to create checkout session');
         }
 
         const data: CheckoutResponse = await response.json();
@@ -55,11 +59,12 @@ export const createCheckoutSession = async (
         window.location.href = data.checkout_url;
 
     } catch (error) {
-        console.error('Checkout error:', error);
+        const normalized = normalizeError(error)
+        console.error('Checkout error:', normalized);
         if (onError) {
-            onError(error);
+            onError(normalized);
         } else {
-            throw error;
+            throw normalized;
         }
     }
 };
@@ -86,11 +91,11 @@ export const verifyPaymentStatus = async (): Promise<boolean> => {
             return false;
         }
 
-        const data = await response.json();
+        const data = await response.json() as { is_pro?: boolean };
         return data.is_pro === true;
 
     } catch (error) {
-        console.error('Payment verification error:', error);
+        console.error('Payment verification error:', normalizeError(error));
         return false;
     }
 };

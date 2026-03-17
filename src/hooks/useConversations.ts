@@ -7,7 +7,17 @@ import type { Conversation, Message } from '../types/chat'
 
 const supabaseConfigured = Boolean(import.meta.env.VITE_SUPABASE_URL) && Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY)
 
-const mapMessage = (record: any): Message => ({
+type MessageRecord = {
+    id: string
+    role: Message['role']
+    content: string
+    attachments?: Message['attachments']
+    metadata?: Message['metadata']
+    created_at: string
+    conversation_id?: string
+}
+
+const mapMessage = (record: MessageRecord): Message => ({
     id: record.id,
     role: record.role,
     content: record.content,
@@ -39,7 +49,7 @@ const fetchLastMessages = async (conversationIds: string[]): Promise<Record<stri
 
     const next: Record<string, Message | null> = {}
     for (const message of data ?? []) {
-        if (!next[message.conversation_id]) {
+        if (message.conversation_id && !next[message.conversation_id]) {
             next[message.conversation_id] = mapMessage(message)
         }
     }

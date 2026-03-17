@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import ReactMarkdown from 'react-markdown'
+import type { Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import Mermaid from '../Mermaid'
 import SafeImage from '../SafeImage'
@@ -8,8 +9,8 @@ import MessageActionToolbar from './MessageActionToolbar'
 import { useChatStore } from '../../stores/useChatStore'
 import { formatModeLabel } from '../../lib/chatModes'
 
-const markdownComponents = {
-    code({ inline, className, children, ...props }: any) {
+const markdownComponents: Components = {
+    code({ inline, className, children, ...props }) {
         const match = /language-(\w+)/.exec(className || '')
         const codeStr = String(children).replace(/\n$/, '')
 
@@ -26,17 +27,18 @@ const markdownComponents = {
             </code>
         )
     },
-    pre({ children }: any) {
+    pre({ children }) {
         return (
             <pre className="bg-black/40 p-4 rounded-xl border border-white/10 overflow-x-auto my-3">
                 {children}
             </pre>
         )
     },
-    img({ src, alt }: any) {
+    img({ src, alt }) {
+        if (!src) return null
         return <SafeImage src={src} alt={alt || 'Image'} />
     },
-    a({ node, ...props }: any) {
+    a({ ...props }) {
         return (
             <a
                 {...props}

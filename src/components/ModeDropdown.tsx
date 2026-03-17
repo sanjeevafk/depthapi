@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { BookOpen, Code2, CircleHelp, ChevronDown, Lock } from 'lucide-react'
+import { BookOpen, Code2, CircleHelp, ChevronDown, Lock, type LucideIcon } from 'lucide-react'
 import type { Mode } from '../types'
 import { useUsageGate } from '../hooks/useUsageGate'
 
@@ -9,7 +9,7 @@ interface ModeDropdownProps {
     disabled?: boolean
 }
 
-const MODES: { id: Mode; label: string; description: string; icon: any; color: string; premium: boolean }[] = [
+const MODES: { id: Mode; label: string; description: string; icon: LucideIcon; color: string; premium: boolean }[] = [
     {
         id: 'learning',
         label: 'Learning',

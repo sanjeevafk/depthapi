@@ -56,7 +56,7 @@ export function LoadingState({ mode, level, topic }: LoadingStateProps): JSX.Ele
                 } else {
                     throw new Error('Invalid quote data')
                 }
-            } catch (err) {
+            } catch {
                 // Silently fall back to local quotes (API has SSL issues)
                 const randomFallback = FALLBACK_QUOTES[Math.floor(Math.random() * FALLBACK_QUOTES.length)]
                 setQuote(randomFallback)

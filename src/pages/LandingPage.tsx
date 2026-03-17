@@ -10,7 +10,7 @@ import {
 import { LoginButton } from '../components/LoginButton'
 import { LivePreviewCard } from '../components/LivePreviewCard'
 import { useAuth } from '../context/AuthContext'
-import { useEffect } from 'react'
+import { useEffect, type ReactNode } from 'react'
 
 export default function LandingPage(): JSX.Element {
     const navigate = useNavigate()
@@ -176,7 +176,7 @@ export default function LandingPage(): JSX.Element {
     )
 }
 
-function FeatureCard({ icon, title, description }: { icon: any, title: string, description: string }): JSX.Element {
+function FeatureCard({ icon, title, description }: { icon: ReactNode, title: string, description: string }): JSX.Element {
     return (
         <motion.div
             whileHover={{ y: -5 }}

@@ -5,7 +5,16 @@ import type { Message } from '../types/chat'
 
 const supabaseConfigured = Boolean(import.meta.env.VITE_SUPABASE_URL) && Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY)
 
-const mapMessage = (record: any): Message => ({
+type MessageRecord = {
+    id: string
+    role: Message['role']
+    content: string
+    attachments?: Message['attachments']
+    metadata?: Message['metadata']
+    created_at: string
+}
+
+const mapMessage = (record: MessageRecord): Message => ({
     id: record.id,
     role: record.role,
     content: record.content,
@@ -41,7 +50,7 @@ export function useMessages(): void {
                     filter: `conversation_id=eq.${currentConversationId}`,
                 },
                 payload => {
-                    addMessage(mapMessage(payload.new))
+                    addMessage(mapMessage(payload.new as MessageRecord))
                 }
             )
             .on(
@@ -53,7 +62,7 @@ export function useMessages(): void {
                     filter: `conversation_id=eq.${currentConversationId}`,
                 },
                 payload => {
-                    addMessage(mapMessage(payload.new))
+                    addMessage(mapMessage(payload.new as MessageRecord))
                 }
             )
             .subscribe()
