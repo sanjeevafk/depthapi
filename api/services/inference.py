@@ -38,6 +38,17 @@ async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **k
             max_tokens=max_tokens,
             temperature=kwargs.get("temperature", 0.7),
         )
+        usage = None
+        usage_obj = getattr(result, "usage", None)
+        if usage_obj is not None:
+            if hasattr(usage_obj, "model_dump"):
+                usage = usage_obj.model_dump()
+            elif hasattr(usage_obj, "dict"):
+                usage = usage_obj.dict()
+            else:
+                usage = usage_obj
+        model_name = getattr(result, "model", None)
+        logger.info("llm_completion", alias=alias, model=model_name, usage=usage)
         if not result.choices:
             raise RuntimeError("LLM response missing choices.")
         return result.choices[0].message.content or ""
