@@ -15,7 +15,11 @@ class Settings(BaseSettings):
     litellm_master_key: str = ""
     litellm_timeout_seconds: int = 60
 
-    kaggle_api_token: str = ""
+    stream_max_seconds: int = 25
+    stream_heartbeat_seconds: int = 2
+    stream_start_timeout_seconds: int = 2
+    stream_idempotency_ttl_seconds: int = 90
+
     redis_url: str = "redis://localhost:6379"
     upstash_redis_rest_url: str = ""
     upstash_redis_rest_token: str = ""

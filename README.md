@@ -82,6 +82,13 @@ All model calls go through a LiteLLM proxy that exposes stable aliases. The back
 | POST   | `/api/export`       | Convert result to file (txt/md)                | No    | Yes           |
 | GET    | `/api/usage`        | Current user quota & usage (Pro users)         | Yes   | No            |
 
+## Streaming Limits
+
+- SSE heartbeat sent at least every 2s to keep connections alive.
+- Streaming responses are capped at 25s and emit a graceful cutoff message on timeout.
+- If streaming cannot start within the startup timeout, the backend falls back to non-streaming output.
+- Partial responses are treated as final; retries are user-triggered and idempotent by message id.
+
 ## 🛠 Tech Stack
 
 | Layer         | Technologies                                                                 |

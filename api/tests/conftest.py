@@ -28,6 +28,23 @@ class DummyRedis:
         self.store[key] = value
         return True
 
+    async def set_if_not_exists(self, key, ttl, value):
+        if key in self.store:
+            return False
+        self.store[key] = value
+        return True
+
+    async def incr(self, key):
+        value = int(self.store.get(key, 0)) + 1
+        self.store[key] = value
+        return value
+
+    async def expire(self, key, ttl_seconds):
+        return True
+
+    async def ttl(self, key):
+        return 60
+
     async def close(self):
         return True
 
@@ -90,6 +107,10 @@ def test_settings():
         litellm_virtual_key="test-virtual-key",
         litellm_master_key="",
         litellm_timeout_seconds=60,
+        stream_max_seconds=5,
+        stream_heartbeat_seconds=1,
+        stream_start_timeout_seconds=1,
+        stream_idempotency_ttl_seconds=90,
         redis_url="redis://localhost:6379",
         cache_ttl=5,
         rate_limit_per_user=20,
@@ -163,8 +184,11 @@ async def app_client(monkeypatch, dummy_redis):
     async def _noop_close():
         return None
 
-    monkeypatch.setattr(cache_module, "get_redis", lambda: dummy_redis)
-    monkeypatch.setattr(api_main_app, "get_redis", lambda: dummy_redis)
+    async def _get_redis():
+        return dummy_redis
+
+    monkeypatch.setattr(cache_module, "get_redis", _get_redis)
+    monkeypatch.setattr(api_main_app, "get_redis", _get_redis)
     monkeypatch.setattr(api_main_app, "close_redis", _noop_close)
     monkeypatch.setattr(api_main_app, "redis_available", False)
     main_app.app.dependency_overrides = {}

@@ -140,12 +140,16 @@ export async function queryTopicStream(
             const READ_TIMEOUT_MS = 20000
 
             while (true) {
-                const { done, value } = await Promise.race([
-                    reader.read(),
-                    new Promise<ReadableStreamReadResult<Uint8Array>>((_, reject) =>
-                        setTimeout(() => reject(new Error('Stream read timed out')), READ_TIMEOUT_MS)
-                    )
-                ])
+                let timeoutId: ReturnType<typeof setTimeout> | undefined
+                const readPromise = reader.read()
+                const timeoutPromise = new Promise<ReadableStreamReadResult<Uint8Array>>((_, reject) => {
+                    timeoutId = setTimeout(() => reject(new Error('Stream read timed out')), READ_TIMEOUT_MS)
+                })
+
+                const { done, value } = await Promise.race([readPromise, timeoutPromise])
+                if (timeoutId) {
+                    clearTimeout(timeoutId)
+                }
                 if (done) break
 
                 buffer += decoder.decode(value, { stream: true })
