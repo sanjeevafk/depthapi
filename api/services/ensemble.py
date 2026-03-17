@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from prompts import JUDGE_PROMPT, LEARNING_CANDIDATE_MODELS
+from logging_config import logger
 from services.inference import generate_explanation
 from services.llm_client import create_chat_completion
 from utils import LEARNING_MODE, normalize_mode
@@ -65,6 +66,17 @@ async def judge_responses(topic: str, responses: list[str], mode: str = LEARNING
         temperature=0,
         max_tokens=512,
     )
+    usage = None
+    usage_obj = getattr(result, "usage", None)
+    if usage_obj is not None:
+        if hasattr(usage_obj, "model_dump"):
+            usage = usage_obj.model_dump()
+        elif hasattr(usage_obj, "dict"):
+            usage = usage_obj.dict()
+        else:
+            usage = usage_obj
+    model_name = getattr(result, "model", None)
+    logger.info("llm_completion", alias="judge", model=model_name, usage=usage)
     raw_result = result.choices[0].message.content if result.choices else ""
 
     try:
