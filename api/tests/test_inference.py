@@ -11,28 +11,24 @@ async def test_generate_explanation_unknown_level():
 
 
 @pytest.mark.asyncio
-async def test_generate_stream_explanation_regenerate_appends_quote(monkeypatch):
-    class DummyProvider:
-        async def route_inference_stream(self, _prompt, **_kwargs):
-            yield "hello"
+async def test_generate_stream_explanation_passes_temperature(monkeypatch):
+    captured = {}
 
-    async def fake_quote():
-        return "---\n*\"Quote\"*"
-
-    async def fake_stream(*_args, **_kwargs):
+    async def fake_stream(*_args, **kwargs):
+        captured["temperature"] = kwargs.get("temperature")
         yield "hello"
 
     monkeypatch.setattr(inference_module, "stream_chat_completion", fake_stream)
-    monkeypatch.setattr(inference_module.search_service, "get_regeneration_quote", fake_quote)
 
     chunks = []
     async for chunk in inference_module.generate_stream_explanation(
         "topic",
         "eli5",
         mode="learning",
-        regenerate=True
+        regenerate=True,
+        temperature=0.8,
     ):
         chunks.append(chunk)
 
     assert "hello" in "".join(chunks)
-    assert "Quote" in "".join(chunks)
+    assert captured["temperature"] == 0.8

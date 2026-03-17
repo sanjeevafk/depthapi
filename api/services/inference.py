@@ -17,8 +17,6 @@ from services.llm_client import close_llm_client, create_chat_completion, stream
 async def close_client():
     """Close shared LLM client resources."""
     await close_llm_client()
-
-
 def _extract_usage_dict(usage_obj) -> dict[str, int] | None:
     if usage_obj is None:
         return None
@@ -177,7 +175,6 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
     retry_flag = bool(kwargs.get("regenerate", False))
     anonymized_user_id = anonymize_user_id(str(kwargs.get("user_id") or "") or None)
     route_telemetry_sink = kwargs.get("telemetry_sink") if isinstance(kwargs.get("telemetry_sink"), dict) else None
-
     prompt = ""
     images = []
 

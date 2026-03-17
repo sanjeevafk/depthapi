@@ -113,7 +113,7 @@ function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
                 {!isUser && (
                     <MessageActionToolbar
                         content={message.content}
-                        disabled={message.isStreaming}
+                        disabled={message.isStreaming || message.isRegenerating}
                         onRegenerate={() => openRegenerationModal(messageId)}
                     />
                 )}
@@ -127,7 +127,12 @@ function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
                 <div className="text-sm leading-relaxed">
                     <MessageContent content={message.content} isStreaming={message.isStreaming} />
                 </div>
-                {message.isStreaming && (
+                {message.isRegenerating ? (
+                    <div className="mt-2 flex items-center gap-2 text-xs text-cyan-200" aria-live="polite">
+                        <span className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
+                        Regenerating...
+                    </div>
+                ) : message.isStreaming && (
                     <div className="mt-2 flex items-center gap-2 text-xs text-cyan-200">
                         <span className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
                         Streaming...
