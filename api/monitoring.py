@@ -142,7 +142,7 @@ def _before_breadcrumb(crumb: Any, _hint: Any) -> Any:
 
 
 def init_sentry(settings: Any) -> bool:
-    """Initialize Sentry only when explicitly enabled and configured."""
+    """Initialize Sentry when enabled (default) and DSN is configured."""
     global _sentry_ready
 
     dsn = str(getattr(settings, "sentry_dsn", "") or os.getenv("SENTRY_DSN", "")).strip()

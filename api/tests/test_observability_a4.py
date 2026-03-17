@@ -111,6 +111,26 @@ async def test_litellm_client_receives_request_id_and_stream_telemetry(monkeypat
     # Reload to restore real llm_client helpers because conftest autouse patches these.
     importlib.reload(llm_client_module)
 
+    class FakeSpan:
+        def __init__(self):
+            self.data: dict[str, object] = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def set_data(self, key: str, value: object):
+            self.data[key] = value
+
+    span_calls: list[tuple[str, str, FakeSpan]] = []
+
+    def fake_start_span(*, op: str, name: str):
+        span = FakeSpan()
+        span_calls.append((op, name, span))
+        return span
+
     fake_completions = FakeCompletions()
     fake_client = SimpleNamespace(chat=SimpleNamespace(completions=fake_completions))
 
@@ -118,6 +138,9 @@ async def test_litellm_client_receives_request_id_and_stream_telemetry(monkeypat
         return fake_client
 
     monkeypatch.setattr(llm_client_module, "get_llm_client", fake_get_llm_client)
+    monkeypatch.setattr(llm_client_module.sentry_sdk, "start_span", fake_start_span)
+    monkeypatch.setattr(llm_client_module.sentry_sdk, "get_traceparent", lambda: "traceparent-value")
+    monkeypatch.setattr(llm_client_module.sentry_sdk, "get_baggage", lambda: "baggage-value")
 
     result = await llm_client_module.create_chat_completion(
         model="default-fast",
@@ -127,6 +150,8 @@ async def test_litellm_client_receives_request_id_and_stream_telemetry(monkeypat
 
     assert result.choices[0].message.content == "ok"
     assert fake_completions.calls[0]["extra_headers"]["x-request-id"] == "req-create"
+    assert fake_completions.calls[0]["extra_headers"]["sentry-trace"] == "traceparent-value"
+    assert fake_completions.calls[0]["extra_headers"]["baggage"] == "baggage-value"
 
     telemetry_sink: dict[str, object] = {}
     chunks: list[str] = []
@@ -140,6 +165,8 @@ async def test_litellm_client_receives_request_id_and_stream_telemetry(monkeypat
 
     assert chunks == ["hello"]
     assert fake_completions.calls[1]["extra_headers"]["x-request-id"] == "req-stream"
+    assert fake_completions.calls[1]["extra_headers"]["sentry-trace"] == "traceparent-value"
+    assert fake_completions.calls[1]["extra_headers"]["baggage"] == "baggage-value"
     assert fake_completions.calls[1]["stream_options"]["include_usage"] is True
     assert telemetry_sink["token_usage"] == {
         "prompt_tokens": 5,
@@ -148,6 +175,9 @@ async def test_litellm_client_receives_request_id_and_stream_telemetry(monkeypat
     }
     assert telemetry_sink["estimated_cost_usd"] == 0.0004
     assert isinstance(telemetry_sink["stream_duration_ms"], float)
+    assert span_calls[0][0] == "llm.call"
+    assert span_calls[1][0] == "llm.call"
+    assert span_calls[0][2].data.get("llm.model_alias") == "default-fast"
 
 
 def test_redaction_removes_sensitive_values_but_keeps_usage_metrics():

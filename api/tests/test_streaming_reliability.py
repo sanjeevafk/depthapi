@@ -352,7 +352,7 @@ async def test_messages_untrusted_peer_ignores_forwarded_headers(app_client, mon
 
 
 @pytest.mark.asyncio
-async def test_messages_trusted_peer_uses_rightmost_forwarded_ip(app_client, monkeypatch, test_settings):
+async def test_messages_trusted_peer_uses_leftmost_forwarded_ip(app_client, monkeypatch, test_settings):
     test_settings.trusted_proxies = "127.0.0.1"
     user = SimpleNamespace(id="user-ip-trusted", email="ip@example.com", user_metadata={})
     captured: dict[str, str] = {}
@@ -404,7 +404,7 @@ async def test_messages_trusted_peer_uses_rightmost_forwarded_ip(app_client, mon
             },
         )
         assert resp.status_code == 200
-        assert captured.get("client_ip") == "198.51.100.8"
+        assert captured.get("client_ip") == "203.0.113.10"
     finally:
         main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
 
