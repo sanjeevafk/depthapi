@@ -1,5 +1,6 @@
 import type { Level } from '../types'
 import ReactMarkdown from 'react-markdown'
+import type { ComponentPropsWithoutRef } from 'react'
 import type { Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import Mermaid from './Mermaid'
@@ -46,17 +47,39 @@ export default function ExplanationCard({ level, content, streaming }: Explanati
                     {content}
                 </ReactMarkdown>
                 {streaming && (
-                    <span className="inline-block w-2 h-5 ml-1 bg-cyan-500 animate-[pulse_0.8s_infinite] vertical-middle" style={{ verticalAlign: 'middle' }}></span>
+                    <span className="inline-block w-2 h-5 ml-1 bg-cyan-500 animate-[pulse_0.8s_infinite] align-middle"></span>
                 )}
             </div>
         </div>
     )
 }
 
+type MarkdownCodeProps = ComponentPropsWithoutRef<'code'> & {
+    inline?: boolean
+    node?: unknown
+}
+
+type MarkdownImgProps = ComponentPropsWithoutRef<'img'> & {
+    node?: unknown
+}
+
+type MarkdownAnchorProps = ComponentPropsWithoutRef<'a'> & {
+    node?: unknown
+}
+
+type MarkdownHeadingProps = ComponentPropsWithoutRef<'h2'> & {
+    node?: unknown
+}
+
+type MarkdownHeading3Props = ComponentPropsWithoutRef<'h3'> & {
+    node?: unknown
+}
+
 const markdownComponents: Components = {
-    code({ inline, className, children, ...props }) {
+    code({ className, children, ...props }: MarkdownCodeProps) {
         const match = /language-(\w+)/.exec(className || '')
         const codeStr = String(children).replace(/\n$/, '')
+        const inline = !match
 
         if (!inline && match && match[1] === 'mermaid') {
             return <Mermaid chart={codeStr} />
@@ -68,24 +91,23 @@ const markdownComponents: Components = {
             </code>
         )
     },
-    pre({ children }) {
+    pre({ children }: ComponentPropsWithoutRef<'pre'>) {
         return <pre className="bg-dark-900 p-4 rounded-xl border border-white/5 overflow-x-auto my-4">{children}</pre>
     },
-    img({ src, alt }) {
+    img({ src, alt }: MarkdownImgProps) {
         if (!src) return null
         return <SafeImage src={src} alt={alt || 'Image'} />
     },
-    a({ ...props }) {
+    a({ ...props }: MarkdownAnchorProps) {
         return <a {...props} target="_blank" rel="noopener noreferrer" className="underline decoration-cyan-500/30 underline-offset-4 hover:decoration-cyan-400 transition-all font-medium" />
     },
-    h2({ children }) {
+    h2({ children }: MarkdownHeadingProps) {
         return <h2 className="text-2xl font-bold mt-8 mb-4 text-white border-b border-white/5 pb-2">{children}</h2>
     },
-    h3({ children }) {
+    h3({ children }: MarkdownHeading3Props) {
         return <h3 className="text-xl font-semibold mt-6 mb-3 text-cyan-100">{children}</h3>
     },
     hr() {
         return <hr className="my-8 border-white/10" />
     }
 }
-

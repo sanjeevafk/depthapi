@@ -86,9 +86,8 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
                 setSession(session);
                 setUser(session?.user ?? null);
                 if (session?.user) {
-                    fetchProfile(session.user.id);
-                }
-            } catch (err) {
+                    await fetchProfile(session.user.id);
+                }            } catch (err) {
                 const error = normalizeError(err)
                 console.error('Failed to get session:', error);
                 setError(error);
