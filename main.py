@@ -10,6 +10,9 @@ api_path = root / "api"
 if str(api_path) not in sys.path:
     sys.path.insert(0, str(api_path))
 
-from api.main import app  # noqa: E402
+from api import main as api_main  # noqa: E402
 
-__all__ = ["app"]
+# Re-export the API module so legacy imports (including tests) patch the real app state.
+sys.modules[__name__] = api_main
+
+app = api_main.app

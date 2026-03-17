@@ -76,7 +76,7 @@ All model calls go through a LiteLLM proxy that exposes stable aliases. The back
 
 | Method | Path                | Description                                    | Auth? | Rate-limited? |
 |--------|---------------------|------------------------------------------------|-------|---------------|
-| GET    | `/api/health`       | Redis, model providers, auth status            | No    | No            |
+| GET    | `/api/health`       | Redis and dependency status                    | No    | No            |
 | GET    | `/api/pinned`       | Curated & trending topics                      | No    | Light         |
 | POST   | `/api/query`        | Main query endpoint — returns layered output   | Optional | Yes        |
 | POST   | `/api/export`       | Convert result to file (txt/md)                | No    | Yes           |
