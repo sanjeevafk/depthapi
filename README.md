@@ -2,7 +2,7 @@
 
 **KnowBear** is an AI-powered tool that delivers explanations at **exactly the right depth** for any topic — from ELI5 (explain like I'm 5) to technical deep-dives, meme-style breakdowns, structured reasoning, and more.
 
-It intelligently routes queries across multiple frontier models, applies an ensemble judge in Learning mode, caches frequent requests, and offers clean exports — all wrapped in a minimalist, space-themed dark UI.
+It intelligently routes queries across multiple frontier models via a LiteLLM proxy, applies an ensemble judge in Learning mode, caches frequent requests, and offers clean exports — all wrapped in a minimalist, space-themed dark UI.
 
 Live demo: https://knowbear.vercel.app
 
@@ -14,10 +14,11 @@ Live demo: https://knowbear.vercel.app
   - Structured academic style  
   - Technical deep-dive (math, proofs, code)  
   - First-principles reasoning  
-- **Mode-aware routing**  
-  - Learning: multi-provider candidates + judge (`MiniMaxAI/MiniMax-M2.5`)  
-  - Technical: `gemini-2.5-pro` primary, `deepseek-ai/DeepSeek-R1` fallback  
-  - Socratic/normal fallback: `gemini-2.5-flash` → Groq (`llama-3.1-8b-instant`, `openai/gpt-oss-20b`) → OpenRouter (`qwen/qwen3.5-9b`, `anthropic/claude-sonnet-4.6`) → HuggingFace (`deepseek-ai/DeepSeek-R1`, `microsoft/phi-4`)  
+- **Mode-aware routing (LiteLLM aliases)**  
+  - Learning: two candidates + judge (`learning-candidate-1`, `learning-candidate-2`, judged by `judge`)  
+  - Technical: `technical-primary` with fallbacks to `technical-fallback` then `default-fast`  
+  - Socratic: `socratic`  
+  - Default: `default-fast`  
 - **Ultra-fast repeat queries** via Upstash Redis REST caching  
 - **Export formats**: .txt, .md  
 - **Pinned & trending topics** — discoverability without search  
@@ -36,11 +37,12 @@ KnowBear monorepo
 │   │   ├── pinned.py
 │   │   └── health.py
 │   ├── services/
-│   │   ├── inference.py      # model routing + parallel calls + judge
+│   │   ├── inference.py      # LiteLLM alias routing + streaming
 │   │   ├── cache.py          # Redis abstraction
 │   │   ├── auth.py           # Supabase / JWT verification
 │   │   └── rate_limit.py     # per-user / global limits
 │   └── schemas/              # Pydantic models
+├── infra/litellm/            # LiteLLM proxy config + deployment assets
 ├── src/                      # React + Vite frontend
 │   ├── components/           # atomic → molecule → organism
 │   ├── pages/                # route-based pages
@@ -53,6 +55,22 @@ KnowBear monorepo
 ├── vercel.json               # monorepo build config for Vercel
 └── README.md
 ```
+
+## 🤖 Model Routing (LiteLLM)
+
+All model calls go through a LiteLLM proxy that exposes stable aliases. The backend only references aliases; actual provider models are configured in `infra/litellm/config.yaml`.
+
+| Alias | Provider model | Purpose |
+|------|----------------|---------|
+| `learning-candidate-1` | `groq/llama-3.1-8b-instant` | Learning ensemble candidate |
+| `learning-candidate-2` | `groq/openai/gpt-oss-20b` | Learning ensemble candidate |
+| `judge` | `openrouter/z-ai/glm-4.5-air:free` | Judge for Learning mode |
+| `technical-primary` | `gemini/gemini-2.5-pro` | Technical mode primary |
+| `technical-fallback` | `openrouter/qwen/qwen3-coder:free` | Technical fallback |
+| `socratic` | `groq/openai/gpt-oss-120b` | Socratic mode |
+| `default-fast` | `groq/llama-3.1-8b-instant` | Default fast responses |
+
+`technical-primary` falls back to `technical-fallback` and then `default-fast` via LiteLLM routing rules.
 
 ## 🚀 API Endpoints (public)
 
@@ -70,7 +88,7 @@ KnowBear monorepo
 |---------------|------------------------------------------------------------------------------|
 | Frontend      | React 18, TypeScript, Vite, Tailwind CSS, Framer Motion, Zustand, React Query |
 | Backend       | FastAPI, Python 3.11+, Pydantic v2, Structlog, Upstash Redis REST             |
-| AI Inference  | Groq, Gemini 2.5, OpenRouter, HuggingFace                                   |
+| AI Inference  | LiteLLM proxy + Groq + Gemini 2.5 + OpenRouter                               |
 | Auth          | Supabase Auth (JWT + OAuth)                                                 |
 | Cache / Queue | Redis (Upstash)                                                             |
 | Deployment    | Vercel (frontend + serverless backend), Render / Railway (alternative)      |
@@ -117,6 +135,14 @@ cp .env.example .env
 
 npm run api:dev
 ```
+
+Optional: run a local LiteLLM proxy (if you are not pointing at a hosted proxy):
+
+```bash
+litellm --config infra/litellm/config.yaml --port 4000
+```
+
+The proxy expects provider keys in its environment (for example `GROQ_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`) plus `LITELLM_MASTER_KEY` if you want to secure the proxy.
 
 Open http://localhost:8000/docs to see the Swagger UI.
 
