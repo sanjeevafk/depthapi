@@ -4,6 +4,14 @@ const sentryMocks = vi.hoisted(() => {
   const init = vi.fn();
   const captureMessage = vi.fn();
   const captureException = vi.fn();
+  const browserTracingIntegration = vi.fn(() => ({ name: "browserTracingIntegration" }));
+  const getTraceData = vi.fn(() => ({
+    "sentry-trace": "abc123-def456",
+    baggage: "sentry-release=test",
+  }));
+  const setUser = vi.fn();
+  const setTag = vi.fn();
+  const setContext = vi.fn();
   const withScope = vi.fn((callback: (scope: {
     setExtra: (key: string, value: unknown) => void;
     setTag: (key: string, value: string) => void;
@@ -28,7 +36,17 @@ const sentryMocks = vi.hoisted(() => {
     return { extras, tags, level };
   });
 
-  return { init, captureMessage, captureException, withScope };
+  return {
+    init,
+    captureMessage,
+    captureException,
+    withScope,
+    browserTracingIntegration,
+    getTraceData,
+    setUser,
+    setTag,
+    setContext,
+  };
 });
 
 vi.mock("@sentry/browser", () => ({
@@ -36,6 +54,11 @@ vi.mock("@sentry/browser", () => ({
   withScope: sentryMocks.withScope,
   captureMessage: sentryMocks.captureMessage,
   captureException: sentryMocks.captureException,
+  browserTracingIntegration: sentryMocks.browserTracingIntegration,
+  getTraceData: sentryMocks.getTraceData,
+  setUser: sentryMocks.setUser,
+  setTag: sentryMocks.setTag,
+  setContext: sentryMocks.setContext,
 }));
 
 describe("frontend monitoring", () => {
@@ -120,5 +143,19 @@ describe("frontend monitoring", () => {
     );
 
     expect(sentryMocks.captureException.mock.calls.length).toBeGreaterThan(0);
+  });
+
+  it("provides sentry-trace and baggage headers for API propagation", async () => {
+    vi.stubEnv("VITE_SENTRY_ENABLED", "true");
+    vi.stubEnv("VITE_SENTRY_DSN", "https://public@example.ingest.sentry.io/1");
+
+    const monitoring = await import("../lib/monitoring");
+    expect(monitoring.initMonitoring()).toBe(true);
+
+    const headers = monitoring.getTracePropagationHeaders();
+    expect(headers).toEqual({
+      "sentry-trace": "abc123-def456",
+      baggage: "sentry-release=test",
+    });
   });
 });

@@ -8,6 +8,7 @@ import monitoring
 class _FakeScope:
     def __init__(self):
         self.extras: dict[str, object] = {}
+        self.context: dict[str, object] = {}
         self.tags: dict[str, str] = {}
         self.level: str | None = None
 
@@ -19,6 +20,9 @@ class _FakeScope:
 
     def set_level(self, level: str) -> None:
         self.level = level
+
+    def set_context(self, key: str, value: object) -> None:
+        self.context[key] = value
 
 
 class _FakeScopeContext:
@@ -38,6 +42,8 @@ class _FakeSentry:
         self.captured_messages: list[str] = []
         self.captured_exceptions: list[str] = []
         self.last_scope = _FakeScope()
+        self.trace_headers: list[dict[str, str]] = []
+        self.user: dict[str, str | None] | None = None
 
     def init(self, **kwargs):  # noqa: ANN003
         self.init_calls.append(kwargs)
@@ -46,11 +52,30 @@ class _FakeSentry:
         self.last_scope = _FakeScope()
         return _FakeScopeContext(self.last_scope)
 
+    def new_scope(self) -> _FakeScopeContext:
+        self.last_scope = _FakeScope()
+        return _FakeScopeContext(self.last_scope)
+
     def capture_message(self, message: str) -> None:
         self.captured_messages.append(message)
 
     def capture_exception(self, exc: Exception) -> None:
         self.captured_exceptions.append(str(exc))
+
+    def continue_trace(self, headers: dict[str, str | None]) -> None:
+        self.trace_headers.append({
+            "sentry-trace": str(headers.get("sentry-trace") or ""),
+            "baggage": str(headers.get("baggage") or ""),
+        })
+
+    def configure_scope(self) -> _FakeScopeContext:
+        return _FakeScopeContext(self.last_scope)
+
+    def get_isolation_scope(self) -> _FakeScope:
+        return self.last_scope
+
+    def set_user(self, user: dict[str, str | None] | None) -> None:
+        self.user = user
 
 
 def test_sentry_disabled_by_env(monkeypatch):
@@ -80,6 +105,7 @@ def test_sentry_init_uses_environment_and_sampling(monkeypatch):
         sentry_enabled=True,
         sentry_traces_sample_rate=0.25,
         sentry_profiles_sample_rate=0.05,
+        sentry_release="abc123",
     )
 
     assert monitoring.init_sentry(settings) is True
@@ -87,6 +113,7 @@ def test_sentry_init_uses_environment_and_sampling(monkeypatch):
     assert len(fake_sentry.init_calls) == 1
     init_call = fake_sentry.init_calls[0]
     assert init_call["environment"] == "production"
+    assert init_call["release"] == "abc123"
     assert init_call["traces_sample_rate"] == 0.25
     assert init_call["profiles_sample_rate"] == 0.05
     assert init_call["send_default_pii"] is False

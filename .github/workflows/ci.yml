@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Create virtualenv
+        run: python -m venv .venv
+
+      - name: Install backend dependencies
+        run: |
+          source .venv/bin/activate
+          npm run api:install
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Backend tests
+        run: |
+          source .venv/bin/activate
+          npm run api:test
+
+      - name: Frontend tests
+        run: npm run test -- --run
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      - name: Smoke tests
+        run: npm run test:smoke

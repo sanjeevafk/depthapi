@@ -1,0 +1,66 @@
+name: sentry-release
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  workflow_dispatch:
+
+concurrency:
+  group: sentry-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SENTRY_AUTH_TOKEN: ${{ secrets['SENTRY_AUTH_TOKEN'] }}
+      SENTRY_ORG: ${{ secrets['SENTRY_ORG'] }}
+      SENTRY_PROJECT: ${{ secrets['SENTRY_PROJECT'] }}
+    steps:
+      - name: Check required Sentry secrets
+        id: sentry_secrets
+        shell: bash
+        run: |
+          missing=0
+          for key in SENTRY_AUTH_TOKEN SENTRY_ORG SENTRY_PROJECT; do
+            if [[ -z "${!key}" ]]; then
+              echo "::warning title=Sentry release skipped::Missing required secret: ${key}"
+              missing=1
+            fi
+          done
+
+          if [[ "$missing" -eq 0 ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: ${{ steps.sentry_secrets.outputs.ready == 'true' }}
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release environment
+        if: ${{ steps.sentry_secrets.outputs.ready == 'true' }}
+        id: release_env
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+            echo "value=production" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=development" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create Sentry release
+        if: ${{ steps.sentry_secrets.outputs.ready == 'true' }}
+        uses: getsentry/action-release@v3
+        with:
+          environment: ${{ steps.release_env.outputs.value }}
+          release: ${{ github.sha }}
+          set_commits: auto
+          ignore_missing: true
+          ignore_empty: true
