@@ -10,15 +10,12 @@ class Settings(BaseSettings):
     """Application settings loaded from environment."""
 
     environment: str = "development"
-    groq_api_key: str = ""
-    openrouter_api_key: str = ""
     litellm_base_url: str = ""
     litellm_virtual_key: str = ""
     litellm_master_key: str = ""
     litellm_timeout_seconds: int = 60
 
     kaggle_api_token: str = ""
-    gemini_api_key: str = ""
     redis_url: str = "redis://localhost:6379"
     upstash_redis_rest_url: str = ""
     upstash_redis_rest_token: str = ""
@@ -53,10 +50,6 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Cached settings instance."""
     settings = Settings()
-    if not settings.gemini_api_key:
-        print("WARNING: GEMINI_API_KEY not set. Gemini models will fail.", file=sys.stderr)
-    if not settings.groq_api_key:
-        print("WARNING: GROQ_API_KEY not set. Groq models will fail.", file=sys.stderr)
     if not settings.litellm_base_url:
         print("WARNING: LITELLM_BASE_URL not set. LiteLLM client will be unavailable.", file=sys.stderr)
     if not settings.litellm_virtual_key and not settings.litellm_master_key:

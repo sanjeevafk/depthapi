@@ -86,9 +86,6 @@ class FakeSupabase:
 def test_settings():
     return SimpleNamespace(
         environment="development",
-        groq_api_key="",
-        gemini_api_key="",
-        openrouter_api_key="",
         litellm_base_url="http://localhost:4000",
         litellm_virtual_key="test-virtual-key",
         litellm_master_key="",

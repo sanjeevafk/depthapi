@@ -1,4 +1,4 @@
-"""Groq inference service."""
+"""LiteLLM-backed inference service."""
 
 import asyncio
 import json

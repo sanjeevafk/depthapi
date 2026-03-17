@@ -85,7 +85,7 @@ async def security_headers(request: Request, call_next):
         "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://vercel.live; " 
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' blob: data: https://*.googleusercontent.com; "
-        "connect-src 'self' https://*.supabase.co https://*.groq.com https://api.groq.com; "
+        "connect-src 'self' https://*.supabase.co; "
         "font-src 'self' data:; "
         "object-src 'none'; "
         "base-uri 'self'; "
@@ -237,12 +237,6 @@ async def health():
         if is_prod:
 
             return JSONResponse(status_code=503, content=status)
-
-    try:
-        from google import genai
-        status["google_genai"] = "✓ installed"
-    except Exception as e:
-        status["google_genai"] = f"✗ {str(e)}"
 
     status["dodo"] = {
         "payment_link_id": "configured" if settings.dodo_payment_link_id else "missing",
