@@ -324,6 +324,12 @@ async def dodo_webhook(
 
     supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
     result = process_dodo_webhook_payload(payload, supabase)
+    capture_telemetry_event(
+        "payment_webhook_processed",
+        event_type=result.event,
+        event_id=result.event_id,
+        state=result.state,
+    )
     logger.info(
         "dodo_webhook_processed",
         event_type=result.event,
@@ -343,6 +349,7 @@ async def verify_payment_status(auth = Depends(verify_token)):
     that the webhook has processed and the user has been upgraded.
     """
     user_id = str(auth["user"].id)
+    capture_telemetry_event("payment_verify_status", user_id_hash=anonymize_user_id(user_id))
     try:
         is_pro = await check_is_pro(user_id, force_refresh=True)
         return {

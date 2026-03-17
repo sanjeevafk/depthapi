@@ -17,6 +17,7 @@ import {
   isPromptMode,
   toQueryLevel,
 } from "../lib/chatModes";
+import { captureFrontendError, getTracePropagationHeaders, trackTelemetry } from "../lib/monitoring";
 
 export type Workspace = "learn" | "socratic" | "technical";
 export type ThemeMode = "dark" | "light";
@@ -1043,12 +1044,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     const controller = new AbortController();
+    const streamStartedAt = Date.now();
+    let streamStarted = false;
     set((state) => ({
       streamControllers: {
         ...state.streamControllers,
         [assistantClientId]: controller,
       },
     }));
+
+    trackTelemetry("message_send", {
+      mode: requestedMode,
+      prompt_mode: effectivePromptMode,
+      regenerate: Boolean(options?.isRegeneration),
+      retry: Boolean(options?.clientMessageId),
+    });
 
     try {
       const session = await getSupabaseSession();
@@ -1058,6 +1068,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (session?.access_token) {
         headers["Authorization"] = `Bearer ${session.access_token}`;
       }
+      Object.assign(headers, getTracePropagationHeaders());
+      headers["x-request-id"] = createUuid();
 
       const streamFromResponse = async (
         response: Response,
@@ -1198,6 +1210,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       };
 
       const executeStream = async () => {
+        streamStarted = true;
+        trackTelemetry("stream_start", {
+          endpoint: "/api/messages",
+          mode: requestedMode,
+          regenerate: Boolean(options?.isRegeneration),
+        });
+
         let response = await fetch(`${API_URL}/api/messages`, {
           method: "POST",
           headers,
@@ -1216,6 +1235,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
           response.status === 404 || response.status === 405;
         if (shouldFallback) {
           const fallbackLevel = toQueryLevel(effectivePromptMode);
+          trackTelemetry("stream_start", {
+            endpoint: "/api/query/stream",
+            mode: requestedMode,
+            regenerate: Boolean(options?.isRegeneration),
+            fallback: true,
+          });
           response = await fetch(`${API_URL}/api/query/stream`, {
             method: "POST",
             headers,
@@ -1251,6 +1276,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       };
 
       await executeStream();
+      if (streamStarted) {
+        trackTelemetry("stream_end", {
+          status: "success",
+          mode: requestedMode,
+          duration_ms: Math.max(Date.now() - streamStartedAt, 0),
+        });
+      }
 
       get().updateMessageByClientId(assistantClientId, (message) => ({
         ...message,
@@ -1259,6 +1291,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }));
     } catch (error) {
       if (isAbortError(error) || controller.signal.aborted) {
+        if (streamStarted) {
+          trackTelemetry("stream_end", {
+            status: "aborted",
+            mode: requestedMode,
+            duration_ms: Math.max(Date.now() - streamStartedAt, 0),
+          });
+        }
         get().updateMessageByClientId(assistantClientId, (message) => ({
           ...message,
           isStreaming: false,
@@ -1271,6 +1310,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (/timed out/i.test(errorMessage)) {
         errorMessage = "Streaming timed out. Retry.";
       }
+      if (streamStarted) {
+        trackTelemetry("stream_end", {
+          status: "error",
+          mode: requestedMode,
+          duration_ms: Math.max(Date.now() - streamStartedAt, 0),
+          error_type: (error as { name?: string })?.name || "Error",
+        });
+      }
+      captureFrontendError(
+        error instanceof Error ? error : new Error(String(error || "Unknown chat send error")),
+        {
+          source: "chat.send_message",
+          mode: requestedMode,
+          regenerate: Boolean(options?.isRegeneration),
+        },
+      );
       notifyError(errorMessage);
       const retryPayload = {
         content: trimmed,

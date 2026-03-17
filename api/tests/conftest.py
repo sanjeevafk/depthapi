@@ -1,7 +1,10 @@
+import os
 import types
 from types import SimpleNamespace
 import pytest
 import httpx
+
+os.environ.setdefault("LOG_USER_HASH_SALT", "test-log-salt")
 
 import main as main_app
 import api.main as api_main_app

@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { useChatStore } from '../stores/useChatStore';
+import { setMonitoringUser } from '../lib/monitoring';
 
 type UserProfile = {
     is_pro?: boolean;
@@ -76,6 +77,17 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     useEffect(() => {
         setIsPro(profile?.is_pro === true)
     }, [profile, setIsPro])
+
+    useEffect(() => {
+        setMonitoringUser(
+            user
+                ? {
+                    id: user.id,
+                    email: user.email ?? null,
+                }
+                : null,
+        )
+    }, [user])
 
     useEffect(() => {
         if (!supabaseConfigured) {

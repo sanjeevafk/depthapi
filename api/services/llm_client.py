@@ -151,26 +151,22 @@ async def get_llm_client() -> AsyncOpenAI:
 async def create_chat_completion(model: str, messages: list[ChatCompletionMessageParam], **kwargs):
     """Create a chat completion via LiteLLM."""
     client = await get_llm_client()
+    request_id = kwargs.pop("request_id", None)
+    trace_headers = kwargs.pop("trace_headers", None)
+    if request_id:
+        existing_headers = kwargs.get("extra_headers")
+        merged_headers: dict[str, str] = {}
+        if isinstance(existing_headers, dict):
+            merged_headers.update({str(k): str(v) for k, v in existing_headers.items()})
+        merged_headers["x-request-id"] = str(request_id)
+        kwargs["extra_headers"] = _merge_trace_headers(merged_headers, trace_headers if isinstance(trace_headers, dict) else None)
+    elif isinstance(trace_headers, dict):
+        existing_headers = kwargs.get("extra_headers")
+        merged_headers: dict[str, str] = {}
+        if isinstance(existing_headers, dict):
+            merged_headers.update({str(k): str(v) for k, v in existing_headers.items()})
+        kwargs["extra_headers"] = _merge_trace_headers(merged_headers, trace_headers)
     try:
-        request_id = kwargs.pop("request_id", None)
-        trace_headers = kwargs.pop("trace_headers", None)
-        if request_id:
-            existing_headers = kwargs.get("extra_headers")
-            merged_headers: dict[str, str] = {}
-            if isinstance(existing_headers, dict):
-                merged_headers.update({str(k): str(v) for k, v in existing_headers.items()})
-            merged_headers["x-request-id"] = str(request_id)
-            kwargs["extra_headers"] = _merge_trace_headers(
-                merged_headers,
-                trace_headers if isinstance(trace_headers, dict) else None,
-            )
-        elif isinstance(trace_headers, dict):
-            existing_headers = kwargs.get("extra_headers")
-            merged_headers: dict[str, str] = {}
-            if isinstance(existing_headers, dict):
-                merged_headers.update({str(k): str(v) for k, v in existing_headers.items()})
-            kwargs["extra_headers"] = _merge_trace_headers(merged_headers, trace_headers)
-
         with sentry_sdk.start_span(op="llm.call", name=f"litellm.completion.{model}") as span:
             span.set_data("llm.model_alias", model)
             span.set_data("llm.provider", _resolve_provider(model))
@@ -236,7 +232,6 @@ async def stream_chat_completion(
         if isinstance(existing_headers, dict):
             merged_headers.update({str(k): str(v) for k, v in existing_headers.items()})
         kwargs["extra_headers"] = _merge_trace_headers(merged_headers, trace_headers)
-
     # Request usage metadata in the terminal stream chunk when available.
     stream_options = kwargs.get("stream_options")
     merged_stream_options: dict[str, Any] = {"include_usage": True}
