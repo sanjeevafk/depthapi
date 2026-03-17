@@ -12,6 +12,7 @@ import services.search as search_module
 import services.llm_client as llm_client_module
 import services.inference as inference_module
 import services.ensemble as ensemble_module
+import services.rate_limit as rate_limit_module
 
 
 class DummyRedis:
@@ -36,6 +37,11 @@ class DummyRedis:
 
     async def incr(self, key):
         value = int(self.store.get(key, 0)) + 1
+        self.store[key] = value
+        return value
+
+    async def incrby(self, key, amount):
+        value = int(self.store.get(key, 0)) + int(amount)
         self.store[key] = value
         return value
 
@@ -112,9 +118,23 @@ def test_settings():
         stream_start_timeout_seconds=1,
         stream_idempotency_ttl_seconds=90,
         redis_url="redis://localhost:6379",
+        upstash_redis_rest_url="https://upstash.example.com",
+        upstash_redis_rest_token="token",
         cache_ttl=5,
+        rate_limit_strategy="upstash_redis",
         rate_limit_per_user=20,
         rate_limit_burst=5,
+        rate_limit_burst_window_seconds=10,
+        rate_limit_sustained_window_seconds=60,
+        anonymous_rate_limit_per_ip=8,
+        anonymous_rate_limit_burst=3,
+        anonymous_rate_limit_window_seconds=60,
+        daily_token_quota_per_user=50000,
+        quota_window_seconds=86400,
+        circuit_breaker_tokens_per_minute=300000,
+        circuit_breaker_open_seconds=60,
+        circuit_breaker_action="reject",
+        estimated_output_tokens_per_request=900,
         supabase_url="https://example.supabase.co",
         supabase_anon_key="anon",
         supabase_service_role_key="service",
@@ -188,6 +208,7 @@ async def app_client(monkeypatch, dummy_redis):
         return dummy_redis
 
     monkeypatch.setattr(cache_module, "get_redis", _get_redis)
+    monkeypatch.setattr(rate_limit_module, "get_redis", _get_redis)
     monkeypatch.setattr(api_main_app, "get_redis", _get_redis)
     monkeypatch.setattr(api_main_app, "close_redis", _noop_close)
     monkeypatch.setattr(api_main_app, "redis_available", False)

@@ -18,7 +18,7 @@ from services.cache import cache_get, cache_set, cache_set_if_absent
 from services.ensemble import ensemble_stream_generate
 from services.ensemble import ensemble_generate
 from services.inference import generate_explanation, generate_stream_explanation
-from services.rate_limit import check_rate_limit
+from services.rate_limit import enforce_request_controls, estimate_tokens_for_text
 from services.streaming import SseEventBuilder
 from utils import (
     DEFAULT_CHAT_MODE,
@@ -105,8 +105,6 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     assistant_client_id = _require_uuid(req.assistant_client_id, "assistant_client_id")
 
     config_settings = get_settings()
-    max_requests = max(int(getattr(config_settings, "message_rate_limit_max", 30)), 1)
-    window_seconds = max(int(getattr(config_settings, "message_rate_limit_window_seconds", 60)), 1)
     environment = str(getattr(config_settings, "environment", "") or "").strip().lower()
     is_prod = environment == "production"
     cache_ttl_seconds = max(int(getattr(config_settings, "message_cache_ttl_seconds", 3600)), 1)
@@ -144,21 +142,12 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         if status == "in_progress":
             raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
 
-    requester_id = f"user:{getattr(user, 'id', '')}" if getattr(user, "id", None) else ""
-    client_ip = request.client.host if request.client else "unknown"
-    rate_limit_identifier = requester_id or f"ip:{client_ip}"
-    rate_limit_result = await check_rate_limit(
-        identifier=rate_limit_identifier,
-        limit=max_requests,
-        window_seconds=window_seconds,
+    estimated_tokens = estimate_tokens_for_text(content)
+    await enforce_request_controls(
+        user_id=str(getattr(user, "id", "") or ""),
+        client_ip=request.client.host if request.client else "unknown",
+        estimated_tokens=estimated_tokens,
     )
-    if not rate_limit_result.allowed:
-        retry_after = max(rate_limit_result.retry_after, 1)
-        raise HTTPException(
-            status_code=429,
-            detail=f"Rate limit reached. Please wait {retry_after} seconds and try again.",
-            headers={"Retry-After": str(retry_after)},
-        )
 
     supabase = get_supabase_admin()
     if not supabase:

@@ -6,7 +6,7 @@ import uuid
 from typing import Any
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -16,6 +16,7 @@ from logging_config import logger
 from services.cache import cache_get, cache_set
 from services.ensemble import ensemble_generate, ensemble_stream_generate
 from services.inference import generate_explanation, generate_stream_explanation
+from services.rate_limit import enforce_request_controls, estimate_tokens_for_text
 from services.streaming import SseEventBuilder
 from utils import (
     DEFAULT_CHAT_MODE,
@@ -71,7 +72,11 @@ async def _stream_chunks(stream: AsyncIterable[str] | Iterable[str]) -> AsyncIte
 
 
 @router.post("/query", response_model=QueryResponse)
-async def query_topic(req: QueryRequest, auth_data: dict = Depends(verify_token_optional)) -> QueryResponse:
+async def query_topic(
+    req: QueryRequest,
+    request: Request,
+    auth_data: dict = Depends(verify_token_optional),
+) -> QueryResponse:
     try:
         topic = sanitize_topic(req.topic)
     except ValueError as exc:
@@ -93,6 +98,14 @@ async def query_topic(req: QueryRequest, auth_data: dict = Depends(verify_token_
     levels = [level for level in _normalize_levels(req.levels) if level in allowed_levels]
     if not levels:
         levels = ["eli15"]
+
+    effective_user_id = auth_data["user"].id if auth_data else None
+    estimated_tokens = estimate_tokens_for_text(topic, output_buffer=900 * max(len(levels), 1))
+    await enforce_request_controls(
+        user_id=str(effective_user_id) if effective_user_id else None,
+        client_ip=request.client.host if request.client else "unknown",
+        estimated_tokens=estimated_tokens,
+    )
 
     explanations: dict[str, str] = {}
     missing_levels: list[str] = []
@@ -152,7 +165,11 @@ async def query_topic(req: QueryRequest, auth_data: dict = Depends(verify_token_
 
 
 @router.post("/query/stream")
-async def query_topic_stream(req: QueryRequest, auth_data: dict = Depends(verify_token_optional)):
+async def query_topic_stream(
+    req: QueryRequest,
+    request: Request,
+    auth_data: dict = Depends(verify_token_optional),
+):
     """Stream the final judged response in chunks."""
     try:
         topic = sanitize_topic(req.topic)
@@ -174,6 +191,14 @@ async def query_topic_stream(req: QueryRequest, auth_data: dict = Depends(verify
     allowed_levels = FREE_LEVELS
     normalized_levels = [level for level in _normalize_levels(req.levels) if level in allowed_levels]
     level = normalized_levels[0] if normalized_levels else "eli15"
+
+    effective_user_id = auth_data["user"].id if auth_data else None
+    estimated_tokens = estimate_tokens_for_text(topic)
+    await enforce_request_controls(
+        user_id=str(effective_user_id) if effective_user_id else None,
+        client_ip=request.client.host if request.client else "unknown",
+        estimated_tokens=estimated_tokens,
+    )
 
     message_id = None
     if req.message_id:

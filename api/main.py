@@ -5,14 +5,13 @@ import os
 import structlog
 from datetime import datetime
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Response, Depends, HTTPException
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from routers import pinned, query, export, history, webhooks, payments, messages
 from services.cache import close_redis, get_redis
 from services.inference import close_client
 from services.llm_errors import LLMError, LLMBadRequest, LLMUnavailable
-from services.rate_limit import check_rate_limit
 from logging_config import setup_logging, logger
 from config import get_settings
 
@@ -168,48 +167,9 @@ async def llm_error_handler(request: Request, exc: LLMError):
 
 # app.include_router(pinned.router, prefix="/api") removed - duplicate below
 
-async def conditional_rate_limit(request: Request, response: Response):
-    """
-    Apply rate limiting ONLY if Redis is available.
-    In development (when Redis fails), this becomes a no-op.
-    """
-    if not redis_available:
-        return
-
-    try:
-        limit = max(int(get_settings().rate_limit_per_user or 0), 0)
-        if limit <= 0:
-            return
-
-        client = getattr(request, "client", None)
-        client_ip = client.host if client else "unknown"
-        identifier = f"ip:{client_ip}"
-        result = await check_rate_limit(identifier=identifier, limit=limit, window_seconds=60)
-        if not result.allowed:
-            retry_after = max(result.retry_after, 1)
-            raise HTTPException(
-                status_code=429,
-                detail=f"Rate limit reached. Please wait {retry_after} seconds and try again.",
-                headers={"Retry-After": str(retry_after)},
-            )
-    except HTTPException:
-        raise
-    except Exception:
-        pass
-
-
-
 app.include_router(pinned.router, prefix="/api")
-app.include_router(
-    messages.router,
-    prefix="/api",
-    dependencies=[Depends(conditional_rate_limit)],
-)
-app.include_router(
-    query.router,
-    prefix="/api",
-    dependencies=[Depends(conditional_rate_limit)],
-)
+app.include_router(messages.router, prefix="/api")
+app.include_router(query.router, prefix="/api")
 app.include_router(export.router, prefix="/api")
 app.include_router(history.router, prefix="/api")
 app.include_router(webhooks.router)  # No prefix - webhooks use full path
