@@ -62,10 +62,14 @@ class MessageRequest(BaseModel):
     assistant_client_id: Optional[str] = None
     mode: Optional[str] = None
     prompt_mode: Optional[str] = None
+    temperature: float = Field(default=0.7, ge=0.0, le=1.0)
+    regenerate: bool = False
 
 
-def _message_cache_key(content: str, mode: str, prompt_mode: str) -> str:
-    digest = hashlib.sha256(f"{content}\x00{mode}\x00{prompt_mode}".encode("utf-8")).hexdigest()
+def _message_cache_key(content: str, mode: str, prompt_mode: str, temperature: float) -> str:
+    digest = hashlib.sha256(
+        f"{content}\x00{mode}\x00{prompt_mode}\x00{temperature:.2f}".encode("utf-8")
+    ).hexdigest()
     return f"knowbear:cache:{digest}"
 
 
@@ -244,8 +248,14 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     is_pro = await check_is_pro(user_id)
     if selected_mode == TECHNICAL_MODE and not is_pro:
         raise HTTPException(status_code=403, detail="Technical mode is a Pro feature")
-    cache_key = _message_cache_key(content=content, mode=selected_mode, prompt_mode=prompt_mode)
-    cached_payload = await cache_get(cache_key)
+    request_temperature = max(0.0, min(float(req.temperature), 1.0))
+    cache_key = _message_cache_key(
+        content=content,
+        mode=selected_mode,
+        prompt_mode=prompt_mode,
+        temperature=request_temperature,
+    )
+    cached_payload = None if req.regenerate else await cache_get(cache_key)
     cached_response = cached_payload.get("response") if cached_payload else None
     if cached_response and not isinstance(cached_response, str):
         cached_response = str(cached_response)
@@ -610,7 +620,8 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     record_chunk()
                     yield emit("delta", {"delta": chunk, "assistant_message_id": assistant_message_id})
                 yield emit("done", "[DONE]")
-                await cache_set(cache_key, {"response": full_content}, ttl=cache_ttl_seconds)
+                if not req.regenerate:
+                    await cache_set(cache_key, {"response": full_content}, ttl=cache_ttl_seconds)
                 await cache_set(
                     idempotency_key,
                     {
@@ -630,7 +641,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 full_content += cutoff_message
                 yield emit("delta", {"delta": cutoff_message, "assistant_message_id": assistant_message_id})
 
-            if full_content.strip() and not response_truncated:
+            if full_content.strip() and not response_truncated and not req.regenerate:
                 await cache_set(cache_key, {"response": full_content}, ttl=cache_ttl_seconds)
 
             if full_content.strip():

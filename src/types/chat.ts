@@ -73,12 +73,14 @@ export interface Message {
     clientGeneratedId?: string
     serverMessageId?: string
     isStreaming?: boolean
+    isRegenerating?: boolean
     error?: string
     syncStatus?: 'pending' | 'failed' | 'synced'
     retryPayload?: {
         content: string
         mode: ConversationMode
         promptMode?: PromptMode
+        temperature?: number
         clientMessageId?: string
         assistantClientId?: string
     }
