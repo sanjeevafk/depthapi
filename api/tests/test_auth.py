@@ -35,11 +35,23 @@ async def test_verify_token_invalid():
 @pytest.mark.asyncio
 async def test_verify_token_missing_credentials():
     with pytest.raises(HTTPException) as excinfo:
-        await verify_token(None)
+        await verify_token(None)  # type: ignore[arg-type]
     assert excinfo.value.status_code == 401
 
 
 @pytest.mark.asyncio
 async def test_verify_token_optional_missing_returns_none():
-    result = await verify_token_optional(None)
+    result = await verify_token_optional(None)  # type: ignore[arg-type]
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_verify_token_optional_invalid_credentials_raise():
+    mock_supabase = MagicMock()
+    mock_supabase.auth.get_user.return_value = MagicMock(user=None)
+
+    with patch("auth.get_supabase", return_value=mock_supabase):
+        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="invalid_token")
+        with pytest.raises(HTTPException) as excinfo:
+            await verify_token_optional(creds)
+        assert excinfo.value.status_code == 401

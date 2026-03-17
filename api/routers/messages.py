@@ -202,7 +202,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
 
     is_pro = await check_is_pro(user.id)
     if selected_mode == TECHNICAL_MODE and not is_pro:
-        selected_mode = DEFAULT_CHAT_MODE
+        raise HTTPException(status_code=403, detail="Technical mode is a Pro feature")
     cache_key = _message_cache_key(content=content, mode=selected_mode, prompt_mode=prompt_mode)
     cached_payload = await cache_get(cache_key)
     cached_response = cached_payload.get("response") if cached_payload else None

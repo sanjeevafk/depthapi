@@ -93,7 +93,7 @@ const supabaseConfigured =
   Boolean(import.meta.env.VITE_SUPABASE_URL) &&
   Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY);
 const defaultIsProEnv = import.meta.env.VITE_DEFAULT_IS_PRO;
-const defaultIsPro = defaultIsProEnv ? defaultIsProEnv === "true" : true;
+const defaultIsPro = defaultIsProEnv ? defaultIsProEnv === "true" : false;
 const API_URL = import.meta.env.VITE_API_URL || "";
 const THEME_STORAGE_KEY = "kb_theme_v1";
 const DEFAULT_WORKSPACE: Workspace = "learn";
@@ -117,14 +117,6 @@ const isAbortError = (error: unknown): boolean => {
 const getErrorMessage = (error: unknown, fallback: string): string => {
   if (error instanceof Error && error.message) return error.message;
   return fallback;
-};
-
-const getErrorStatus = (error: unknown): number | undefined => {
-  if (typeof error !== "object" || error === null || !("status" in error)) {
-    return undefined;
-  }
-  const status = (error as { status?: unknown }).status;
-  return typeof status === "number" ? status : undefined;
 };
 
 const isDepthLevel = (mode: string | null | undefined): mode is DepthLevel => {

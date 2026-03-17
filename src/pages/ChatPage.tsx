@@ -6,6 +6,7 @@ import WorkspaceInput from "../components/chat/WorkspaceInput";
 import WorkspaceSidebar from "../components/chat/WorkspaceSidebar";
 import { UpgradeModal } from "../components/UpgradeModal";
 import { useAuth } from "../context/AuthContext";
+import { createCheckoutSession } from "../lib/payments";
 import { notifyToast } from "../lib/toast";
 import { useConversations } from "../hooks/useConversations";
 import { useMessages } from "../hooks/useMessages";
@@ -90,9 +91,14 @@ export default function ChatPage(): JSX.Element {
   const upgradeModalOpen = useChatStore((state) => state.upgradeModalOpen);
   const closeUpgradeModal = useChatStore((state) => state.closeUpgradeModal);
 
-  const handleUpgrade = () => {
-    notifyToast("Upgrade flow coming soon.", "info");
-    closeUpgradeModal();
+  const handleUpgrade = async () => {
+    try {
+      await createCheckoutSession((error) => {
+        notifyToast(error.message || "Unable to start checkout. Please try again.", "error");
+      });
+    } catch {
+      notifyToast("Unable to start checkout. Please try again.", "error");
+    }
   };
 
   const handleUseByok = () => {

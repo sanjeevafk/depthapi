@@ -12,24 +12,29 @@ export default function SuccessPage(): JSX.Element {
     useEffect(() => {
         const verifyPayment = async () => {
             try {
+                // Always refresh profile first; this page never grants Pro directly.
+                await refreshProfile({ force: true });
+
                 // Wait for webhook to process and upgrade user
                 const isPro = await waitForPaymentConfirmation();
 
                 if (isPro) {
                     setStatus('success');
-                    // Refresh user profile to get updated Pro status
-                    await refreshProfile();
-
-                    // Redirect to app after 3 seconds
-                    setTimeout(() => {
-                        navigate('/app');
-                    }, 3000);
+                    await refreshProfile({ force: true });
                 } else {
                     setStatus('error');
                 }
+
+                // This page only verifies and then routes back to the app.
+                setTimeout(() => {
+                    navigate('/app');
+                }, 2500);
             } catch (error) {
                 console.error('Payment verification error:', error);
                 setStatus('error');
+                setTimeout(() => {
+                    navigate('/app');
+                }, 2500);
             }
         };
 
