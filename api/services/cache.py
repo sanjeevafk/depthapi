@@ -58,6 +58,13 @@ class UpstashRedisCompat:
         result = await self._execute("INCR", key)
         return int(result)
 
+    async def incrby(self, key: str, amount: int) -> int:
+        result = await self._execute("INCRBY", key, int(amount))
+        return int(result)
+
+    async def eval(self, script: str, numkeys: int, *args: Any) -> Any:
+        return await self._execute("EVAL", script, int(numkeys), *args)
+
     async def expire(self, key: str, ttl_seconds: int) -> bool:
         result = await self._execute("EXPIRE", key, int(ttl_seconds))
         return bool(int(result)) if result is not None else False
