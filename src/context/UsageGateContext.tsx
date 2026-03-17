@@ -101,6 +101,7 @@ export function UsageGateProvider({
     );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useUsageGateContext(): UsageGateContextType {
     const context = useContext(UsageGateContext);
     if (!context) {

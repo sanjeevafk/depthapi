@@ -1,13 +1,17 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { User, Session, AuthError } from '@supabase/supabase-js';
+import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
+
+type UserProfile = {
+    is_pro?: boolean;
+} & Record<string, unknown>;
 
 interface AuthContextType {
     user: User | null;
     session: Session | null;
-    profile: any | null;
+    profile: UserProfile | null;
     loading: boolean;
-    error: AuthError | null;
+    error: Error | null;
     signInWithGoogle: () => Promise<void>;
     signOut: () => Promise<void>;
     refreshProfile: () => Promise<void>;
@@ -18,11 +22,15 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }): JSX.Element {
     const [user, setUser] = useState<User | null>(null);
     const [session, setSession] = useState<Session | null>(null);
-    const [profile, setProfile] = useState<any | null>(null);
+    const [profile, setProfile] = useState<UserProfile | null>(null);
     const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<AuthError | null>(null);
+    const [error, setError] = useState<Error | null>(null);
     const supabaseConfigured = Boolean(import.meta.env.VITE_SUPABASE_URL) && Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY)
     const AUTH_TIMEOUT_MS = 3500
+
+    const normalizeError = (err: unknown): Error => {
+        return err instanceof Error ? err : new Error('Unknown error')
+    }
 
     const fetchProfile = async (userId: string) => {
         try {
@@ -80,9 +88,10 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
                 if (session?.user) {
                     fetchProfile(session.user.id);
                 }
-            } catch (err: any) {
-                console.error('Failed to get session:', err);
-                setError(err as AuthError);
+            } catch (err) {
+                const error = normalizeError(err)
+                console.error('Failed to get session:', error);
+                setError(error);
             } finally {
                 if (mounted) {
                     setLoading(false);
@@ -126,9 +135,10 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
                 },
             });
             if (error) throw error;
-        } catch (err: any) {
-            setError(err);
-            console.error('Error signing in with Google:', err);
+        } catch (err) {
+            const error = normalizeError(err)
+            setError(error);
+            console.error('Error signing in with Google:', error);
         }
     };
 
@@ -148,9 +158,10 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
 
             // Redirect to home or reload for clean state
             window.location.href = '/';
-        } catch (err: any) {
-            setError(err);
-            console.error('Error signing out:', err);
+        } catch (err) {
+            const error = normalizeError(err)
+            setError(error);
+            console.error('Error signing out:', error);
         }
     };
 
@@ -167,6 +178,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth(): AuthContextType {
     const context = useContext(AuthContext);
     if (context === undefined) {

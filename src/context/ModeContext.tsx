@@ -43,6 +43,7 @@ export function ModeProvider({ children }: { children: ReactNode }): JSX.Element
     )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useMode(): ModeContextType {
     const context = useContext(ModeContext)
     if (context === undefined) {

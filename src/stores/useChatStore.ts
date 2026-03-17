@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { supabase } from "../lib/supabase";
+import type { Session } from "@supabase/supabase-js";
 import { splitSseEvents, extractSseData } from "../lib/sse";
 import { ChatStreamChunkSchema } from "../lib/sseSchemas";
 import type { Level } from "../types";
@@ -95,6 +96,34 @@ const API_URL = import.meta.env.VITE_API_URL || "";
 const THEME_STORAGE_KEY = "kb_theme_v1";
 const DEFAULT_WORKSPACE: Workspace = "learn";
 const DEFAULT_DEPTH_LEVEL: DepthLevel = "eli12";
+
+const getSupabaseSession = async (): Promise<Session | null> => {
+  if (!supabaseConfigured) return null;
+  const { data } = await supabase.auth.getSession();
+  return data.session;
+};
+
+const isAbortError = (error: unknown): boolean => {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    (error as { name?: string }).name === "AbortError"
+  );
+};
+
+const getErrorMessage = (error: unknown, fallback: string): string => {
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
+};
+
+const getErrorStatus = (error: unknown): number | undefined => {
+  if (typeof error !== "object" || error === null || !("status" in error)) {
+    return undefined;
+  }
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : undefined;
+};
 
 const isDepthLevel = (mode: string | null | undefined): mode is DepthLevel => {
   return DEPTH_LEVELS.includes(mode as DepthLevel);
@@ -978,12 +1007,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     try {
-      const {
-        data: { session },
-      } = supabaseConfigured
-        ? await supabase.auth.getSession()
-        : { data: { session: null } as any };
-      const headers: HeadersInit = {
+      const session = await getSupabaseSession();
+      const headers: Record<string, string> = {
         "Content-Type": "application/json",
       };
       if (session?.access_token) {
@@ -992,7 +1017,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const streamFromResponse = async (
         response: Response,
-        handler: (payload: any) => void,
+        handler: (payload: unknown) => void,
       ) => {
         if (!response.body) {
           throw new Error("Streaming not supported in this environment");
@@ -1030,7 +1055,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             if (!dataPayload) continue;
             if (dataPayload === "[DONE]") continue;
 
-            let payload: any = null;
+            let payload: unknown = null;
             try {
               payload = JSON.parse(dataPayload);
             } catch {
@@ -1170,9 +1195,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
           try {
             await executeStream();
             return;
-          } catch (error: any) {
+          } catch (error) {
+            const status = getErrorStatus(error);
             if (controller.signal.aborted) throw error;
-            if (error?.status === 429) throw error;
+            if (status === 429) throw error;
             if (attempt >= maxRetries) throw error;
             attempt += 1;
             const backoff =
@@ -1196,8 +1222,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         isStreaming: false,
         syncStatus: "synced",
       }));
-    } catch (error: any) {
-      if (error?.name === "AbortError" || controller.signal.aborted) {
+    } catch (error) {
+      if (isAbortError(error) || controller.signal.aborted) {
         get().updateMessageByClientId(assistantClientId, (message) => ({
           ...message,
           isStreaming: false,
@@ -1206,7 +1232,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return;
       }
 
-      notifyError(error?.message || "Failed to send message");
+      const errorMessage = getErrorMessage(error, "Failed to send message");
+      notifyError(errorMessage);
       const retryPayload = {
         content: trimmed,
         mode: requestedMode,
@@ -1223,7 +1250,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       get().updateMessageByClientId(assistantClientId, (message) => ({
         ...message,
         isStreaming: false,
-        error: error?.message || "Failed to sync message",
+        error: getErrorMessage(error, "Failed to sync message"),
         syncStatus: "failed",
         retryPayload,
       }));

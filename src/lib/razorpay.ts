@@ -4,7 +4,7 @@ interface RazorpayOptions {
     currency: string;
     name: string;
     description: string;
-    handler: (response: any) => void;
+    handler: (response: unknown) => void;
     prefill?: {
         name?: string;
         email?: string;
@@ -17,7 +17,7 @@ interface RazorpayOptions {
 
 declare global {
     interface Window {
-        Razorpay: new (options: RazorpayOptions) => any;
+        Razorpay: new (options: RazorpayOptions) => unknown;
     }
 }
 
@@ -37,7 +37,7 @@ export const loadRazorpay = (): Promise<boolean> => {
 
 export const openCheckout = async (
     onSuccess: () => void,
-    onError: (error: any) => void
+    onError: (error: Error) => void
 ) => {
     // MOCK FLOW IF KEYS ARE MISSING
     // Since we don't have keys in this environment yet, we simulate the flow
@@ -50,7 +50,7 @@ export const openCheckout = async (
             if (confirm) {
                 onSuccess();
             } else {
-                onError('Payment cancelled by user');
+                onError(new Error('Payment cancelled by user'));
             }
         }, 1000);
         return;

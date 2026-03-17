@@ -50,7 +50,7 @@ export interface Conversation {
     id: string
     title: string
     mode: ConversationMode
-    settings: any
+    settings: Record<string, unknown> | null
     created_at: string
     updated_at: string
 }
@@ -60,14 +60,14 @@ export interface MessageMetadata {
     assistant_client_id?: string
     mode?: ConversationMode
     prompt_mode?: PromptMode
-    [key: string]: any
+    [key: string]: unknown
 }
 
 export interface Message {
     id: string
     role: 'user' | 'assistant'
     content: string
-    attachments?: any[]
+    attachments?: unknown[]
     metadata?: MessageMetadata
     created_at: string
     clientGeneratedId?: string

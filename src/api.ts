@@ -1,22 +1,39 @@
-import type { PinnedTopic, QueryRequest, QueryResponse, ExportRequest } from './types'
+import type { PinnedTopic, QueryRequest, QueryResponse, ExportRequest, HistoryItem } from './types'
 import { LegacyStreamChunkSchema } from './lib/sseSchemas'
+import type { Session } from '@supabase/supabase-js'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 const SUPABASE_CONFIGURED = Boolean(import.meta.env.VITE_SUPABASE_URL) && Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY)
 
 import { supabase } from './lib/supabase'
 
+const getSupabaseSession = async (): Promise<Session | null> => {
+    if (!SUPABASE_CONFIGURED) return null
+    const { data } = await supabase.auth.getSession()
+    return data.session
+}
+
+const isAbortError = (err: unknown): boolean => {
+    return typeof err === 'object' && err !== null && 'name' in err && (err as { name?: string }).name === 'AbortError'
+}
+
+const normalizeError = (err: unknown): Error => {
+    return err instanceof Error ? err : new Error('Unexpected error')
+}
+
 async function fetchAPI<T>(path: string, options?: RequestInit & { responseType?: 'json' | 'blob' }): Promise<T> {
-    const { data: { session } } = SUPABASE_CONFIGURED
-        ? await supabase.auth.getSession()
-        : { data: { session: null } as any }
-    const headers: HeadersInit = {
+    const session = await getSupabaseSession()
+    const headers: Record<string, string> = {
         'Content-Type': 'application/json',
-        ...options?.headers,
+    }
+    if (options?.headers) {
+        const extraHeaders = new Headers(options.headers)
+        extraHeaders.forEach((value, key) => {
+            headers[key] = value
+        })
     }
 
     if (session?.access_token) {
-        // @ts-ignore - HeadersInit type flexibility
         headers['Authorization'] = `Bearer ${session.access_token}`
     }
 
@@ -38,10 +55,10 @@ async function fetchAPI<T>(path: string, options?: RequestInit & { responseType?
             return await res.blob() as unknown as T
         }
         return await res.json()
-    } catch (err: any) {
+    } catch (err) {
         clearTimeout(timeoutId)
-        if (err.name === 'AbortError') throw new Error('Request timed out. Please try again.')
-        throw err
+        if (isAbortError(err)) throw new Error('Request timed out. Please try again.')
+        throw normalizeError(err)
     }
 }
 
@@ -59,14 +76,12 @@ export async function queryTopic(req: QueryRequest): Promise<QueryResponse> {
 export async function queryTopicStream(
     req: QueryRequest,
     onChunk: (chunk: string) => void,
-    onDone: (data: any) => void,
-    onError: (err: any) => void,
+    onDone: (data: Partial<QueryResponse>) => void,
+    onError: (err: Error) => void,
     signal?: AbortSignal
 ) {
-    const { data: { session } } = SUPABASE_CONFIGURED
-        ? await supabase.auth.getSession()
-        : { data: { session: null } as any }
-    const headers: HeadersInit = {
+    const session = await getSupabaseSession()
+    const headers: Record<string, string> = {
         'Content-Type': 'application/json',
     }
     if (session?.access_token) {
@@ -91,7 +106,7 @@ export async function queryTopicStream(
             }
             onDone(data)
         } catch (err) {
-            onError(err)
+            onError(normalizeError(err))
         }
     }
 
@@ -176,8 +191,8 @@ export async function queryTopicStream(
                 console.warn('Stream ended with incomplete data in buffer:', buffer.substring(0, 100))
             }
 
-        } catch (err: any) {
-            if (err.name === 'AbortError') {
+        } catch (err) {
+            if (isAbortError(err)) {
                 console.log('Stream aborted by user')
                 return
             }
@@ -186,12 +201,14 @@ export async function queryTopicStream(
             if (retries < maxRetries && !signal?.aborted) {
                 retries++
                 const delay = Math.min(8000, baseDelay * 2 ** (retries - 1)) + Math.random() * 250
-                console.warn(`Stream failed, retry ${retries}/${maxRetries} in ${Math.round(delay)}ms:`, err.message)
+                const error = normalizeError(err)
+                console.warn(`Stream failed, retry ${retries}/${maxRetries} in ${Math.round(delay)}ms:`, error.message)
                 await new Promise(r => setTimeout(r, delay))
                 return attemptStream()
             }
 
-            await fallbackToNonStream(err.message || 'Stream failed')
+            const error = normalizeError(err)
+            await fallbackToNonStream(error.message || 'Stream failed')
         }
     }
 
@@ -206,7 +223,7 @@ export async function exportExplanations(req: ExportRequest): Promise<Blob> {
     })
 }
 
-export async function getHistory(): Promise<any[]> {
+export async function getHistory(): Promise<HistoryItem[]> {
     return fetchAPI('/api/history')
 }
 
