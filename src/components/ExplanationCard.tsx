@@ -76,12 +76,12 @@ type MarkdownHeading3Props = ComponentPropsWithoutRef<'h3'> & {
 }
 
 const markdownComponents: Components = {
-    code({ className, children, ...props }: MarkdownCodeProps) {
+    code({ className, children, inline, ...props }: MarkdownCodeProps) {
         const match = /language-(\w+)/.exec(className || '')
         const codeStr = String(children).replace(/\n$/, '')
-        const inline = !match
+        const isInline = inline ?? !match
 
-        if (!inline && match && match[1] === 'mermaid') {
+        if (!isInline && match && match[1] === 'mermaid') {
             return <Mermaid chart={codeStr} />
         }
 

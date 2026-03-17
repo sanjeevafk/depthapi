@@ -169,12 +169,12 @@ async def app_client(monkeypatch, dummy_redis):
     monkeypatch.setattr(cache_module, "get_redis", lambda: dummy_redis)
     monkeypatch.setattr(api_main_app, "get_redis", lambda: dummy_redis)
     monkeypatch.setattr(api_main_app, "close_redis", _noop_close)
-    monkeypatch.setattr(api_main_app, "rate_limiter", None)
     monkeypatch.setattr(api_main_app, "redis_available", False)
     main_app.app.dependency_overrides = {}
 
     transport = httpx.ASGITransport(app=main_app.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        client.app = main_app.app
         yield client
 
     main_app.app.dependency_overrides = {}

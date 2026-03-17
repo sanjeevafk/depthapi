@@ -5,21 +5,19 @@ import os
 import structlog
 from datetime import datetime
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Response, Depends
+from fastapi import FastAPI, Request, Response, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi_limiter.depends import RateLimiter
-from pyrate_limiter import Limiter, Rate, Duration
 from routers import pinned, query, export, history, webhooks, payments, messages
 from services.cache import close_redis, get_redis
 from services.inference import close_client
 from services.llm_errors import LLMError, LLMBadRequest, LLMUnavailable
+from services.rate_limit import check_rate_limit
 from logging_config import setup_logging, logger
 from config import get_settings
 
 
 redis_available = False
-rate_limiter: Limiter | None = None
 
 
 @asynccontextmanager
@@ -28,16 +26,13 @@ async def lifespan(app: FastAPI):
     """App lifespan: startup/shutdown."""
     setup_logging()
     
-    global redis_available, rate_limiter
+    global redis_available
     redis_available = False
-    rate_limiter = None
     
     try:
         r = await get_redis()
         await r.ping()
         redis_available = True
-        if get_settings().rate_limit_per_user > 0:
-            rate_limiter = Limiter(Rate(get_settings().rate_limit_per_user, Duration.MINUTE))
         logger.info("redis_connected_rate_limiter_init")
     except Exception as e:
 
@@ -178,17 +173,27 @@ async def conditional_rate_limit(request: Request, response: Response):
     Apply rate limiting ONLY if Redis is available.
     In development (when Redis fails), this becomes a no-op.
     """
-    if not redis_available or rate_limiter is None:
+    if not redis_available:
         return
 
     try:
-        if get_settings().environment == "production":
-             await RateLimiter(rate_limiter)(request, response)
-        else:
-            try:
-                await RateLimiter(rate_limiter)(request, response)
-            except Exception:
-                pass
+        limit = max(int(get_settings().rate_limit_per_user or 0), 0)
+        if limit <= 0:
+            return
+
+        client = getattr(request, "client", None)
+        client_ip = client.host if client else "unknown"
+        identifier = f"ip:{client_ip}"
+        result = await check_rate_limit(identifier=identifier, limit=limit, window_seconds=60)
+        if not result.allowed:
+            retry_after = max(result.retry_after, 1)
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rate limit reached. Please wait {retry_after} seconds and try again.",
+                headers={"Retry-After": str(retry_after)},
+            )
+    except HTTPException:
+        raise
     except Exception:
         pass
 
