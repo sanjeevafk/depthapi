@@ -79,5 +79,7 @@ export interface Message {
         content: string
         mode: ConversationMode
         promptMode?: PromptMode
+        clientMessageId?: string
+        assistantClientId?: string
     }
 }

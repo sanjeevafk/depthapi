@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { supabase } from "../lib/supabase";
 import type { Session } from "@supabase/supabase-js";
-import { splitSseEvents, extractSseData } from "../lib/sse";
+import { splitSseEvents, parseSseEvent } from "../lib/sse";
 import { ChatStreamChunkSchema } from "../lib/sseSchemas";
 import type { Level } from "../types";
 import type {
@@ -59,6 +59,8 @@ interface ChatState {
       mode?: ChatMode;
       promptMode?: PromptMode;
       isRegeneration?: boolean;
+      clientMessageId?: string;
+      assistantClientId?: string;
     },
   ) => Promise<void>;
   regenerateMessage: (messageId: string, mode?: ChatMode) => Promise<void>;
@@ -213,19 +215,36 @@ const getModeForWorkspace = (workspace: Workspace): ChatMode => {
 const initialTheme = loadTheme();
 applyThemeClass(initialTheme);
 
-const makeLocalId = () => {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return `local-${crypto.randomUUID()}`;
-  }
-  return `local-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
-};
-
-const makeClientId = () => {
+const createUuid = () => {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
   }
-  return `client-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+  const getRandomValues =
+    typeof crypto !== "undefined" && "getRandomValues" in crypto
+      ? crypto.getRandomValues.bind(crypto)
+      : null;
+  const rnd = (size: number) => {
+    if (getRandomValues) {
+      const arr = new Uint8Array(size);
+      getRandomValues(arr);
+      return arr;
+    }
+    return Uint8Array.from({ length: size }, () =>
+      Math.floor(Math.random() * 256),
+    );
+  };
+  const bytes = rnd(16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0"));
+  return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex
+    .slice(6, 8)
+    .join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10, 16).join("")}`;
 };
+
+const makeLocalId = () => `local-${createUuid()}`;
+
+const makeClientId = () => createUuid();
 
 const truncateTitle = (content: string) => {
   const trimmed = content.trim().replace(/\s+/g, " ");
@@ -250,6 +269,8 @@ interface PendingSyncEntry {
   mode: ChatMode;
   promptMode?: PromptMode;
   createdAt: string;
+  clientMessageId?: string;
+  assistantClientId?: string;
 }
 
 const loadPendingSyncs = (): PendingSyncEntry[] => {
@@ -886,6 +907,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const now = new Date().toISOString();
     const localUserId = makeLocalId();
+    const clientMessageId = options?.clientMessageId ?? makeClientId();
+    const assistantClientId = options?.assistantClientId ?? makeClientId();
     let conversationId = get().currentConversationId;
     let conversation = get().conversations.find(
       (item) => item.id === conversationId,
@@ -952,20 +975,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     }
 
-    const optimisticUserMessage: Message = {
-      id: localUserId,
-      role: "user",
-      content: trimmed,
-      metadata: {
-        client_id: localUserId,
-        mode: requestedMode,
-        prompt_mode: effectivePromptMode,
-      },
-      created_at: now,
-      clientGeneratedId: localUserId,
-    };
+    const existingUserMessageId = get().messageIds.find((id) => {
+      const message = get().messagesById[id];
+      if (!message) return false;
+      return (
+        message.clientGeneratedId === clientMessageId ||
+        message.metadata?.client_id === clientMessageId
+      );
+    });
 
-    get().addMessage(optimisticUserMessage);
+    if (!existingUserMessageId) {
+      const optimisticUserMessage: Message = {
+        id: localUserId,
+        role: "user",
+        content: trimmed,
+        metadata: {
+          client_id: clientMessageId,
+          mode: requestedMode,
+          prompt_mode: effectivePromptMode,
+        },
+        created_at: now,
+        clientGeneratedId: clientMessageId,
+      };
+
+      get().addMessage(optimisticUserMessage);
+    }
     set((state) => ({
       conversations: state.conversations
         .map((item) =>
@@ -980,23 +1014,41 @@ export const useChatStore = create<ChatState>((set, get) => ({
         .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1)),
     }));
 
-    const assistantClientId = makeClientId();
-    const assistantPlaceholder: Message = {
-      id: makeLocalId(),
-      role: "assistant",
-      content: "",
-      created_at: new Date().toISOString(),
-      clientGeneratedId: assistantClientId,
-      isStreaming: true,
-      syncStatus: "pending",
-      metadata: {
-        mode: requestedMode,
-        prompt_mode: effectivePromptMode,
-        assistant_client_id: assistantClientId,
-      },
-    };
+    const existingAssistantMessageId = get().messageIds.find((id) => {
+      const message = get().messagesById[id];
+      if (!message) return false;
+      return (
+        message.clientGeneratedId === assistantClientId ||
+        message.metadata?.assistant_client_id === assistantClientId
+      );
+    });
 
-    get().addMessage(assistantPlaceholder);
+    if (existingAssistantMessageId) {
+      get().updateMessageByClientId(assistantClientId, (message) => ({
+        ...message,
+        content: "",
+        isStreaming: true,
+        error: undefined,
+        syncStatus: "pending",
+      }));
+    } else {
+      const assistantPlaceholder: Message = {
+        id: makeLocalId(),
+        role: "assistant",
+        content: "",
+        created_at: new Date().toISOString(),
+        clientGeneratedId: assistantClientId,
+        isStreaming: true,
+        syncStatus: "pending",
+        metadata: {
+          mode: requestedMode,
+          prompt_mode: effectivePromptMode,
+          assistant_client_id: assistantClientId,
+        },
+      };
+
+      get().addMessage(assistantPlaceholder);
+    }
 
     const controller = new AbortController();
     set((state) => ({
@@ -1032,6 +1084,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const decoder = new TextDecoder();
         let buffer = "";
         const READ_TIMEOUT_MS = 20000;
+        let doneReceived = false;
 
         while (true) {
           const { value, done } = await Promise.race([
@@ -1051,18 +1104,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
           buffer = remainder;
 
           for (const eventBlock of events) {
-            const dataPayload = extractSseData(eventBlock);
-            if (!dataPayload) continue;
-            if (dataPayload === "[DONE]") continue;
+            const parsed = parseSseEvent(eventBlock);
+            if (!parsed) {
+              console.warn("Skipping invalid SSE event:", eventBlock);
+              continue;
+            }
+            if (parsed.event === "heartbeat") continue;
+            if (parsed.event === "done" || parsed.data === "[DONE]") {
+              doneReceived = true;
+              break;
+            }
 
             let payload: unknown = null;
             try {
-              payload = JSON.parse(dataPayload);
+              payload = JSON.parse(parsed.data);
             } catch {
-              payload = { delta: dataPayload };
+              payload = { delta: parsed.data };
             }
 
             handler(payload);
+          }
+
+          if (doneReceived) {
+            try {
+              await reader.cancel();
+            } catch {
+              // ignore
+            }
+            break;
           }
         }
       };
@@ -1144,7 +1213,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           body: JSON.stringify({
             conversation_id: conversationId,
             content: trimmed,
-            client_generated_id: localUserId,
+            client_generated_id: clientMessageId,
             assistant_client_id: assistantClientId,
             mode: requestedMode,
             prompt_mode: effectivePromptMode,
@@ -1166,6 +1235,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               premium: isPro,
               regenerate: Boolean(options?.isRegeneration),
               bypass_cache: Boolean(options?.isRegeneration),
+              message_id: clientMessageId,
             }),
           });
 
@@ -1188,34 +1258,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         );
       };
 
-      const maxRetries = 2;
-      let attempt = 0;
-      const retryStream = async () => {
-        while (true) {
-          try {
-            await executeStream();
-            return;
-          } catch (error) {
-            const status = getErrorStatus(error);
-            if (controller.signal.aborted) throw error;
-            if (status === 429) throw error;
-            if (attempt >= maxRetries) throw error;
-            attempt += 1;
-            const backoff =
-              Math.min(8000, 1000 * 2 ** attempt) + Math.random() * 250;
-            get().updateMessageByClientId(assistantClientId, (message) => ({
-              ...message,
-              content: "",
-              isStreaming: true,
-              error: undefined,
-              syncStatus: "pending",
-            }));
-            await new Promise((resolve) => setTimeout(resolve, backoff));
-          }
-        }
-      };
-
-      await retryStream();
+      await executeStream();
 
       get().updateMessageByClientId(assistantClientId, (message) => ({
         ...message,
@@ -1232,12 +1275,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return;
       }
 
-      const errorMessage = getErrorMessage(error, "Failed to send message");
+      let errorMessage = getErrorMessage(error, "Failed to send message");
+      if (/timed out/i.test(errorMessage)) {
+        errorMessage = "Streaming timed out. Retry.";
+      }
       notifyError(errorMessage);
       const retryPayload = {
         content: trimmed,
         mode: requestedMode,
         promptMode: effectivePromptMode,
+        clientMessageId,
+        assistantClientId,
       };
       cachePendingSync({
         id: assistantClientId,
@@ -1245,12 +1293,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         mode: requestedMode,
         promptMode: effectivePromptMode,
         createdAt: new Date().toISOString(),
+        clientMessageId,
+        assistantClientId,
       });
 
       get().updateMessageByClientId(assistantClientId, (message) => ({
         ...message,
         isStreaming: false,
-        error: getErrorMessage(error, "Failed to sync message"),
+        error: errorMessage || getErrorMessage(error, "Failed to sync message"),
         syncStatus: "failed",
         retryPayload,
       }));
@@ -1325,6 +1375,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await get().sendMessage(message.retryPayload.content, {
       mode: message.retryPayload.mode as ChatMode,
       promptMode: message.retryPayload.promptMode,
+      clientMessageId: message.retryPayload.clientMessageId,
+      assistantClientId: message.retryPayload.assistantClientId,
     });
   },
 }));

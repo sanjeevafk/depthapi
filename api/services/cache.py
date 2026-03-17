@@ -48,6 +48,12 @@ class UpstashRedisCompat:
         await self._execute("SETEX", key, int(ttl), value)
         return True
 
+    async def set_if_not_exists(self, key: str, ttl: int, value: Any) -> bool:
+        if isinstance(value, bytes):
+            value = value.decode("utf-8")
+        result = await self._execute("SET", key, value, "NX", "EX", int(ttl))
+        return bool(result)
+
     async def incr(self, key: str) -> int:
         result = await self._execute("INCR", key)
         return int(result)
@@ -123,6 +129,17 @@ async def cache_set(key: str, value: dict[str, Any], ttl: int | None = None) -> 
         return True
     except Exception as e:
         logger.error("cache_set_failed", key=key, error=str(e))
+        return False
+
+
+async def cache_set_if_absent(key: str, value: dict[str, Any], ttl: int) -> bool:
+    """Set cached JSON value only if the key is missing."""
+    try:
+        r = await get_redis()
+        payload = orjson.dumps(value).decode("utf-8")
+        return await r.set_if_not_exists(key, ttl, payload)
+    except Exception as e:
+        logger.error("cache_set_if_absent_failed", key=key, error=str(e))
         return False
 
 

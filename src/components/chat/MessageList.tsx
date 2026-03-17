@@ -143,7 +143,7 @@ function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
                         onClick={() => void retrySync(messageId)}
                         className="mt-2 text-[11px] text-cyan-300 border border-cyan-500/30 rounded-full px-3 py-1 hover:bg-cyan-500/10 transition"
                     >
-                        Retry Sync
+                        Retry
                     </button>
                 )}
             </div>
