@@ -7,7 +7,10 @@ import routers.payments as payments_module
 
 @pytest.mark.asyncio
 async def test_create_checkout_session(app_client, monkeypatch, fake_user, test_settings):
-    app_client.app.dependency_overrides[auth_module.verify_token] = lambda: {"user": fake_user}
+    async def fake_auth():
+        return {"user": fake_user}
+
+    app_client.app.dependency_overrides[auth_module.verify_token] = fake_auth
     monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
 
     resp = await app_client.post(
@@ -26,7 +29,10 @@ async def test_verify_payment_status(app_client, monkeypatch, fake_user, test_se
     fake_supabase.responses["users"] = [{"is_pro": True}]
     monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
     monkeypatch.setattr(supabase, "create_client", lambda *_args, **_kwargs: fake_supabase)
-    app_client.app.dependency_overrides[auth_module.verify_token] = lambda: {"user": fake_user}
+    async def fake_auth():
+        return {"user": fake_user}
+
+    app_client.app.dependency_overrides[auth_module.verify_token] = fake_auth
 
     resp = await app_client.get("/api/payments/verify-status")
     assert resp.status_code == 200

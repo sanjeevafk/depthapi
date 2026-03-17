@@ -9,7 +9,9 @@ import config as config_module
 import auth as auth_module
 import services.cache as cache_module
 import services.search as search_module
-import services.model_provider as model_provider_module
+import services.llm_client as llm_client_module
+import services.inference as inference_module
+import services.ensemble as ensemble_module
 
 
 class DummyRedis:
@@ -28,12 +30,6 @@ class DummyRedis:
 
     async def close(self):
         return True
-
-
-class DummyLimiter:
-    @classmethod
-    async def init(cls, _redis):
-        return None
 
 
 class FakeSupabaseQuery:
@@ -86,22 +82,6 @@ class FakeSupabase:
         return FakeSupabaseQuery(self, table)
 
 
-class DummyProvider:
-    gemini_configured = False
-
-    async def initialize(self):
-        return None
-
-    async def close(self):
-        return None
-
-    async def route_inference(self, *args, **_kwargs):
-        return {"provider": "dummy", "model": "dummy", "content": "ok"}
-
-    async def route_inference_stream(self, _prompt, **_kwargs):
-        yield "ok"
-
-
 @pytest.fixture(scope="session")
 def test_settings():
     return SimpleNamespace(
@@ -142,9 +122,41 @@ def patch_settings(monkeypatch, test_settings):
     monkeypatch.setattr(api_main_app, "get_settings", lambda: test_settings)
     monkeypatch.setattr(cache_module, "get_settings", lambda: test_settings)
     monkeypatch.setattr(auth_module, "get_settings", lambda: test_settings)
-    monkeypatch.setattr(model_provider_module, "get_settings", lambda: test_settings)
     search_module.settings = test_settings
     return test_settings
+
+
+@pytest.fixture(autouse=True)
+def patch_llm_client(monkeypatch):
+    class DummyChoice:
+        def __init__(self, content: str):
+            self.message = type("Msg", (), {"content": content})
+
+    class DummyResponse:
+        def __init__(self, content: str, model: str):
+            self.choices = [DummyChoice(content)]
+            self.model = model
+            self.usage = None
+
+    async def fake_create_chat_completion(model, _messages, **_kwargs):
+        return DummyResponse("ok", model)
+
+    async def fake_stream_chat_completion(_model, _messages, **_kwargs):
+        yield "ok"
+
+    monkeypatch.setattr(llm_client_module, "create_chat_completion", fake_create_chat_completion)
+    monkeypatch.setattr(llm_client_module, "stream_chat_completion", fake_stream_chat_completion)
+    monkeypatch.setattr(inference_module, "create_chat_completion", fake_create_chat_completion)
+    monkeypatch.setattr(inference_module, "stream_chat_completion", fake_stream_chat_completion)
+    monkeypatch.setattr(ensemble_module, "create_chat_completion", fake_create_chat_completion)
+
+
+@pytest.fixture(autouse=True)
+def patch_asyncio_to_thread(monkeypatch):
+    async def fake_to_thread(func, /, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(auth_module.asyncio, "to_thread", fake_to_thread)
 
 
 @pytest.fixture
@@ -161,11 +173,6 @@ async def app_client(monkeypatch, dummy_redis):
     monkeypatch.setattr(api_main_app, "get_redis", lambda: dummy_redis)
     monkeypatch.setattr(api_main_app, "close_redis", _noop_close)
     monkeypatch.setattr(api_main_app, "rate_limiter", None)
-    monkeypatch.setattr(
-        model_provider_module.ModelProvider,
-        "get_instance",
-        classmethod(lambda cls: DummyProvider())
-    )
     monkeypatch.setattr(api_main_app, "redis_available", False)
     main_app.app.dependency_overrides = {}
 

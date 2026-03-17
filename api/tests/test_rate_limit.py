@@ -17,6 +17,7 @@ async def test_conditional_rate_limit_no_redis(monkeypatch):
 @pytest.mark.asyncio
 async def test_conditional_rate_limit_calls_limiter(monkeypatch, test_settings):
     main_app.redis_available = True
+    main_app.rate_limiter = object()
     test_settings.environment = "production"
 
     calls = {"count": 0}
