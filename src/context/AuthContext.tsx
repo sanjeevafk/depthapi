@@ -83,7 +83,6 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
             user
                 ? {
                     id: user.id,
-                    email: user.email ?? null,
                 }
                 : null,
         )

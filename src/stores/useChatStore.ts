@@ -209,17 +209,24 @@ const getModeForWorkspace = (workspace: Workspace): ChatMode => {
   return "learning";
 };
 
+const asString = (value: unknown): string | undefined => {
+  return typeof value === "string" ? value : undefined;
+};
+
 const initialTheme = loadTheme();
 applyThemeClass(initialTheme);
 
 const createUuid = () => {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
+  const webCrypto: Crypto | undefined =
+    typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
+
+  if (webCrypto?.randomUUID) {
+    return webCrypto.randomUUID();
   }
-  const getRandomValues =
-    typeof crypto !== "undefined" && "getRandomValues" in crypto
-      ? crypto.getRandomValues.bind(crypto)
-      : null;
+
+  const getRandomValues = webCrypto?.getRandomValues
+    ? webCrypto.getRandomValues.bind(webCrypto)
+    : null;
   const rnd = (size: number) => {
     if (getRandomValues) {
       const arr = new Uint8Array(size);
@@ -636,11 +643,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         (item) => item.id === nextConversationId,
       );
       const conversationMode =
-        activeConversation?.mode || activeConversation?.settings?.mode;
+        asString(activeConversation?.mode) ||
+        asString(activeConversation?.settings?.mode);
       const conversationPrompt =
-        activeConversation?.settings?.prompt_mode ||
-        activeConversation?.settings?.mode ||
-        activeConversation?.mode ||
+        asString(activeConversation?.settings?.prompt_mode) ||
+        asString(activeConversation?.settings?.mode) ||
+        asString(activeConversation?.mode) ||
         state.currentPromptMode;
       const nextWorkspaceState = resolveWorkspaceState(
         conversationMode,
@@ -675,13 +683,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       (item) => item.id === id,
     );
     const conversationMode =
-      activeConversation?.mode ||
-      activeConversation?.settings?.mode ||
+      asString(activeConversation?.mode) ||
+      asString(activeConversation?.settings?.mode) ||
       state.currentMode;
     const conversationPrompt =
-      activeConversation?.settings?.prompt_mode ||
-      activeConversation?.settings?.mode ||
-      activeConversation?.mode ||
+      asString(activeConversation?.settings?.prompt_mode) ||
+      asString(activeConversation?.settings?.mode) ||
+      asString(activeConversation?.mode) ||
       state.currentPromptMode;
     const nextWorkspaceState = resolveWorkspaceState(
       conversationMode,
@@ -1253,6 +1261,52 @@ export const useChatStore = create<ChatState>((set, get) => ({
           mode: requestedMode,
           regenerate: Boolean(options?.isRegeneration),
         });
+
+        const fallbackToQueryStream = async (reason: "local" | "fallback") => {
+          const fallbackLevel = toQueryLevel(effectivePromptMode);
+          trackTelemetry("stream_start", {
+            endpoint: "/api/query/stream",
+            mode: requestedMode,
+            regenerate: Boolean(options?.isRegeneration),
+            fallback: true,
+            reason,
+          });
+          const fallbackResponse = await fetch(`${API_URL}/api/query/stream`, {
+            method: "POST",
+            headers,
+            signal: controller.signal,
+            body: JSON.stringify({
+              topic: trimmed,
+              content: trimmed,
+              levels: [fallbackLevel],
+              mode: requestedMode,
+              prompt_mode: effectivePromptMode,
+              premium: isPro,
+              regenerate: Boolean(options?.isRegeneration),
+              bypass_cache: Boolean(options?.isRegeneration),
+              temperature: requestTemperature,
+              message_id: clientMessageId,
+            }),
+          });
+
+          if (!fallbackResponse.ok) {
+            throw await buildHttpError(fallbackResponse);
+          }
+
+          await streamFromResponse(fallbackResponse, (payload) =>
+            handleStreamingPayload(payload, "chunk"),
+          );
+        };
+
+        const shouldUseMessagesEndpoint =
+          Boolean(session?.access_token) &&
+          supabaseConfigured &&
+          !conversationId.startsWith("local-");
+
+        if (!shouldUseMessagesEndpoint) {
+          await fallbackToQueryStream("local");
+          return;
+        }
 
         let response = await fetch(`${API_URL}/api/messages`, {
           method: "POST",

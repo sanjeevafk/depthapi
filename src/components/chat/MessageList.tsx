@@ -10,11 +10,11 @@ import { useChatStore } from '../../stores/useChatStore'
 import { formatModeLabel } from '../../lib/chatModes'
 
 const markdownComponents: Components = {
-    code({ inline, className, children, ...props }) {
+    code({ className, children, ...props }) {
         const match = /language-(\w+)/.exec(className || '')
         const codeStr = String(children).replace(/\n$/, '')
 
-        if (!inline && match && match[1] === 'mermaid') {
+        if (match && match[1] === 'mermaid') {
             return <Mermaid chart={codeStr} />
         }
 
@@ -54,32 +54,50 @@ export default function MessageList(): JSX.Element {
     const messageIds = useChatStore(state => state.messageIds)
     const isLoading = useChatStore(state => state.isLoading)
     const scrollRef = useRef<HTMLDivElement>(null)
+    const shouldAutoScrollRef = useRef(true)
 
     const lastMessageId = messageIds[messageIds.length - 1]
     const lastContent = useChatStore(state => (lastMessageId ? state.messagesById[lastMessageId]?.content : undefined))
+    const handleScroll = () => {
+        const container = scrollRef.current
+        if (!container) return
+        const distanceFromBottom =
+            container.scrollHeight - (container.scrollTop + container.clientHeight)
+        shouldAutoScrollRef.current = distanceFromBottom < 120
+    }
+
     useEffect(() => {
-        if (!scrollRef.current) return
-        scrollRef.current.scrollTo({
-            top: scrollRef.current.scrollHeight,
+        const container = scrollRef.current
+        if (!container || !shouldAutoScrollRef.current) return
+        container.scrollTo({
+            top: container.scrollHeight,
             behavior: 'smooth',
         })
     }, [messageIds.length, lastContent])
 
     return (
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
-            {messageIds.length === 0 ? (
-                <div className="text-sm text-gray-500">Start a conversation to see messages here.</div>
-            ) : (
-                <AnimatePresence initial={false}>
-                    {messageIds.map(messageId => (
-                        <MessageItem key={messageId} messageId={messageId} />
-                    ))}
-                </AnimatePresence>
-            )}
+        <div
+            ref={scrollRef}
+            onScroll={handleScroll}
+            className="flex-1 min-h-0 overflow-y-auto px-6 py-6"
+        >
+            <div className="mx-auto flex w-full max-w-3xl flex-col space-y-4">
+                {messageIds.length === 0 ? (
+                    <div className="text-sm text-gray-500">
+                        Start a conversation to see messages here.
+                    </div>
+                ) : (
+                    <AnimatePresence initial={false}>
+                        {messageIds.map(messageId => (
+                            <MessageItem key={messageId} messageId={messageId} />
+                        ))}
+                    </AnimatePresence>
+                )}
 
-            {isLoading && messageIds.length === 0 && (
-                <div className="text-xs text-gray-500">Loading messages...</div>
-            )}
+                {isLoading && messageIds.length === 0 && (
+                    <div className="text-xs text-gray-500">Loading messages...</div>
+                )}
+            </div>
         </div>
     )
 }
@@ -104,7 +122,7 @@ function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
             className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}
         >
             <div
-                className={`max-w-[75%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-lg border relative ${!isUser ? 'group' : ''} ${
+                className={`max-w-[75%] break-words rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-lg border relative ${!isUser ? 'group' : ''} ${
                     isUser
                         ? 'bg-accent-primary text-white border-accent-primary/30'
                         : 'bg-dark-700 text-gray-100 border-white/5'
