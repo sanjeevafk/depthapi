@@ -1277,10 +1277,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
             signal: controller.signal,
             body: JSON.stringify({
               topic: trimmed,
-              content: trimmed,
               levels: [fallbackLevel],
               mode: requestedMode,
-              prompt_mode: effectivePromptMode,
               premium: isPro,
               regenerate: Boolean(options?.isRegeneration),
               bypass_cache: Boolean(options?.isRegeneration),
@@ -1296,6 +1294,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           await streamFromResponse(fallbackResponse, (payload) =>
             handleStreamingPayload(payload, "chunk"),
           );
+          return;
         };
 
         const shouldUseMessagesEndpoint =
@@ -1327,36 +1326,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const shouldFallback =
           response.status === 404 || response.status === 405;
         if (shouldFallback) {
-          const fallbackLevel = toQueryLevel(effectivePromptMode);
-          trackTelemetry("stream_start", {
-            endpoint: "/api/query/stream",
-            mode: requestedMode,
-            regenerate: Boolean(options?.isRegeneration),
-            fallback: true,
-          });
-          response = await fetch(`${API_URL}/api/query/stream`, {
-            method: "POST",
-            headers,
-            signal: controller.signal,
-            body: JSON.stringify({
-              topic: trimmed,
-              levels: [fallbackLevel],
-              mode: requestedMode,
-              premium: isPro,
-              regenerate: Boolean(options?.isRegeneration),
-              bypass_cache: Boolean(options?.isRegeneration),
-              temperature: requestTemperature,
-              message_id: clientMessageId,
-            }),
-          });
-
-          if (!response.ok) {
-            throw await buildHttpError(response);
-          }
-
-          await streamFromResponse(response, (payload) =>
-            handleStreamingPayload(payload, "chunk"),
-          );
+          await fallbackToQueryStream("fallback");
           return;
         }
 
