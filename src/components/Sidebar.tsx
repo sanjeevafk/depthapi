@@ -18,6 +18,10 @@ import {
 import { useNavigate } from 'react-router-dom'
 import type { Mode, Level, HistoryItem } from '../types'
 
+const isLevel = (value: string | undefined): value is Level => {
+    return value === 'eli5' || value === 'eli10' || value === 'eli12' || value === 'eli15' || value === 'meme'
+}
+
 interface SidebarProps {
     onSelectTopic: (topic: string, mode?: Mode, level?: Level) => void
     refreshTrigger?: number
@@ -222,7 +226,8 @@ export default function Sidebar({ onSelectTopic, refreshTrigger, isOpen, onToggl
                                                     item.mode === 'technical' ? 'technical' :
                                                         item.mode === 'socratic' ? 'socratic' :
                                                             'learning'
-                                                onSelectTopic(item.topic, effectiveMode, item.levels?.[0])
+                                                const firstLevel = item.levels?.[0]
+                                                onSelectTopic(item.topic, effectiveMode, isLevel(firstLevel) ? firstLevel : undefined)
                                             }}
                                             className="group flex items-center justify-between p-2.5 rounded-lg hover:bg-dark-800 cursor-pointer transition-all border border-transparent hover:border-dark-700"
                                         >

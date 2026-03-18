@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, Paperclip } from "lucide-react";
 import DepthDropdown from "./DepthDropdown";
 import { useChatStore } from "../../stores/useChatStore";
@@ -34,9 +34,11 @@ export default function WorkspaceInput({
 }: WorkspaceInputProps): JSX.Element {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const baseHeightRef = useRef<number | null>(null);
   const sendMessage = useChatStore((state) => state.sendMessage);
   const isLoading = useChatStore((state) => state.isLoading);
   const currentPromptMode = useChatStore((state) => state.currentPromptMode);
+  const MAX_TEXTAREA_HEIGHT = 180;
 
   const isSendDisabled = disabled || isLoading || value.trim().length === 0;
 
@@ -63,6 +65,20 @@ export default function WorkspaceInput({
 
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    if (baseHeightRef.current === null) {
+      baseHeightRef.current = textarea.scrollHeight;
+    }
+    textarea.style.height = "auto";
+    const nextHeight = Math.min(textarea.scrollHeight, MAX_TEXTAREA_HEIGHT);
+    const minHeight = baseHeightRef.current ?? nextHeight;
+    textarea.style.height = `${Math.max(minHeight, nextHeight)}px`;
+    textarea.style.overflowY =
+      textarea.scrollHeight > MAX_TEXTAREA_HEIGHT ? "auto" : "hidden";
+  }, [value]);
 
   return (
     <div className="sticky bottom-0 z-20 bg-gradient-to-t from-slate-100/95 via-slate-100/70 to-transparent px-4 pb-4 pt-8 dark:from-dark-900/95 dark:via-dark-900/70 sm:px-6 sm:pb-6">

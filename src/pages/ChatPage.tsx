@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { BrainCircuit, HelpCircle, Menu, Sparkles } from "lucide-react";
+import { Menu } from "lucide-react";
 import MessageList from "../components/chat/MessageList";
 import RegenerationModal from "../components/chat/RegenerationModal";
 import ThemeToggle from "../components/chat/ThemeToggle";
 import WorkspaceInput from "../components/chat/WorkspaceInput";
 import WorkspaceSidebar from "../components/chat/WorkspaceSidebar";
+import WelcomeEmptyState from "../components/chat/WelcomeEmptyState";
 import { UpgradeModal } from "../components/UpgradeModal";
 import { useAuth } from "../context/AuthContext";
 import { createCheckoutSession } from "../lib/payments";
@@ -20,57 +21,7 @@ const WORKSPACE_LABELS: Record<Workspace, string> = {
   socratic: "Socratic",
   technical: "Technical",
 };
-
-const WORKSPACE_WELCOME: Record<
-  Workspace,
-  { title: string; description: string }
-> = {
-  learn: {
-    title: "Welcome to Learn Mode",
-    description: "Select a depth level and ask anything.",
-  },
-  socratic: {
-    title: "Welcome to Socratic Mode",
-    description: "Ask a question and we will reason through guided follow-ups.",
-  },
-  technical: {
-    title: "Welcome to Technical Mode",
-    description:
-      "Share a system, bug, or architecture topic for a deeper breakdown.",
-  },
-};
-
-function WorkspaceWelcomeCard({
-  workspace,
-}: {
-  workspace: Workspace;
-}): JSX.Element {
-  const content = WORKSPACE_WELCOME[workspace];
-
-  return (
-    <div className="flex h-full items-center justify-center px-6">
-      <div className="w-full max-w-xl rounded-3xl border border-slate-200 bg-white/70 p-8 text-center shadow-[0_20px_45px_rgba(15,23,42,0.08)] dark:border-white/10 dark:bg-dark-800/70 dark:shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
-        <div className="mx-auto mb-6 inline-flex h-16 w-16 items-center justify-center rounded-2xl border border-teal-200 bg-teal-50 dark:border-teal-500/30 dark:bg-teal-500/10">
-          {workspace === "learn" && (
-            <Sparkles className="h-7 w-7 text-teal-600 dark:text-teal-300" />
-          )}
-          {workspace === "socratic" && (
-            <HelpCircle className="h-7 w-7 text-teal-600 dark:text-teal-300" />
-          )}
-          {workspace === "technical" && (
-            <BrainCircuit className="h-7 w-7 text-teal-600 dark:text-teal-300" />
-          )}
-        </div>
-        <h2 className="text-3xl font-semibold text-slate-900 dark:text-slate-100">
-          {content.title}
-        </h2>
-        <p className="mt-3 text-lg text-slate-500 dark:text-slate-400">
-          {content.description}
-        </p>
-      </div>
-    </div>
-  );
-}
+const SIDEBAR_COLLAPSE_KEY = "kb_sidebar_collapsed_v1";
 
 export default function ChatPage(): JSX.Element {
   const { user, signInWithGoogle } = useAuth();
@@ -83,14 +34,22 @@ export default function ChatPage(): JSX.Element {
     (state) => state.currentConversationId,
   );
   const selectConversation = useChatStore((state) => state.selectConversation);
-  const messageIds = useChatStore((state) => state.messageIds);
   const setWorkspace = useChatStore((state) => state.setWorkspace);
   const setDepthLevel = useChatStore((state) => state.setDepthLevel);
   const setIsSidebarOpen = useChatStore((state) => state.setIsSidebarOpen);
   const startNewThread = useChatStore((state) => state.startNewThread);
   const deleteConversation = useChatStore((state) => state.deleteConversation);
+  const sendMessage = useChatStore((state) => state.sendMessage);
   const [chatEnabled, setChatEnabled] = useState(true);
   const [healthMessage, setHealthMessage] = useState<string | null>(null);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem(SIDEBAR_COLLAPSE_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
 
   const upgradeModalOpen = useChatStore((state) => state.upgradeModalOpen);
   const closeUpgradeModal = useChatStore((state) => state.closeUpgradeModal);
@@ -118,7 +77,35 @@ export default function ChatPage(): JSX.Element {
     }
   };
 
+  const handlePromptSelect = async (prompt: string) => {
+    startNewThread();
+    await sendMessage(prompt);
+  };
+
   useMessages();
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        SIDEBAR_COLLAPSE_KEY,
+        String(isSidebarCollapsed),
+      );
+    } catch {
+      // Ignore storage errors (e.g. private mode).
+    }
+  }, [isSidebarCollapsed]);
+
+  useEffect(() => {
+    if (!isSidebarOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsSidebarOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isSidebarOpen, setIsSidebarOpen]);
 
   useEffect(() => {
     let disposed = false;
@@ -183,7 +170,7 @@ export default function ChatPage(): JSX.Element {
   }
 
   const workspaceLabel = WORKSPACE_LABELS[workspace];
-  const hasMessages = messageIds.length > 0;
+  const hasConversations = conversations.length > 0;
   const userName =
     user.user_metadata?.full_name || user.email?.split("@")[0] || "User";
   const avatarUrl =
@@ -197,9 +184,11 @@ export default function ChatPage(): JSX.Element {
           conversations={conversations}
           currentConversationId={currentConversationId}
           isOpen={isSidebarOpen}
+          isCollapsed={isSidebarCollapsed}
           userName={userName}
           avatarUrl={avatarUrl}
           onClose={() => setIsSidebarOpen(false)}
+          onToggleCollapse={() => setIsSidebarCollapsed((prev) => !prev)}
           onNewThread={startNewThread}
           onWorkspaceChange={setWorkspace}
           onSelectConversation={(id) => void selectConversation(id)}
@@ -236,16 +225,26 @@ export default function ChatPage(): JSX.Element {
             <ThemeToggle />
           </header>
 
-          <main className="min-h-0 flex-1">
+          <main className="flex min-h-0 flex-1 flex-col">
             {healthMessage && (
               <div className="mx-auto mt-4 w-full max-w-3xl rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100">
                 {healthMessage}
               </div>
             )}
-            {hasMessages ? (
+            {hasConversations ? (
               <MessageList />
             ) : (
-              <WorkspaceWelcomeCard workspace={workspace} />
+              <WelcomeEmptyState
+                workspace={workspace}
+                userName={userName}
+                disabled={!chatEnabled}
+                disabledReason={
+                  chatEnabled
+                    ? undefined
+                    : "Chat is disabled while LiteLLM configuration is degraded."
+                }
+                onPromptSelect={(prompt) => void handlePromptSelect(prompt)}
+              />
             )}
           </main>
 
