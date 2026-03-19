@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from auth import verify_token, check_is_pro
-from utils import DEFAULT_CHAT_MODE, FREE_LEVELS, LEARNING_MODE, SUPPORTED_CHAT_MODES, normalize_mode
+from utils import DEFAULT_CHAT_MODE, FREE_LEVELS, LEARNING_MODE, SUPPORTED_CHAT_MODES, normalize_mode, sanitize_filename
 from services.ensemble import ensemble_generate
 from services.inference import generate_explanation
 
@@ -64,9 +64,8 @@ async def export_explanations(req: ExportRequest, auth_data: dict = Depends(veri
                 
     req.explanations = ordered_explanations
 
-    slug = req.topic.lower().replace(" ", "-")[:30]
+    slug = sanitize_filename(req.topic)
     filename_base = f"knowbear-{slug}"
-
     if req.format == "txt":
         content = f"# {req.topic}\n\n"
         if len(req.explanations) > 1:
