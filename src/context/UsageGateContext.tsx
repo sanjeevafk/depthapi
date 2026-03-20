@@ -28,8 +28,7 @@ export function UsageGateProvider({
     const [showPremiumModal, setShowPremiumModal] = useState(false);
     const [paywallContext, setPaywallContext] = useState<{ mode?: string, action?: ActionType } | null>(null);
 
-    // Use profile status directly as source of truth, fallback to localStorage for instant load
-    const isPro = profile?.is_pro === true || localStorage.getItem('knowbear_pro_status') === 'true';
+    const isPro = profile?.is_pro === true;
 
     const checkAction = (
         action: ActionType,
@@ -75,8 +74,7 @@ export function UsageGateProvider({
     };
 
     const upgradeToPro = () => {
-        localStorage.setItem('knowbear_pro_status', 'true');
-        window.location.reload();
+        setShowPremiumModal(true);
     };
 
     const setShowPremiumModalWithReset = (show: boolean) => {

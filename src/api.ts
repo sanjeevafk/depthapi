@@ -1,11 +1,21 @@
 import type { PinnedTopic, QueryRequest, QueryResponse, ExportRequest, HistoryItem } from './types'
 import { LegacyStreamChunkSchema } from './lib/sseSchemas'
 import type { Session } from '@supabase/supabase-js'
+import { getTracePropagationHeaders } from './lib/monitoring'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 const SUPABASE_CONFIGURED = Boolean(import.meta.env.VITE_SUPABASE_URL) && Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY)
 
 import { supabase } from './lib/supabase'
+
+export interface HealthResponse {
+    status: 'ok' | 'degraded' | 'down'
+    litellm: { status: 'ok' | 'degraded' | 'down'; latency_ms: number }
+    rate_limit: { status: 'ok' | 'degraded' | 'down' }
+    db: { status: 'ok' | 'degraded' | 'down' }
+    chat_enabled?: boolean
+    key_valid?: boolean
+}
 
 const getSupabaseSession = async (): Promise<Session | null> => {
     if (!SUPABASE_CONFIGURED) return null
@@ -15,6 +25,25 @@ const getSupabaseSession = async (): Promise<Session | null> => {
 
 const isAbortError = (err: unknown): boolean => {
     return typeof err === 'object' && err !== null && 'name' in err && (err as { name?: string }).name === 'AbortError'
+}
+
+const createRequestId = (): string => {
+    const webCrypto = globalThis.crypto
+    if (webCrypto?.randomUUID) {
+        return webCrypto.randomUUID()
+    }
+    const bytes = new Uint8Array(16)
+    if (webCrypto?.getRandomValues) {
+        webCrypto.getRandomValues(bytes)
+    } else {
+        for (let i = 0; i < bytes.length; i += 1) {
+            bytes[i] = Math.floor(Math.random() * 256)
+        }
+    }
+    bytes[6] = (bytes[6] & 0x0f) | 0x40
+    bytes[8] = (bytes[8] & 0x3f) | 0x80
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0'))
+    return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10, 16).join('')}`
 }
 
 const normalizeError = (err: unknown): Error => {
@@ -36,17 +65,45 @@ async function fetchAPI<T>(path: string, options?: RequestInit & { responseType?
     if (session?.access_token) {
         headers['Authorization'] = `Bearer ${session.access_token}`
     }
+    Object.assign(headers, getTracePropagationHeaders())
+    headers['x-request-id'] = createRequestId()
 
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 90000) // 90 seconds
+    const externalSignal = options?.signal
+    const abortSignalAny = (AbortSignal as unknown as {
+        any?: (signals: AbortSignal[]) => AbortSignal
+    }).any
+    const combinedSignal = externalSignal
+        ? (abortSignalAny
+            ? abortSignalAny([controller.signal, externalSignal])
+            : controller.signal)
+        : controller.signal
+
+    let onExternalAbort: (() => void) | null = null
+    if (externalSignal && !abortSignalAny) {
+        if (externalSignal.aborted) {
+            controller.abort()
+        } else {
+            onExternalAbort = () => controller.abort()
+            externalSignal.addEventListener('abort', onExternalAbort, { once: true })
+        }
+    }
+
+    const cleanup = () => {
+        clearTimeout(timeoutId)
+        if (externalSignal && onExternalAbort) {
+            externalSignal.removeEventListener('abort', onExternalAbort)
+        }
+    }
 
     try {
         const res = await fetch(`${API_URL}${path}`, {
             ...options,
             headers,
-            signal: controller.signal,
+            signal: combinedSignal,
         })
-        clearTimeout(timeoutId)
+        cleanup()
 
         if (res.status === 429) throw new Error('You are sending requests too quickly. Please wait a moment.')
         if (!res.ok) throw new Error(`API error: ${res.status}`)
@@ -56,7 +113,7 @@ async function fetchAPI<T>(path: string, options?: RequestInit & { responseType?
         }
         return await res.json()
     } catch (err) {
-        clearTimeout(timeoutId)
+        cleanup()
         if (isAbortError(err)) throw new Error('Request timed out. Please try again.')
         throw normalizeError(err)
     }
@@ -66,6 +123,9 @@ export async function getPinnedTopics(): Promise<PinnedTopic[]> {
     return fetchAPI('/api/pinned')
 }
 
+export async function getHealth(): Promise<HealthResponse> {
+    return fetchAPI('/api/health')
+}
 export async function queryTopic(req: QueryRequest): Promise<QueryResponse> {
     return fetchAPI('/api/query', {
         method: 'POST',
@@ -87,6 +147,8 @@ export async function queryTopicStream(
     if (session?.access_token) {
         headers['Authorization'] = `Bearer ${session.access_token}`
     }
+    Object.assign(headers, getTracePropagationHeaders())
+    headers['x-request-id'] = createRequestId()
 
     let retries = 0
     const maxRetries = 2
@@ -140,12 +202,16 @@ export async function queryTopicStream(
             const READ_TIMEOUT_MS = 20000
 
             while (true) {
-                const { done, value } = await Promise.race([
-                    reader.read(),
-                    new Promise<ReadableStreamReadResult<Uint8Array>>((_, reject) =>
-                        setTimeout(() => reject(new Error('Stream read timed out')), READ_TIMEOUT_MS)
-                    )
-                ])
+                let timeoutId: ReturnType<typeof setTimeout> | undefined
+                const readPromise = reader.read()
+                const timeoutPromise = new Promise<ReadableStreamReadResult<Uint8Array>>((_, reject) => {
+                    timeoutId = setTimeout(() => reject(new Error('Stream read timed out')), READ_TIMEOUT_MS)
+                })
+
+                const { done, value } = await Promise.race([readPromise, timeoutPromise])
+                if (timeoutId) {
+                    clearTimeout(timeoutId)
+                }
                 if (done) break
 
                 buffer += decoder.decode(value, { stream: true })
@@ -228,7 +294,7 @@ export async function getHistory(): Promise<HistoryItem[]> {
 }
 
 export async function deleteHistoryItem(id: string): Promise<void> {
-    return fetchAPI(`/api/history/${id}`, { method: 'DELETE' })
+    return fetchAPI(`/api/history/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 export async function clearHistory(): Promise<void> {

@@ -1,20 +1,39 @@
 import asyncio
+import threading
+import time
 from fastapi import HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from config import get_settings
+from monitoring import hash_for_monitoring, set_user_context
 from supabase import create_client, Client
 from supabase_auth.errors import AuthApiError
 
 security = HTTPBearer(auto_error=False)
+_PRO_STATE_CACHE: dict[str, tuple[bool, float]] = {}
+_PRO_STATE_CACHE_LOCK = threading.Lock()
 
-def get_supabase() -> Client:
+
+def _pro_cache_ttl_seconds() -> int:
+    try:
+        configured_ttl = int(getattr(get_settings(), "pro_state_cache_ttl_seconds", 30) or 30)
+    except (ValueError, TypeError):
+        configured_ttl = 30
+    return min(max(configured_ttl, 1), 30)
+
+def invalidate_pro_cache(user_id: str) -> None:
+    if not user_id:
+        return
+    with _PRO_STATE_CACHE_LOCK:
+        _PRO_STATE_CACHE.pop(user_id, None)
+
+def get_supabase() -> Client | None:
     settings = get_settings()
     if not settings.supabase_url or not settings.supabase_anon_key:
         print("Warning: Supabase credentials missing during init")
         return None
     return create_client(settings.supabase_url, settings.supabase_anon_key)
 
-def get_supabase_admin() -> Client:
+def get_supabase_admin() -> Client | None:
     settings = get_settings()
     if not settings.supabase_url or not settings.supabase_service_role_key:
         print("Warning: Supabase Service Role Key missing")
@@ -37,6 +56,11 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Security(secu
         if not user_response or not user_response.user:
             raise HTTPException(status_code=401, detail="Invalid token")
 
+        set_user_context(
+            user_id=str(getattr(user_response.user, "id", "") or "") or None,
+            email_hash=hash_for_monitoring(str(getattr(user_response.user, "email", "") or "") or None),
+            token_hash=hash_for_monitoring(token),
+        )
         return {"user": user_response.user, "token": token}
         
     except AuthApiError as e:
@@ -50,10 +74,7 @@ async def verify_token_optional(credentials: HTTPAuthorizationCredentials = Secu
     """Optionally verify the Supabase JWT token."""
     if not credentials or not credentials.credentials:
         return None
-    try:
-        return await verify_token(credentials)
-    except HTTPException:
-        return None
+    return await verify_token(credentials)
 
 async def ensure_user_exists(user):
     """Ensure the user exists in the public.users table."""
@@ -74,8 +95,18 @@ async def ensure_user_exists(user):
     except Exception as e:
         print(f"Failed to ensure user exists: {e}")
 
-async def check_is_pro(user_id: str) -> bool:
+async def check_is_pro(user_id: str, force_refresh: bool = False) -> bool:
     """Check if a user has pro status in the database."""
+    if not user_id:
+        return False
+
+    now = time.time()
+    if not force_refresh:
+        with _PRO_STATE_CACHE_LOCK:
+            cached = _PRO_STATE_CACHE.get(user_id)
+            if cached and cached[1] > now:
+                return cached[0]
+
     supabase = get_supabase_admin()
     if not supabase:
         return False
@@ -85,7 +116,11 @@ async def check_is_pro(user_id: str) -> bool:
         response = await asyncio.to_thread(
             supabase.table("users").select("is_pro").eq("id", user_id).single().execute
         )
-        return response.data.get("is_pro", False) if response.data else False
+        data = getattr(response, "data", None)
+        is_pro = bool(data.get("is_pro", False)) if isinstance(data, dict) else False
+        with _PRO_STATE_CACHE_LOCK:
+            _PRO_STATE_CACHE[user_id] = (is_pro, now + _pro_cache_ttl_seconds())
+        return is_pro
     except Exception as e:
         print(f"Failed to check pro status: {e}")
         return False

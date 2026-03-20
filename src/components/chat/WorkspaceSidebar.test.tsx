@@ -28,6 +28,7 @@ describe("WorkspaceSidebar", () => {
   const onWorkspaceChange = vi.fn();
   const onSelectConversation = vi.fn();
   const onDeleteConversation = vi.fn();
+  const onToggleCollapse = vi.fn();
 
   beforeEach(() => {
     onClose.mockReset();
@@ -35,6 +36,7 @@ describe("WorkspaceSidebar", () => {
     onWorkspaceChange.mockReset();
     onSelectConversation.mockReset();
     onDeleteConversation.mockReset();
+    onToggleCollapse.mockReset();
   });
 
   it("always starts a new thread when workspace button is clicked", () => {
@@ -44,8 +46,10 @@ describe("WorkspaceSidebar", () => {
         conversations={conversations}
         currentConversationId="conv-1"
         isOpen
+        isCollapsed={false}
         userName="Tester"
         onClose={onClose}
+        onToggleCollapse={onToggleCollapse}
         onNewThread={onNewThread}
         onWorkspaceChange={onWorkspaceChange}
         onSelectConversation={onSelectConversation}
@@ -69,8 +73,10 @@ describe("WorkspaceSidebar", () => {
         conversations={conversations}
         currentConversationId="conv-1"
         isOpen
+        isCollapsed={false}
         userName="Tester"
         onClose={onClose}
+        onToggleCollapse={onToggleCollapse}
         onNewThread={onNewThread}
         onWorkspaceChange={onWorkspaceChange}
         onSelectConversation={onSelectConversation}
@@ -97,8 +103,10 @@ describe("WorkspaceSidebar", () => {
         conversations={conversations}
         currentConversationId="conv-1"
         isOpen
+        isCollapsed={false}
         userName="Tester"
         onClose={onClose}
+        onToggleCollapse={onToggleCollapse}
         onNewThread={onNewThread}
         onWorkspaceChange={onWorkspaceChange}
         onSelectConversation={onSelectConversation}

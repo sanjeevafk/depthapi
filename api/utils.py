@@ -70,6 +70,13 @@ def normalize_prompt_level(level: str | None) -> str:
     return normalized if normalized in PROMPT_LEVELS else "eli15"
 
 
+def sanitize_filename(value: str) -> str:
+    """Create a safe, lowercase filename slug from user input."""
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "_", (value or "").strip())
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    return cleaned.lower() or "export"
+
+
 def _load_chat_modes():
     path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "shared", "chat_modes.json"))
     try:

@@ -48,10 +48,11 @@ const initialState = useChatStore.getInitialState();
 describe("useChatStore", () => {
   beforeEach(() => {
     useChatStore.setState(initialState, true);
+    vi.restoreAllMocks();
   });
 
-  it("defaults isPro to true when VITE_DEFAULT_IS_PRO is not set", () => {
-    expect(useChatStore.getState().isPro).toBe(true);
+  it("defaults isPro to false when VITE_DEFAULT_IS_PRO is not set", () => {
+    expect(useChatStore.getState().isPro).toBe(false);
   });
 
   it("aborts active streams when starting a new thread", () => {
@@ -135,5 +136,158 @@ describe("useChatStore", () => {
     expect(state.conversations).toEqual([]);
     expect(state.currentConversationId).toBeNull();
     expect(state.isDraftThread).toBe(true);
+  });
+
+  it("regenerates from original prompt and replaces assistant response", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(
+          [
+            'id: 1\nevent: meta\ndata: {"assistant_message_id":"assistant-server"}\n\n',
+            'id: 2\nevent: delta\ndata: {"delta":"Regenerated answer"}\n\n',
+            "id: 3\nevent: done\ndata: [DONE]\n\n",
+          ].join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+
+    useChatStore.setState({
+      currentConversationId: "local-conv-1",
+      conversations: [
+        {
+          id: "local-conv-1",
+          title: "Thread",
+          mode: "learning",
+          settings: { mode: "learning", prompt_mode: "eli12" },
+          created_at: "2026-01-01T00:00:00.000Z",
+          updated_at: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      messageIds: ["user-1", "assistant-1"],
+      messagesById: {
+        "user-1": {
+          id: "user-1",
+          role: "user",
+          content: "Explain gravity simply",
+          created_at: "2026-01-01T00:00:00.000Z",
+          metadata: { client_id: "user-client-1", mode: "learning", prompt_mode: "eli12" },
+        },
+        "assistant-1": {
+          id: "assistant-1",
+          role: "assistant",
+          content: "Old assistant answer",
+          created_at: "2026-01-01T00:00:00.000Z",
+          clientGeneratedId: "assistant-client-old",
+          metadata: {
+            mode: "learning",
+            prompt_mode: "eli12",
+            temperature: 0.7,
+            assistant_client_id: "assistant-client-old",
+          },
+        },
+      },
+    });
+
+    await useChatStore.getState().regenerateMessage("assistant-1");
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const fetchInit = fetchSpy.mock.calls[0][1] as RequestInit;
+    const payload = JSON.parse(String(fetchInit.body));
+    const requestedText = payload.content ?? payload.topic;
+    expect(requestedText).toBe("Explain gravity simply");
+    expect(payload.mode).toBe("learning");
+    const promptMode = payload.prompt_mode ?? payload.promptMode;
+    if (promptMode) {
+      expect(promptMode).toBe("eli12");
+    } else {
+      expect(payload.levels).toEqual(["eli12"]);
+    }
+    expect(payload.regenerate).toBe(true);
+    expect(payload.temperature).toBeCloseTo(0.8);
+
+    const state = useChatStore.getState();
+    expect(state.messageIds).toEqual(["user-1", "assistant-1"]);
+    expect(state.messagesById["assistant-1"].content).toBe("Regenerated answer");
+    expect(state.messagesById["assistant-1"].isRegenerating).toBe(false);
+  });
+
+  it("clamps regeneration temperature to 1.0", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(
+          "id: 1\nevent: done\ndata: [DONE]\n\n",
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+
+    useChatStore.setState({
+      currentConversationId: "local-conv-2",
+      conversations: [
+        {
+          id: "local-conv-2",
+          title: "Thread",
+          mode: "socratic",
+          settings: { mode: "socratic", prompt_mode: "eli15" },
+          created_at: "2026-01-01T00:00:00.000Z",
+          updated_at: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      messageIds: ["user-2", "assistant-2"],
+      messagesById: {
+        "user-2": {
+          id: "user-2",
+          role: "user",
+          content: "Why do stars shine?",
+          created_at: "2026-01-01T00:00:00.000Z",
+          metadata: { client_id: "user-client-2" },
+        },
+        "assistant-2": {
+          id: "assistant-2",
+          role: "assistant",
+          content: "old",
+          created_at: "2026-01-01T00:00:00.000Z",
+          metadata: {
+            mode: "socratic",
+            prompt_mode: "eli15",
+            temperature: 0.95,
+            assistant_client_id: "assistant-client-2",
+          },
+        },
+      },
+    });
+
+    await useChatStore.getState().regenerateMessage("assistant-2");
+
+    const fetchInit = fetchSpy.mock.calls[0][1] as RequestInit;
+    const payload = JSON.parse(String(fetchInit.body));
+    expect(payload.temperature).toBe(1);
+  });
+
+  it("blocks concurrent regeneration requests", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    useChatStore.setState({
+      regeneratingMessageId: "assistant-locked",
+      messageIds: ["user-3", "assistant-locked"],
+      messagesById: {
+        "user-3": {
+          id: "user-3",
+          role: "user",
+          content: "prompt",
+          created_at: "2026-01-01T00:00:00.000Z",
+        },
+        "assistant-locked": {
+          id: "assistant-locked",
+          role: "assistant",
+          content: "answer",
+          created_at: "2026-01-01T00:00:00.000Z",
+        },
+      },
+    });
+
+    await useChatStore.getState().regenerateMessage("assistant-locked");
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

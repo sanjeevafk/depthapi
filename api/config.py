@@ -1,7 +1,6 @@
 """Configuration and environment variables."""
 
 import os
-import sys
 from functools import lru_cache
 from pydantic_settings import BaseSettings
 
@@ -10,30 +9,52 @@ class Settings(BaseSettings):
     """Application settings loaded from environment."""
 
     environment: str = "development"
-    groq_api_key: str = ""
-    openrouter_api_key: str = ""
+    log_user_hash_salt: str = ""
     litellm_base_url: str = ""
     litellm_virtual_key: str = ""
     litellm_master_key: str = ""
     litellm_timeout_seconds: int = 60
 
-    kaggle_api_token: str = ""
-    gemini_api_key: str = ""
+    stream_max_seconds: int = 25
+    stream_heartbeat_seconds: int = 2
+    stream_start_timeout_seconds: int = 2
+    stream_idempotency_ttl_seconds: int = 90
+    trusted_proxies: str = ""
+
     redis_url: str = "redis://localhost:6379"
     upstash_redis_rest_url: str = ""
     upstash_redis_rest_token: str = ""
     cache_ttl: int = 86400  # 24 hours
+    rate_limit_strategy: str = "upstash_redis"
     rate_limit_per_user: int = 20  # Requests per minute
     rate_limit_burst: int = 5
+    rate_limit_burst_window_seconds: int = 10
+    rate_limit_sustained_window_seconds: int = 60
+    anonymous_rate_limit_per_ip: int = 8
+    anonymous_rate_limit_burst: int = 3
+    anonymous_rate_limit_window_seconds: int = 60
+    daily_token_quota_per_user: int = 50000
+    quota_window_seconds: int = 86400
+    circuit_breaker_tokens_per_minute: int = 300000
+    circuit_breaker_open_seconds: int = 60
+    circuit_breaker_action: str = "reject"
+    estimated_output_tokens_per_request: int = 900
     message_rate_limit_max: int = 30
     message_rate_limit_window_seconds: int = 60
     message_cache_ttl_seconds: int = 3600
+    pro_state_cache_ttl_seconds: int = 30
     supabase_url: str = ""
     supabase_anon_key: str = ""
     supabase_service_role_key: str = ""
     tavily_api_key: str = ""
     serper_api_key: str = ""
     exa_api_key: str = ""
+
+    sentry_dsn: str = ""
+    sentry_enabled: bool = True
+    sentry_traces_sample_rate: float = 0.1
+    sentry_profiles_sample_rate: float = 0.0
+    sentry_release: str = ""
     
     # Dodo Payments Configuration
     dodo_api_key: str = ""
@@ -52,16 +73,4 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """Cached settings instance."""
-    settings = Settings()
-    if not settings.gemini_api_key:
-        print("WARNING: GEMINI_API_KEY not set. Gemini models will fail.", file=sys.stderr)
-    if not settings.groq_api_key:
-        print("WARNING: GROQ_API_KEY not set. Groq models will fail.", file=sys.stderr)
-    if not settings.litellm_base_url:
-        print("WARNING: LITELLM_BASE_URL not set. LiteLLM client will be unavailable.", file=sys.stderr)
-    if not settings.litellm_virtual_key and not settings.litellm_master_key:
-        print(
-            "WARNING: LITELLM_VIRTUAL_KEY or LITELLM_MASTER_KEY not set. LiteLLM client will be unavailable.",
-            file=sys.stderr,
-        )
-    return settings
+    return Settings()

@@ -10,6 +10,7 @@ Set these for the proxy service:
 - `GEMINI_API_KEY`
 - `OPENROUTER_API_KEY`
 - `LITELLM_MASTER_KEY` - A secure random key used to authenticate requests to the proxy. Generate with `openssl rand -hex 32` or similar.
+- Optional Sentry settings (when proxy runtime supports Sentry): `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_RELEASE`.
 
 **Security Notes:**
 - ⚠️ Never commit these secrets to version control
