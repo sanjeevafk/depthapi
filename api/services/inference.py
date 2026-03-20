@@ -34,6 +34,10 @@ TECHNICAL_MODEL_FALLBACK = "technical-fallback"
 TECHNICAL_TEMPERATURE = 0.4
 TECHNICAL_MAX_TOKENS = 2048
 
+LEARNING_MODEL_SIMPLE = "default-fast"
+LEARNING_MODEL_DETAILED = "learning-detailed"
+LEARNING_DETAILED_LEVELS = {"eli15", "meme"}
+
 TECHNICAL_LAST_RESORT_RESPONSE = (
     "## Core Idea\n"
     "Unable to generate a response at this time. Please retry in a moment.\n\n"
@@ -46,6 +50,12 @@ TECHNICAL_LAST_RESORT_RESPONSE = (
     "## Connections\n"
     "No connections available - response generation failed."
 )
+
+
+def _learning_model_for_level(level: str) -> str:
+    if level in LEARNING_DETAILED_LEVELS:
+        return LEARNING_MODEL_DETAILED
+    return LEARNING_MODEL_SIMPLE
 
 
 def build_technical_prompt(
@@ -364,7 +374,8 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
         
     prompt = template.format(topic=topic)
         
-    return await call_model(model or "default-fast", prompt, **kwargs)
+    model_alias = model or _learning_model_for_level(level)
+    return await call_model(model_alias, prompt, **kwargs)
 async def generate_stream_explanation(topic: str, level: str, model: str | None = None, **kwargs):
     """Stream explanation for topic at given level."""
     mode = normalize_mode(kwargs.get("mode", LEARNING_MODE))
@@ -397,13 +408,7 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             raise ValueError(f"Unknown level: {level}")
         prompt = template.format(topic=topic)
     
-    alias = model or (
-        "technical-primary"
-        if mode == TECHNICAL_MODE
-        else "socratic"
-        if mode == SOCRATIC_MODE
-        else "default-fast"
-    )
+    alias = model or ("socratic" if mode == SOCRATIC_MODE else _learning_model_for_level(level))
     stream_telemetry: dict[str, object] = {}
     stream_start = time.perf_counter()
     if mode == SOCRATIC_MODE:

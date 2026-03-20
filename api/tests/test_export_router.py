@@ -76,12 +76,12 @@ async def test_export_missing_levels_triggers_generation(app_client, monkeypatch
 
     calls = []
 
-    async def fake_generate(_topic, level, _premium, _mode):
+    async def fake_generate(_topic, level, _mode=None):
         calls.append(level)
         return "generated"
 
     monkeypatch.setattr(export_module, "check_is_pro", fake_check_is_pro)
-    monkeypatch.setattr(export_module, "ensemble_generate", fake_generate)
+    monkeypatch.setattr(export_module, "generate_explanation", fake_generate)
     monkeypatch.setattr(export_module, "FREE_LEVELS", ["eli5", "eli10"])
     monkeypatch.setattr(export_module, "StreamingResponse", fake_streaming_response)
 

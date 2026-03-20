@@ -14,7 +14,6 @@ from auth import check_is_pro, ensure_user_exists, get_supabase_admin, verify_to
 from config import get_settings
 from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from services.cache import cache_get, cache_set
-from services.ensemble import ensemble_generate, ensemble_stream_generate
 from services.inference import generate_explanation, generate_stream_explanation
 from services.llm_client import get_litellm_config_state
 from services.llm_errors import LLMError, LLMUnavailable
@@ -136,37 +135,20 @@ async def query_topic(
             asyncio.create_task(save_to_history(auth_data["user"], topic, levels, mode))
         return QueryResponse(topic=topic, explanations=explanations, cached=True)
 
-    if mode == LEARNING_MODE:
-        level_telemetry: dict[str, dict[str, Any]] = {level: {} for level in missing_levels}
-        tasks = {
-            level: ensemble_generate(
-                topic,
-                level,
-                use_premium=req.premium,
-                mode=mode,
-                temperature=req.temperature,
-                regenerate=req.regenerate,
-                request_id=request_id,
-                user_id=user_id_raw,
-                telemetry_sink=level_telemetry[level],
-            )
-            for level in missing_levels
-        }
-    else:
-        level_telemetry = {level: {} for level in missing_levels}
-        tasks = {
-            level: generate_explanation(
-                topic,
-                level,
-                mode=mode,
-                temperature=req.temperature,
-                regenerate=req.regenerate,
-                request_id=request_id,
-                user_id=user_id_raw,
-                telemetry_sink=level_telemetry[level],
-            )
-            for level in missing_levels
-        }
+    level_telemetry = {level: {} for level in missing_levels}
+    tasks = {
+        level: generate_explanation(
+            topic,
+            level,
+            mode=mode,
+            temperature=req.temperature,
+            regenerate=req.regenerate,
+            request_id=request_id,
+            user_id=user_id_raw,
+            telemetry_sink=level_telemetry[level],
+        )
+        for level in missing_levels
+    }
     results = await asyncio.gather(*tasks.values(), return_exceptions=True)
 
     for level, result in zip(tasks.keys(), results):
@@ -364,29 +346,15 @@ async def query_topic_stream(
                         asyncio.create_task(save_to_history(auth_data["user"], topic, [level], mode))
                     return
 
-            stream = (
-                ensemble_stream_generate(
-                    topic,
-                    level,
-                    mode=mode,
-                    use_premium=req.premium,
-                    temperature=req.temperature,
-                    regenerate=req.regenerate,
-                    request_id=request_id,
-                    user_id=user_id_raw,
-                    telemetry_sink=telemetry_sink,
-                )
-                if mode == LEARNING_MODE
-                else generate_stream_explanation(
-                    topic,
-                    level,
-                    mode=mode,
-                    temperature=req.temperature,
-                    regenerate=req.regenerate,
-                    request_id=request_id,
-                    user_id=user_id_raw,
-                    telemetry_sink=telemetry_sink,
-                )
+            stream = generate_stream_explanation(
+                topic,
+                level,
+                mode=mode,
+                temperature=req.temperature,
+                regenerate=req.regenerate,
+                request_id=request_id,
+                user_id=user_id_raw,
+                telemetry_sink=telemetry_sink,
             )
             stream_iter = _stream_chunks(stream)
             start_deadline = start_time + stream_start_timeout_seconds
@@ -427,29 +395,15 @@ async def query_topic_stream(
                 fallback_used = True
                 try:
                     fallback_content = await asyncio.wait_for(
-                        (
-                            ensemble_generate(
-                                topic,
-                                level,
-                                use_premium=req.premium,
-                                mode=mode,
-                                temperature=req.temperature,
-                                regenerate=req.regenerate,
-                                request_id=request_id,
-                                user_id=user_id_raw,
-                                telemetry_sink=telemetry_sink,
-                            )
-                            if mode == LEARNING_MODE
-                            else generate_explanation(
-                                topic,
-                                level,
-                                mode=mode,
-                                temperature=req.temperature,
-                                regenerate=req.regenerate,
-                                request_id=request_id,
-                                user_id=user_id_raw,
-                                telemetry_sink=telemetry_sink,
-                            )
+                        generate_explanation(
+                            topic,
+                            level,
+                            mode=mode,
+                            temperature=req.temperature,
+                            regenerate=req.regenerate,
+                            request_id=request_id,
+                            user_id=user_id_raw,
+                            telemetry_sink=telemetry_sink,
                         ),
                         timeout=max(stream_max_seconds - (time.perf_counter() - start_time), 1),
                     )
