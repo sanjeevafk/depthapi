@@ -298,6 +298,8 @@ async def query_topic_stream(
     raw_start_timeout = float(getattr(settings, "stream_start_timeout_seconds", 2))
     if mode == LEARNING_MODE and not is_prod:
         stream_start_timeout_seconds = max(raw_start_timeout, float(stream_max_seconds))
+    elif mode == TECHNICAL_MODE:
+        stream_start_timeout_seconds = float(stream_max_seconds)
     else:
         cap = 2.0 if is_prod else 5.0
         stream_start_timeout_seconds = min(max(raw_start_timeout, 0.1), cap)
