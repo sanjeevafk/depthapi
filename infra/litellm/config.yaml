@@ -4,6 +4,16 @@ model_list:
       model: groq/llama-3.3-70b-versatile
       api_key: os.environ/GROQ_API_KEY
 
+  - model_name: learning-fallback-simple
+    litellm_params:
+      model: openai/gpt-oss-20b
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: learning-fallback-detailed
+    litellm_params:
+      model: openai/gpt-oss-120b
+      api_key: os.environ/OPENAI_API_KEY
+
   - model_name: technical-primary
     litellm_params:
       model: gemini/gemini-2.5-pro
@@ -25,7 +35,10 @@ model_list:
       api_key: os.environ/GROQ_API_KEY
 
 router_settings:
-  fallbacks: [{"technical-primary": ["technical-fallback", "default-fast"]}]
+  fallbacks:
+    - {"technical-primary": ["technical-fallback", "default-fast"]}
+    - {"default-fast": ["learning-fallback-simple"]}
+    - {"learning-detailed": ["learning-fallback-detailed"]}
 
 litellm_settings:
   drop_params: true
