@@ -65,6 +65,19 @@ class DummyRedis:
     async def ttl(self, key):
         return 60
 
+    async def eval(self, _script, _num_keys, key, requested, limit, window_seconds):
+        current = int(self.store.get(key, 0))
+        requested_value = int(requested)
+        limit_value = int(limit)
+        window_value = int(window_seconds)
+
+        consumed = current + requested_value
+        if consumed > limit_value:
+            return [0, current, window_value]
+
+        self.store[key] = consumed
+        return [1, consumed, window_value]
+
     async def close(self):
         return True
 
@@ -84,6 +97,8 @@ class FakeSupabaseQuery:
 
     def update(self, payload):
         self.supabase.updates.append((self.table, payload))
+        if self._response is None:
+            self._response = [{"id": "stub"}]
         return self
 
     def delete(self):

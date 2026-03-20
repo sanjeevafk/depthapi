@@ -1307,7 +1307,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           return;
         }
 
-        let response = await fetch(`${API_URL}/api/messages`, {
+        const response = await fetch(`${API_URL}/api/messages`, {
           method: "POST",
           headers,
           signal: controller.signal,
