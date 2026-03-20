@@ -51,6 +51,8 @@ TECHNICAL_LAST_RESORT_RESPONSE = (
     "No connections available - response generation failed."
 )
 
+TECHNICAL_MINIMAL_PROMPT = "Explain the topic with concise technical clarity."
+
 
 def _learning_model_for_level(level: str) -> str:
     if level in LEARNING_DETAILED_LEVELS:
@@ -109,11 +111,32 @@ async def technical_mode_handler(
     kwargs are passed through to call_model for telemetry/request_id/etc.
     Never raises. Always returns a non-empty string.
     """
-    classification = detect_intent_and_depth(topic)
-    intent = classification["intent"]
-    depth = classification["depth"]
-    diagram_type = detect_diagram_type(topic)
+    intent = "unknown"
+    depth = "shallow"
+    diagram_type = "generic"
+    try:
+        classification = detect_intent_and_depth(topic)
+        intent = classification["intent"]
+        depth = classification["depth"]
+        diagram_type = detect_diagram_type(topic)
+    except Exception as exc:
+        _tech_logger.warning(
+            "technical_classification_failed",
+            error=str(exc),
+            intent=intent,
+            depth=depth,
+            diagram_type=diagram_type,
+        )
+
     prompt = build_technical_prompt(topic, intent, depth, diagram_type)
+    if not prompt or not prompt.strip():
+        _tech_logger.warning(
+            "technical_prompt_empty",
+            intent=intent,
+            depth=depth,
+            diagram_type=diagram_type,
+        )
+        prompt = TECHNICAL_MINIMAL_PROMPT
 
     fallback_triggered = False
     fallback_reason: str | None = None
@@ -384,7 +407,6 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
     anonymized_user_id = anonymize_user_id(str(kwargs.get("user_id") or "") or None)
     route_telemetry_sink = kwargs.get("telemetry_sink") if isinstance(kwargs.get("telemetry_sink"), dict) else None
     prompt = ""
-    images = []
 
     # ── TECHNICAL MODE (v2) — pseudo-streaming ──────────────────────────────
     if mode == TECHNICAL_MODE:
@@ -462,10 +484,3 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         retry=retry_flag,
         sampled=True,
     )
-
-    # Append images at the end of the stream for technical depth
-    if mode == TECHNICAL_MODE and images:
-        yield "\n\n### Visual References\n"
-        for img in images:
-            if url := img.get('url'):
-                yield f"![{img.get('title', 'Image')}]({url})\n"

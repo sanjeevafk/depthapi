@@ -83,3 +83,49 @@ async def test_generate_stream_explanation_socratic_limits_questions(monkeypatch
     combined = "".join(streamed)
     assert combined.count("?") <= 3
     assert "Share your answer, and I will guide the next step." in combined
+
+
+@pytest.mark.asyncio
+async def test_technical_mode_handler_uses_safe_defaults_when_classification_fails(monkeypatch):
+    captured = {}
+
+    def fake_detect_intent_and_depth(_topic: str):
+        raise RuntimeError("classification failed")
+
+    def fake_build_technical_prompt(topic: str, intent: str, depth: str, diagram_type: str | None) -> str:
+        captured["build_args"] = (topic, intent, depth, diagram_type)
+        return "safe prompt"
+
+    async def fake_call_model(*_args, **_kwargs):
+        return "valid technical response"
+
+    monkeypatch.setattr(inference_module, "detect_intent_and_depth", fake_detect_intent_and_depth)
+    monkeypatch.setattr(inference_module, "build_technical_prompt", fake_build_technical_prompt)
+    monkeypatch.setattr(inference_module, "call_model", fake_call_model)
+    monkeypatch.setattr(inference_module, "validate_technical_response", lambda *_args, **_kwargs: (True, None))
+
+    result = await inference_module.technical_mode_handler("topic")
+
+    assert result == "valid technical response"
+    assert captured["build_args"] == ("topic", "unknown", "shallow", "generic")
+
+
+@pytest.mark.asyncio
+async def test_technical_mode_handler_uses_minimal_prompt_when_prompt_builder_empty(monkeypatch):
+    captured = {}
+
+    monkeypatch.setattr(inference_module, "detect_intent_and_depth", lambda _topic: {"intent": "explain", "depth": "deep"})
+    monkeypatch.setattr(inference_module, "detect_diagram_type", lambda _topic: None)
+    monkeypatch.setattr(inference_module, "build_technical_prompt", lambda *_args, **_kwargs: "   ")
+
+    async def fake_call_model(_model_alias: str, prompt: str, **_kwargs):
+        captured["prompt"] = prompt
+        return "valid technical response"
+
+    monkeypatch.setattr(inference_module, "call_model", fake_call_model)
+    monkeypatch.setattr(inference_module, "validate_technical_response", lambda *_args, **_kwargs: (True, None))
+
+    result = await inference_module.technical_mode_handler("topic")
+
+    assert result == "valid technical response"
+    assert captured["prompt"] == inference_module.TECHNICAL_MINIMAL_PROMPT
