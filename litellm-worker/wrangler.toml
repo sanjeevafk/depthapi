@@ -1,0 +1,8 @@
+name = "litellm-proxy"
+main = "src/index.ts"
+compatibility_date = "2026-03-20"
+
+[[containers]]
+name = "llm"
+image = "./litellm"
+binding = "LLM"
