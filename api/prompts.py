@@ -63,28 +63,6 @@ Begin the Socratic dialogue now. Speak warmly and encouragingly. Use short quest
 Output ONLY the Socratic questions and gentle guidance. No "Thought:", no markdown headers, no final summary.""" ,
 }
 
-# ====================== ENSEMBLE JUDGE ======================
-JUDGE_PROMPT = """You are an expert judge evaluating multiple explanations for the same topic: "{topic}"
-
-{responses}
-
-Rate each response (0-5) on:
-- Accuracy & correctness
-- Clarity & age-appropriateness
-- Engagement & memorability
-- Conciseness (no fluff)
-- Originality / vividness
-
-Then synthesize the strongest final response for the user.
-
-Output valid JSON only:
-{{
-  "best_index": 0,
-  "scores": [5, 4, 3],
-  "reason": "brief one-sentence explanation why this one won",
-  "final_response": "the final response to return to the user"
-}}"""
-
 # ====================== TECHNICAL DEPTH MODE ======================
 TECHNICAL_DEPTH_PROMPT = """
 You are a world-class technical writer and researcher.
@@ -116,13 +94,6 @@ Instructions:
 
 CRITICAL: Base everything strictly on the given context. If context is insufficient, say so clearly in the summary.
 """
-
-# ====================== MODEL CONFIGS ======================
-LEARNING_CANDIDATE_MODELS = [
-    "learning-candidate-1",
-    "learning-candidate-2",
-]
-JUDGE_MODEL = "z-ai/glm-4.5-air:free"
 
 # Helper for easy access
 ALL_MODES = list(PROMPTS.keys())

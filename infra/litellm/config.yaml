@@ -1,23 +1,8 @@
 model_list:
-  - model_name: learning-candidate-1
-    litellm_params:
-      model: groq/llama-3.1-8b-instant
-      api_key: os.environ/GROQ_API_KEY
-
-  - model_name: learning-candidate-2
-    litellm_params:
-      model: groq/openai/gpt-oss-20b
-      api_key: os.environ/GROQ_API_KEY
-
   - model_name: learning-detailed
     litellm_params:
       model: groq/llama-3.3-70b-versatile
       api_key: os.environ/GROQ_API_KEY
-
-  - model_name: judge
-    litellm_params:
-      model: openrouter/z-ai/glm-4.5-air:free
-      api_key: os.environ/OPENROUTER_API_KEY
 
   - model_name: technical-primary
     litellm_params:
