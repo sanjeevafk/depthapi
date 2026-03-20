@@ -171,7 +171,11 @@ describe("useChatStore", () => {
           role: "user",
           content: "Explain gravity simply",
           created_at: "2026-01-01T00:00:00.000Z",
-          metadata: { client_id: "user-client-1", mode: "learning", prompt_mode: "eli12" },
+          metadata: {
+            client_id: "user-client-1",
+            mode: "learning",
+            prompt_mode: "eli12",
+          },
         },
         "assistant-1": {
           id: "assistant-1",
@@ -208,19 +212,18 @@ describe("useChatStore", () => {
 
     const state = useChatStore.getState();
     expect(state.messageIds).toEqual(["user-1", "assistant-1"]);
-    expect(state.messagesById["assistant-1"].content).toBe("Regenerated answer");
+    expect(state.messagesById["assistant-1"].content).toBe(
+      "Regenerated answer",
+    );
     expect(state.messagesById["assistant-1"].isRegenerating).toBe(false);
   });
 
   it("clamps regeneration temperature to 1.0", async () => {
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(
-        new Response(
-          "id: 1\nevent: done\ndata: [DONE]\n\n",
-          { headers: { "content-type": "text/event-stream" } },
-        ),
-      );
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("id: 1\nevent: done\ndata: [DONE]\n\n", {
+        headers: { "content-type": "text/event-stream" },
+      }),
+    );
 
     useChatStore.setState({
       currentConversationId: "local-conv-2",

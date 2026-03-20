@@ -61,7 +61,10 @@ export default function WelcomeEmptyState({
               </span>
             )}
           </div>
-          <ul className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2" role="list">
+          <ul
+            className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2"
+            role="list"
+          >
             {prompts.map((prompt) => (
               <li key={prompt.id}>
                 <button
