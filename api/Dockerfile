@@ -16,6 +16,10 @@ RUN set -eux; \
 			echo "No requirements.txt found in expected paths"; \
 			exit 1; \
 		fi; \
+		if [ -f /tmp/src/shared/chat_modes.json ]; then \
+			mkdir -p /shared; \
+			cp /tmp/src/shared/chat_modes.json /shared/chat_modes.json; \
+		fi; \
 		rm -rf /tmp/src
 
 EXPOSE 8000
