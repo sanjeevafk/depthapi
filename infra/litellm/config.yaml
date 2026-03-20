@@ -9,6 +9,11 @@ model_list:
       model: groq/openai/gpt-oss-20b
       api_key: os.environ/GROQ_API_KEY
 
+  - model_name: learning-detailed
+    litellm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+
   - model_name: judge
     litellm_params:
       model: openrouter/z-ai/glm-4.5-air:free

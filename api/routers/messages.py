@@ -16,8 +16,6 @@ from config import get_settings
 from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from monitoring import capture_telemetry_event
 from services.cache import cache_get, cache_set, cache_set_if_absent
-from services.ensemble import ensemble_stream_generate
-from services.ensemble import ensemble_generate
 from services.inference import generate_explanation, generate_stream_explanation
 from services.llm_client import get_litellm_config_state
 from services.llm_errors import LLMUnavailable
@@ -491,29 +489,15 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 return
 
             generation_start = time.perf_counter()
-            stream = (
-                ensemble_stream_generate(
-                    content,
-                    prompt_mode,
-                    mode=selected_mode,
-                    use_premium=is_pro,
-                    temperature=request_temperature,
-                    regenerate=req.regenerate,
-                    request_id=request_id,
-                    user_id=user_id,
-                    telemetry_sink=telemetry_sink,
-                )
-                if selected_mode == LEARNING_MODE
-                else generate_stream_explanation(
-                    content,
-                    prompt_mode,
-                    mode=selected_mode,
-                    temperature=request_temperature,
-                    regenerate=req.regenerate,
-                    request_id=request_id,
-                    user_id=user_id,
-                    telemetry_sink=telemetry_sink,
-                )
+            stream = generate_stream_explanation(
+                content,
+                prompt_mode,
+                mode=selected_mode,
+                temperature=request_temperature,
+                regenerate=req.regenerate,
+                request_id=request_id,
+                user_id=user_id,
+                telemetry_sink=telemetry_sink,
             )
             stream_iter = stream.__aiter__()
             start_deadline = start_time + stream_start_timeout_seconds
@@ -575,29 +559,15 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 )
                 try:
                     fallback_content = await asyncio.wait_for(
-                        (
-                            ensemble_generate(
-                                content,
-                                prompt_mode,
-                                mode=selected_mode,
-                                use_premium=is_pro,
-                                temperature=request_temperature,
-                                regenerate=req.regenerate,
-                                request_id=request_id,
-                                user_id=user_id,
-                                telemetry_sink=telemetry_sink,
-                            )
-                            if selected_mode == LEARNING_MODE
-                            else generate_explanation(
-                                content,
-                                prompt_mode,
-                                mode=selected_mode,
-                                temperature=request_temperature,
-                                regenerate=req.regenerate,
-                                request_id=request_id,
-                                user_id=user_id,
-                                telemetry_sink=telemetry_sink,
-                            )
+                        generate_explanation(
+                            content,
+                            prompt_mode,
+                            mode=selected_mode,
+                            temperature=request_temperature,
+                            regenerate=req.regenerate,
+                            request_id=request_id,
+                            user_id=user_id,
+                            telemetry_sink=telemetry_sink,
                         ),
                         timeout=max(stream_max_seconds - (time.perf_counter() - start_time), 1),
                     )

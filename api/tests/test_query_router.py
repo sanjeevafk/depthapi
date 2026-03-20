@@ -17,12 +17,12 @@ async def test_query_cache_hit_returns_cached(app_client, monkeypatch):
     async def fake_cache_set(_key, _value):
         pytest.fail("cache_set should not be called")
 
-    async def fake_ensemble_generate(*_args, **_kwargs):
-        pytest.fail("ensemble_generate should not be called")
+    async def fake_generate_explanation(*_args, **_kwargs):
+        pytest.fail("generate_explanation should not be called")
 
     monkeypatch.setattr(query_module, "cache_get", fake_cache_get)
     monkeypatch.setattr(query_module, "cache_set", fake_cache_set)
-    monkeypatch.setattr(query_module, "ensemble_generate", fake_ensemble_generate)
+    monkeypatch.setattr(query_module, "generate_explanation", fake_generate_explanation)
 
     async def fake_auth():
         return None
@@ -52,8 +52,8 @@ async def test_query_invalid_topic(app_client):
 async def test_query_technical_mode_rejects_non_pro_user(app_client, monkeypatch, fake_user):
     calls = []
 
-    async def fake_ensemble_generate(_topic, _level, use_premium, mode, **_kwargs):
-        calls.append((use_premium, mode))
+    async def fake_generate_explanation(*_args, **_kwargs):
+        calls.append(True)
         return "ok"
 
     async def fake_cache_get(_key):
@@ -68,7 +68,7 @@ async def test_query_technical_mode_rejects_non_pro_user(app_client, monkeypatch
     async def fake_save_to_history(*_args, **_kwargs):
         return None
 
-    monkeypatch.setattr(query_module, "ensemble_generate", fake_ensemble_generate)
+    monkeypatch.setattr(query_module, "generate_explanation", fake_generate_explanation)
     monkeypatch.setattr(query_module, "cache_get", fake_cache_get)
     monkeypatch.setattr(query_module, "cache_set", fake_cache_set)
     monkeypatch.setattr(query_module, "check_is_pro", fake_check_is_pro)
@@ -118,7 +118,7 @@ async def test_query_stream_emits_done(app_client, monkeypatch):
     async def fake_cache_get(_key):
         return None
 
-    monkeypatch.setattr(query_module, "ensemble_stream_generate", fake_stream)
+    monkeypatch.setattr(query_module, "generate_stream_explanation", fake_stream)
     monkeypatch.setattr(query_module, "cache_get", fake_cache_get)
 
     resp = await app_client.post(
@@ -144,12 +144,12 @@ async def test_query_anonymous_rate_limit_exceeded(app_client, monkeypatch, test
     async def fake_cache_set(_key, _value):
         return True
 
-    async def fake_ensemble_generate(*_args, **_kwargs):
+    async def fake_generate_explanation(*_args, **_kwargs):
         return "ok"
 
     monkeypatch.setattr(query_module, "cache_get", fake_cache_get)
     monkeypatch.setattr(query_module, "cache_set", fake_cache_set)
-    monkeypatch.setattr(query_module, "ensemble_generate", fake_ensemble_generate)
+    monkeypatch.setattr(query_module, "generate_explanation", fake_generate_explanation)
     monkeypatch.setattr(rate_limit_module, "get_settings", lambda: test_settings)
 
     first = await app_client.post(
@@ -186,7 +186,6 @@ async def test_query_quota_exhaustion_blocks_inference(app_client, monkeypatch, 
         return {"user": SimpleNamespace(id="quota-user", email="quota@example.com", user_metadata={})}
 
     app_client.app.dependency_overrides[auth_module.verify_token_optional] = fake_auth
-    monkeypatch.setattr(query_module, "ensemble_generate", fail_if_called)
     monkeypatch.setattr(query_module, "generate_explanation", fail_if_called)
     monkeypatch.setattr(query_module, "cache_get", fake_cache_get)
     monkeypatch.setattr(query_module, "cache_set", fake_cache_set)
@@ -218,7 +217,6 @@ async def test_query_circuit_breaker_trigger_rejects(app_client, monkeypatch, te
     async def fake_cache_get(_key):
         return None
 
-    monkeypatch.setattr(query_module, "ensemble_generate", fail_if_called)
     monkeypatch.setattr(query_module, "generate_explanation", fail_if_called)
     monkeypatch.setattr(query_module, "cache_get", fake_cache_get)
     monkeypatch.setattr(rate_limit_module, "get_settings", lambda: test_settings)
