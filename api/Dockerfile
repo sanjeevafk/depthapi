@@ -2,10 +2,21 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY api/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY api/ .
+COPY . /tmp/src
+RUN set -eux; \
+		if [ -f /tmp/src/api/requirements.txt ]; then \
+			cp /tmp/src/api/requirements.txt /app/requirements.txt; \
+			pip install --no-cache-dir -r /app/requirements.txt; \
+			cp -a /tmp/src/api/. /app/; \
+		elif [ -f /tmp/src/requirements.txt ]; then \
+			cp /tmp/src/requirements.txt /app/requirements.txt; \
+			pip install --no-cache-dir -r /app/requirements.txt; \
+			cp -a /tmp/src/. /app/; \
+		else \
+			echo "No requirements.txt found in expected paths"; \
+			exit 1; \
+		fi; \
+		rm -rf /tmp/src
 
 EXPOSE 8000
 
