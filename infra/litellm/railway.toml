@@ -3,4 +3,4 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "litellm --host 0.0.0.0 --port $PORT"
+startCommand = "sh -c 'litellm --host 0.0.0.0 --port ${PORT:-4000}'"
