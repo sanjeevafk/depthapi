@@ -375,19 +375,14 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
     prompt = ""
     images = []
 
+    # ── TECHNICAL MODE (v2) — pseudo-streaming ──────────────────────────────
     if mode == TECHNICAL_MODE:
-        search_task = search_service.get_structured_search_context(topic)
-        image_task = search_service.get_images(topic)
-        quote_task = search_service.get_quote()
-        
-        structured_context, images_result, quote = await asyncio.gather(search_task, image_task, quote_task)
-        images = images_result
-        
-        prompt = TECHNICAL_DEPTH_PROMPT.format(
-            search_context=json.dumps(structured_context, ensure_ascii=True, indent=2),
-            quote_text=quote if quote else "No specific quote found.",
-            topic=topic
-        )
+        full_response = await technical_mode_handler(topic, **kwargs)
+        chunk_size = 400
+        for i in range(0, len(full_response), chunk_size):
+            yield full_response[i : i + chunk_size]
+        return
+    # ────────────────────────────────────────────────────────────────────────
     elif mode == SOCRATIC_MODE:
         template = PROMPTS.get("socratic")
         if not template:
