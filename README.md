@@ -2,8 +2,8 @@
 
 KnowBear is an AI-powered product that delivers explanations at exactly the right depth for any topic, from ELI5 to technical deep dives. It routes requests through a LiteLLM proxy, enforces mode-specific behavior, caches repeat queries, and provides exportable responses in a focused UI.
 
-Live demo: https://knowbear.vercel.app (now-deprecated v1)
-Deprecated v1 repo: https://github.com/voidcommit-afk/KnowBear-v1
+- Live demo: https://knowbear.vercel.app (now-deprecated v1)
+- Deprecated v1 repo: https://github.com/voidcommit-afk/knowbear-v1
 
 ## Core Features
 
