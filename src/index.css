@@ -9,7 +9,7 @@
 }
 
 body {
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: "Inter", system-ui, sans-serif;
   background-color: #000000;
   color: #f5f5f5;
   min-height: 100vh;
@@ -24,12 +24,42 @@ body {
   transform: translateZ(0);
   contain: paint;
   background:
-    radial-gradient(1px 1px at 20px 30px, #fff 0%, rgba(255, 255, 255, 0.6) 40%, transparent 70%),
-    radial-gradient(1px 1px at 40px 70px, #fff 0%, rgba(255, 255, 255, 0.5) 40%, transparent 70%),
-    radial-gradient(1.5px 1.5px at 90px 40px, #fff 0%, rgba(255, 255, 255, 0.8) 40%, transparent 70%),
-    radial-gradient(1px 1px at 150px 150px, #fff 0%, rgba(255, 255, 255, 0.4) 40%, transparent 70%),
-    radial-gradient(1px 1px at 120px 10px, #fff 0%, rgba(255, 255, 255, 0.5) 40%, transparent 70%),
-    radial-gradient(1.5px 1.5px at 50px 150px, #fff 0%, rgba(255, 255, 255, 0.7) 40%, transparent 70%);
+    radial-gradient(
+      1px 1px at 20px 30px,
+      #fff 0%,
+      rgba(255, 255, 255, 0.6) 40%,
+      transparent 70%
+    ),
+    radial-gradient(
+      1px 1px at 40px 70px,
+      #fff 0%,
+      rgba(255, 255, 255, 0.5) 40%,
+      transparent 70%
+    ),
+    radial-gradient(
+      1.5px 1.5px at 90px 40px,
+      #fff 0%,
+      rgba(255, 255, 255, 0.8) 40%,
+      transparent 70%
+    ),
+    radial-gradient(
+      1px 1px at 150px 150px,
+      #fff 0%,
+      rgba(255, 255, 255, 0.4) 40%,
+      transparent 70%
+    ),
+    radial-gradient(
+      1px 1px at 120px 10px,
+      #fff 0%,
+      rgba(255, 255, 255, 0.5) 40%,
+      transparent 70%
+    ),
+    radial-gradient(
+      1.5px 1.5px at 50px 150px,
+      #fff 0%,
+      rgba(255, 255, 255, 0.7) 40%,
+      transparent 70%
+    );
   background-size: 150px 150px;
   animation: stars 100s linear infinite;
   opacity: 0.8;

@@ -15,7 +15,9 @@ describe("WelcomeEmptyState", () => {
     );
 
     const prompt = WORKSPACE_PROMPTS.learn[0];
-    const button = screen.getByRole("button", { name: new RegExp(prompt.title, "i") });
+    const button = screen.getByRole("button", {
+      name: new RegExp(prompt.title, "i"),
+    });
 
     fireEvent.click(button);
 
