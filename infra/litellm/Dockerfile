@@ -6,8 +6,8 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# Install LiteLLM only (config references env vars at runtime).
-RUN pip install --no-cache-dir litellm
+# Install LiteLLM proxy extras (includes websockets and related deps).
+RUN pip install --no-cache-dir "litellm[proxy]"
 
 # Copy config into the image at the expected path.
 COPY config.yaml /app/infra/litellm/config.yaml
