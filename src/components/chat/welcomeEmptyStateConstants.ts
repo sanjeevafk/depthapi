@@ -8,18 +8,23 @@ type PromptTile = {
   prompt: string;
 };
 
-export const WORKSPACE_CONTENT: Record<Workspace, { title: string; description: string }> = {
+export const WORKSPACE_CONTENT: Record<
+  Workspace,
+  { title: string; description: string }
+> = {
   learn: {
     title: "Welcome to Learn Mode",
     description: "Pick a depth level and ask anything you want to understand.",
   },
   socratic: {
     title: "Welcome to Socratic Mode",
-    description: "Start with a question and we will reason through it together.",
+    description:
+      "Start with a question and we will reason through it together.",
   },
   technical: {
     title: "Welcome to Technical Mode",
-    description: "Share a system, bug, or architecture topic for a deeper breakdown.",
+    description:
+      "Share a system, bug, or architecture topic for a deeper breakdown.",
   },
 };
 
@@ -105,7 +110,8 @@ export const WORKSPACE_PROMPTS: Record<Workspace, PromptTile[]> = {
       id: "technical-2",
       title: "Debug a frontend issue",
       description: "Find why a React component keeps re-rendering.",
-      prompt: "Help me debug why a React component re-renders on every keystroke.",
+      prompt:
+        "Help me debug why a React component re-renders on every keystroke.",
     },
     {
       id: "technical-3",

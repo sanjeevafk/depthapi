@@ -43,7 +43,10 @@ export default function WorkspaceInput({
   const isSendDisabled = disabled || isLoading || value.trim().length === 0;
 
   const placeholder = useMemo(
-    () => (disabled && disabledReason ? disabledReason : WORKSPACE_PLACEHOLDERS[workspace]),
+    () =>
+      disabled && disabledReason
+        ? disabledReason
+        : WORKSPACE_PLACEHOLDERS[workspace],
     [disabled, disabledReason, workspace],
   );
 

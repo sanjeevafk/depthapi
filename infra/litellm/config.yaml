@@ -1,18 +1,18 @@
 model_list:
-  - model_name: learning-candidate-1
+  - model_name: learning-detailed
     litellm_params:
-      model: groq/llama-3.1-8b-instant
+      model: groq/llama-3.3-70b-versatile
       api_key: os.environ/GROQ_API_KEY
 
-  - model_name: learning-candidate-2
+  - model_name: learning-fallback-simple
     litellm_params:
       model: groq/openai/gpt-oss-20b
       api_key: os.environ/GROQ_API_KEY
 
-  - model_name: judge
+  - model_name: learning-fallback-detailed
     litellm_params:
-      model: openrouter/z-ai/glm-4.5-air:free
-      api_key: os.environ/OPENROUTER_API_KEY
+      model: groq/openai/gpt-oss-120b
+      api_key: os.environ/GROQ_API_KEY
 
   - model_name: technical-primary
     litellm_params:
@@ -21,7 +21,7 @@ model_list:
   
   - model_name: technical-fallback
     litellm_params:
-      model: openrouter/qwen/qwen3-coder:free
+      model: openrouter/deepseek/deepseek-chat-v3.1
       api_key: os.environ/OPENROUTER_API_KEY
 
   - model_name: socratic
@@ -35,7 +35,10 @@ model_list:
       api_key: os.environ/GROQ_API_KEY
 
 router_settings:
-  fallbacks: [{"technical-primary": ["technical-fallback", "default-fast"]}]
+  fallbacks:
+    - {"technical-primary": ["technical-fallback", "default-fast"]}
+    - {"default-fast": ["learning-fallback-simple"]}
+    - {"learning-detailed": ["learning-fallback-detailed"]}
 
 litellm_settings:
   drop_params: true

@@ -1,17 +1,17 @@
-import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
-import ExportButtons from '../components/ExportButtons'
+import { describe, it, expect } from "vitest";
+import { render, screen } from "@testing-library/react";
+import ExportButtons from "../components/ExportButtons";
 
-describe('ExportButtons', () => {
-    it('renders text and markdown buttons', () => {
-        render(<ExportButtons topic="Test" explanations={{}} />)
-        expect(screen.getByText(/export as txt/i)).toBeInTheDocument()
-        expect(screen.getByText(/export as md/i)).toBeInTheDocument()
-    })
+describe("ExportButtons", () => {
+  it("renders text and markdown buttons", () => {
+    render(<ExportButtons topic="Test" explanations={{}} />);
+    expect(screen.getByText(/export as txt/i)).toBeInTheDocument();
+    expect(screen.getByText(/export as md/i)).toBeInTheDocument();
+  });
 
-    it('buttons are clickable', () => {
-        render(<ExportButtons topic="Test" explanations={{ eli5: 'test' }} />)
-        const txtBtn = screen.getByText(/export as txt/i)
-        expect(txtBtn).not.toBeDisabled()
-    })
-})
+  it("buttons are clickable", () => {
+    render(<ExportButtons topic="Test" explanations={{ eli5: "test" }} />);
+    const txtBtn = screen.getByText(/export as txt/i);
+    expect(txtBtn).not.toBeDisabled();
+  });
+});

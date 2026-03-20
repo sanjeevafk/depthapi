@@ -17,7 +17,11 @@ import {
   isPromptMode,
   toQueryLevel,
 } from "../lib/chatModes";
-import { captureFrontendError, getTracePropagationHeaders, trackTelemetry } from "../lib/monitoring";
+import {
+  captureFrontendError,
+  getTracePropagationHeaders,
+  trackTelemetry,
+} from "../lib/monitoring";
 
 export type Workspace = "learn" | "socratic" | "technical";
 export type ThemeMode = "dark" | "light";
@@ -921,7 +925,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const clientMessageId = options?.clientMessageId ?? makeClientId();
     const assistantClientId = options?.assistantClientId ?? makeClientId();
     const skipUserMessage = Boolean(options?.skipUserMessage);
-    const requestTemperature = Math.min(Math.max(options?.temperature ?? 0.7, 0), 1);
+    const requestTemperature = Math.min(
+      Math.max(options?.temperature ?? 0.7, 0),
+      1,
+    );
     let conversationId = get().currentConversationId;
     let conversation = get().conversations.find(
       (item) => item.id === conversationId,
@@ -1385,7 +1392,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         });
       }
       captureFrontendError(
-        error instanceof Error ? error : new Error(String(error || "Unknown chat send error")),
+        error instanceof Error
+          ? error
+          : new Error(String(error || "Unknown chat send error")),
         {
           source: "chat.send_message",
           mode: requestedMode,

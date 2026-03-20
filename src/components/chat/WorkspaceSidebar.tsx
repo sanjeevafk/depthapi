@@ -36,9 +36,24 @@ interface WorkspaceOption {
 }
 
 const WORKSPACE_OPTIONS: WorkspaceOption[] = [
-  { id: "learn", label: "Learn", description: "Quick Learning", icon: BookOpen },
-  { id: "socratic", label: "Socratic", description: "Guided Thinking", icon: CircleHelp },
-  { id: "technical", label: "Technical", description: "Deep Analysis", icon: Code2 },
+  {
+    id: "learn",
+    label: "Learn",
+    description: "Quick Learning",
+    icon: BookOpen,
+  },
+  {
+    id: "socratic",
+    label: "Socratic",
+    description: "Guided Thinking",
+    icon: CircleHelp,
+  },
+  {
+    id: "technical",
+    label: "Technical",
+    description: "Deep Analysis",
+    icon: Code2,
+  },
 ];
 
 export default function WorkspaceSidebar({
@@ -110,7 +125,9 @@ export default function WorkspaceSidebar({
               alt="KnowBear logo"
               className="h-8 w-8 drop-shadow-[0_0_8px_rgba(6,182,212,0.45)]"
             />
-            <span className={`inline-block text-lg font-black tracking-tight leading-none text-slate-900 dark:text-slate-100 ${labelClassName}`}>
+            <span
+              className={`inline-block text-lg font-black tracking-tight leading-none text-slate-900 dark:text-slate-100 ${labelClassName}`}
+            >
               Know<span className="text-cyan-500">Bear</span>
             </span>
           </div>
@@ -134,7 +151,9 @@ export default function WorkspaceSidebar({
         </div>
 
         <div className="px-4 pt-5">
-          <h2 className={`inline-block text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500 ${labelClassName}`}>
+          <h2
+            className={`inline-block text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500 ${labelClassName}`}
+          >
             Workspaces
           </h2>
           <nav className="mt-2 space-y-1" aria-label="Workspaces">
@@ -158,7 +177,9 @@ export default function WorkspaceSidebar({
                   aria-current={isActive ? "page" : undefined}
                 >
                   <Icon className="h-4 w-4" />
-                  <span className={`inline-flex min-w-0 flex-col ${labelClassName}`}>
+                  <span
+                    className={`inline-flex min-w-0 flex-col ${labelClassName}`}
+                  >
                     <span className="truncate text-sm font-medium leading-tight">
                       {option.label}
                     </span>
@@ -180,7 +201,9 @@ export default function WorkspaceSidebar({
         <div
           className={`mt-5 flex-1 overflow-y-auto border-t border-slate-200 px-4 pt-4 dark:border-white/10 ${sectionFadeClassName} custom-scrollbar`}
         >
-          <h2 className={`inline-block text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500 ${labelClassName}`}>
+          <h2
+            className={`inline-block text-xs font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500 ${labelClassName}`}
+          >
             Recent Chats
           </h2>
           <div

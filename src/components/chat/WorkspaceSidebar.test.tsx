@@ -82,9 +82,15 @@ describe("WorkspaceSidebar", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: /Learn\s+Quick\s+Learning/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Socratic\s+Guided\s+Thinking/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Technical\s+Deep\s+Analysis/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Learn\s+Quick\s+Learning/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Socratic\s+Guided\s+Thinking/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Technical\s+Deep\s+Analysis/i }),
+    ).toBeInTheDocument();
   });
 
   it("deletes a conversation only after confirmation", () => {
