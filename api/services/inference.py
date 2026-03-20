@@ -341,29 +341,11 @@ async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **k
 async def generate_explanation(topic: str, level: str, model: str | None = None, **kwargs) -> str:
     """Generate explanation for topic at given level."""
     mode = normalize_mode(kwargs.get("mode", LEARNING_MODE))
-    
+
+    # ── TECHNICAL MODE (v2) ─────────────────────────────────────────────────
     if mode == TECHNICAL_MODE:
-        search_task = search_service.get_structured_search_context(topic)
-        image_task = search_service.get_images(topic)
-        quote_task = search_service.get_quote()
-        
-        structured_context, images, quote = await asyncio.gather(search_task, image_task, quote_task)
-        
-        prompt = TECHNICAL_DEPTH_PROMPT.format(
-            search_context=json.dumps(structured_context, ensure_ascii=True, indent=2),
-            quote_text=quote if quote else "No specific quote found.",
-            topic=topic
-        )
-        
-        response = await call_model(model or "technical-primary", prompt, **kwargs)
-        
-        # Append images if available
-        if images:
-             response += "\n\n### Visual References\n"
-             for img in images:
-                 response += f"![{img.get('title', 'Image')}]({img['url']})\n"
-        
-        return response
+        return await technical_mode_handler(topic, **kwargs)
+    # ────────────────────────────────────────────────────────────────────────
 
     if mode == SOCRATIC_MODE:
         template = PROMPTS.get("socratic")
