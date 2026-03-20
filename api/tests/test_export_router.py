@@ -76,7 +76,7 @@ async def test_export_missing_levels_triggers_generation(app_client, monkeypatch
 
     calls = []
 
-    async def fake_generate(_topic, level, _mode=None):
+    async def fake_generate(_topic, level, mode=None, **_kwargs):
         calls.append(level)
         return "generated"
 
