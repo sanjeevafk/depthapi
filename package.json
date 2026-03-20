@@ -7,7 +7,8 @@
         "dev": "vite",
         "dev:full": "node scripts/dev-full.mjs",
         "api:dev": "cd api && ../.venv/bin/python -m uvicorn main:app --reload --port 8000",
-        "api:test": "cross-env PYTHONPATH=. .venv/bin/python -m pytest api/tests",        "api:install": ".venv/bin/python -m pip install -r api/requirements.txt",
+        "api:test": "cross-env PYTHONPATH=. .venv/bin/python -m pytest api/tests",
+        "api:install": ".venv/bin/python -m pip install -r api/requirements.txt",
         "build": "node node_modules/vite/bin/vite.js build",
         "vercel-build": "npm run build",
         "type-check": "tsc -b",
@@ -33,6 +34,7 @@
         "react-markdown": "^10.1.0",
         "react-router-dom": "^7.12.0",
         "remark-gfm": "^4.0.1",
+        "wrangler": "^4.76.0",
         "zod": "^3.24.1",
         "zustand": "^5.0.11"
     },
