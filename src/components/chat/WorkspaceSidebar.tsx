@@ -31,13 +31,14 @@ interface WorkspaceSidebarProps {
 interface WorkspaceOption {
   id: Workspace;
   label: string;
+  description: string;
   icon: typeof BookOpen;
 }
 
 const WORKSPACE_OPTIONS: WorkspaceOption[] = [
-  { id: "learn", label: "Learn", icon: BookOpen },
-  { id: "socratic", label: "Socratic", icon: CircleHelp },
-  { id: "technical", label: "Technical", icon: Code2 },
+  { id: "learn", label: "Learn", description: "Quick Learning", icon: BookOpen },
+  { id: "socratic", label: "Socratic", description: "Guided Thinking", icon: CircleHelp },
+  { id: "technical", label: "Technical", description: "Deep Analysis", icon: Code2 },
 ];
 
 export default function WorkspaceSidebar({
