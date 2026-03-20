@@ -14,6 +14,7 @@ build/
 .DS_Store
 .local-files/
 render.yaml
+.vscode
 
 # Build info files
 tsconfig.tsbuildinfo
@@ -21,3 +22,4 @@ tsconfig.node.tsbuildinfo
 vite.config.d.ts
 
 local-docs/
+.vscode/settings.json

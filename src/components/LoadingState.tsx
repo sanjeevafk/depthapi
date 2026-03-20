@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import type { Mode, Level } from '../types'
 import { Loader2, Quote } from 'lucide-react'
+import { FALLBACK_CACHE_KEY, FALLBACK_QUOTES } from './loadingStateConstants'
 
 interface LoadingStateProps {
     mode: Mode
@@ -8,13 +9,37 @@ interface LoadingStateProps {
     topic: string
 }
 
-const FALLBACK_QUOTES = [
-    "The mind is not a vessel to be filled, but a fire to be kindled. — Plutarch",
-    "An investment in knowledge pays the best interest. — Benjamin Franklin",
-    "Wisdom is not a product of schooling but of the lifelong attempt to acquire it. — Albert Einstein",
-    "The important thing is not to stop questioning. Curiosity has its own reason for existence. — Albert Einstein",
-    "Live as if you were to die tomorrow. Learn as if you were to live forever. — Mahatma Gandhi"
-]
+const FALLBACK_CACHE_TTL_MS = 10 * 60 * 1000
+const QUOTE_TIMEOUT_MS = 1000
+
+type CachedFallback = {
+    quote: string
+    savedAt: number
+}
+
+const readFallbackCache = (): CachedFallback | null => {
+    if (typeof window === 'undefined') return null
+    try {
+        const raw = window.localStorage.getItem(FALLBACK_CACHE_KEY)
+        if (!raw) return null
+        const parsed = JSON.parse(raw) as CachedFallback
+        if (typeof parsed?.quote !== 'string' || typeof parsed?.savedAt !== 'number') return null
+        return parsed
+    } catch {
+        return null
+    }
+}
+
+const saveFallbackCache = (quote: string) => {
+    if (typeof window === 'undefined') return
+    const payload: CachedFallback = { quote, savedAt: Date.now() }
+    window.localStorage.setItem(FALLBACK_CACHE_KEY, JSON.stringify(payload))
+}
+
+const clearFallbackCache = () => {
+    if (typeof window === 'undefined') return
+    window.localStorage.removeItem(FALLBACK_CACHE_KEY)
+}
 
 export function LoadingState({ mode, level, topic }: LoadingStateProps): JSX.Element {
     const [message, setMessage] = useState('')
@@ -46,24 +71,63 @@ export function LoadingState({ mode, level, topic }: LoadingStateProps): JSX.Ele
         setMessage(baseMessage)
 
         // Fetch random quote
+        let disposed = false
+        let controller: AbortController | null = null
+        let timeoutId: number | null = null
+
         const fetchQuote = async () => {
+            const cachedFallback = readFallbackCache()
+            const cachedFresh =
+                cachedFallback && Date.now() - cachedFallback.savedAt < FALLBACK_CACHE_TTL_MS
+            const randomFallback =
+                cachedFallback?.quote ||
+                FALLBACK_QUOTES[Math.floor(Math.random() * FALLBACK_QUOTES.length)]
+
+            setQuote(randomFallback)
+
+            if (cachedFresh) return
+
+            controller = new AbortController()
+            timeoutId = window.setTimeout(() => {
+                controller?.abort()
+            }, QUOTE_TIMEOUT_MS)
+
             try {
-                const response = await fetch('https://api.quotable.io/random?tags=education|knowledge|learning|science|wisdom|research|effort|creativity&maxLength=100')
+                const response = await fetch('https://api.quotable.io/random?tags=education|knowledge|learning|science|wisdom|research|effort|creativity&maxLength=100', {
+                    signal: controller.signal,
+                })
                 if (!response.ok) throw new Error('Quote API failed')
                 const data = await response.json()
                 if (data.content && data.author) {
+                    if (disposed) return
                     setQuote(`«${data.content}» — ${data.author}`)
+                    clearFallbackCache()
                 } else {
                     throw new Error('Invalid quote data')
                 }
             } catch {
                 // Silently fall back to local quotes (API has SSL issues)
-                const randomFallback = FALLBACK_QUOTES[Math.floor(Math.random() * FALLBACK_QUOTES.length)]
+                if (disposed) return
                 setQuote(randomFallback)
+                saveFallbackCache(randomFallback)
+            } finally {
+                if (timeoutId) {
+                    window.clearTimeout(timeoutId)
+                }
             }
         }
 
         fetchQuote()
+
+        return () => {
+            disposed = true
+            if (timeoutId) {
+                window.clearTimeout(timeoutId)
+            }
+            if (controller) {
+                controller.abort()
+            }
+        }
     }, [mode, level, topic])
 
     return (

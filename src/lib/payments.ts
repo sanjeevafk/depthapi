@@ -3,6 +3,8 @@
  */
 
 import { supabase } from './supabase';
+import { captureFrontendError, trackTelemetry } from './monitoring';
+import { getTracePropagationHeaders } from './monitoring';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
@@ -22,6 +24,8 @@ export const createCheckoutSession = async (
     onError?: (error: Error) => void
 ): Promise<void> => {
     try {
+        trackTelemetry('payment_checkout_start');
+
         // Get current user session
         const { data: { session } } = await supabase.auth.getSession();
 
@@ -39,7 +43,8 @@ export const createCheckoutSession = async (
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${session.access_token}`
+                'Authorization': `Bearer ${session.access_token}`,
+                ...getTracePropagationHeaders(),
             },
             body: JSON.stringify({
                 plan: 'pro',
@@ -63,12 +68,21 @@ export const createCheckoutSession = async (
 
         const data: CheckoutResponse = await response.json();
 
+        trackTelemetry('payment_checkout_session_created', {
+            session_id: data.session_id,
+        });
+
         // Redirect to Dodo Payments checkout
+        trackTelemetry('payment_checkout_redirect');
         window.location.href = data.checkout_url;
 
     } catch (error) {
         const normalized = normalizeError(error)
         console.error('Checkout error:', normalized);
+        trackTelemetry('payment_checkout_error', {
+            error_type: normalized.name,
+        });
+        captureFrontendError(normalized, { source: 'payments.create_checkout' })
         if (onError) {
             onError(normalized);
         } else {
@@ -82,34 +96,50 @@ export const createCheckoutSession = async (
  */
 export const verifyPaymentStatus = async (): Promise<boolean> => {
     try {
+        trackTelemetry('payment_verify_status_start');
         const { data: { session } } = await supabase.auth.getSession();
 
         if (!session) {
+            trackTelemetry('payment_verify_status_result', { status: 'no_session' });
             return false;
         }
 
         const response = await fetch(`${API_BASE_URL}/api/payments/verify-status`, {
             method: 'GET',
             headers: {
-                'Authorization': `Bearer ${session.access_token}`
+                'Authorization': `Bearer ${session.access_token}`,
+                ...getTracePropagationHeaders(),
             }
         });
 
         if (!response.ok) {
+            trackTelemetry('payment_verify_status_result', {
+                status: 'request_failed',
+                http_status: response.status,
+            });
             return false;
         }
 
         const data = await response.json() as { is_pro?: boolean };
+        trackTelemetry('payment_verify_status_result', {
+            status: data.is_pro === true ? 'pro' : 'free',
+        });
         return data.is_pro === true;
 
     } catch (error) {
-        console.error('Payment verification error:', normalizeError(error));
+        const normalized = normalizeError(error)
+        console.error('Payment verification error:', normalized);
+        trackTelemetry('payment_verify_status_result', {
+            status: 'error',
+            error_type: normalized.name,
+        });
+        captureFrontendError(normalized, { source: 'payments.verify_status' })
         return false;
     }
 };
 
 /**
- * Poll payment status until user is upgraded (max 30 seconds)
+ * Poll payment status until user is upgraded (max ~30 seconds by default)
  */
 export const waitForPaymentConfirmation = async (
     maxAttempts: number = 15,

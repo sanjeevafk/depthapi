@@ -1,7 +1,10 @@
+import os
 import types
 from types import SimpleNamespace
 import pytest
 import httpx
+
+os.environ.setdefault("LOG_USER_HASH_SALT", "test-log-salt")
 
 import main as main_app
 import api.main as api_main_app
@@ -12,6 +15,18 @@ import services.search as search_module
 import services.llm_client as llm_client_module
 import services.inference as inference_module
 import services.ensemble as ensemble_module
+import services.rate_limit as rate_limit_module
+
+
+class AppClientWrapper:
+    """Expose FastAPI app for dependency overrides while delegating to AsyncClient."""
+
+    def __init__(self, client: httpx.AsyncClient, app):
+        self._client = client
+        self.app = app
+
+    def __getattr__(self, name):
+        return getattr(self._client, name)
 
 
 class DummyRedis:
@@ -27,6 +42,41 @@ class DummyRedis:
     async def setex(self, key, ttl, value):
         self.store[key] = value
         return True
+
+    async def set_if_not_exists(self, key, ttl, value):
+        if key in self.store:
+            return False
+        self.store[key] = value
+        return True
+
+    async def incr(self, key):
+        value = int(self.store.get(key, 0)) + 1
+        self.store[key] = value
+        return value
+
+    async def incrby(self, key, amount):
+        value = int(self.store.get(key, 0)) + int(amount)
+        self.store[key] = value
+        return value
+
+    async def expire(self, key, ttl_seconds):
+        return True
+
+    async def ttl(self, key):
+        return 60
+
+    async def eval(self, _script, _num_keys, key, requested, limit, window_seconds):
+        current = int(self.store.get(key, 0))
+        requested_value = int(requested)
+        limit_value = int(limit)
+        window_value = int(window_seconds)
+
+        consumed = current + requested_value
+        if consumed > limit_value:
+            return [0, current, window_value]
+
+        self.store[key] = consumed
+        return [1, consumed, window_value]
 
     async def close(self):
         return True
@@ -47,6 +97,8 @@ class FakeSupabaseQuery:
 
     def update(self, payload):
         self.supabase.updates.append((self.table, payload))
+        if self._response is None:
+            self._response = [{"id": "stub"}]
         return self
 
     def delete(self):
@@ -86,17 +138,32 @@ class FakeSupabase:
 def test_settings():
     return SimpleNamespace(
         environment="development",
-        groq_api_key="",
-        gemini_api_key="",
-        openrouter_api_key="",
         litellm_base_url="http://localhost:4000",
         litellm_virtual_key="test-virtual-key",
         litellm_master_key="",
         litellm_timeout_seconds=60,
+        stream_max_seconds=5,
+        stream_heartbeat_seconds=1,
+        stream_start_timeout_seconds=1,
+        stream_idempotency_ttl_seconds=90,
         redis_url="redis://localhost:6379",
+        upstash_redis_rest_url="https://upstash.example.com",
+        upstash_redis_rest_token="token",
         cache_ttl=5,
+        rate_limit_strategy="upstash_redis",
         rate_limit_per_user=20,
         rate_limit_burst=5,
+        rate_limit_burst_window_seconds=10,
+        rate_limit_sustained_window_seconds=60,
+        anonymous_rate_limit_per_ip=8,
+        anonymous_rate_limit_burst=3,
+        anonymous_rate_limit_window_seconds=60,
+        daily_token_quota_per_user=50000,
+        quota_window_seconds=86400,
+        circuit_breaker_tokens_per_minute=300000,
+        circuit_breaker_open_seconds=60,
+        circuit_breaker_action="reject",
+        estimated_output_tokens_per_request=900,
         supabase_url="https://example.supabase.co",
         supabase_anon_key="anon",
         supabase_service_role_key="service",
@@ -119,6 +186,7 @@ def patch_settings(monkeypatch, test_settings):
     monkeypatch.setattr(api_main_app, "get_settings", lambda: test_settings)
     monkeypatch.setattr(cache_module, "get_settings", lambda: test_settings)
     monkeypatch.setattr(auth_module, "get_settings", lambda: test_settings)
+    monkeypatch.setattr(llm_client_module, "get_settings", lambda: test_settings)
     search_module.settings = test_settings
     return test_settings
 
@@ -166,16 +234,19 @@ async def app_client(monkeypatch, dummy_redis):
     async def _noop_close():
         return None
 
-    monkeypatch.setattr(cache_module, "get_redis", lambda: dummy_redis)
-    monkeypatch.setattr(api_main_app, "get_redis", lambda: dummy_redis)
+    async def _get_redis():
+        return dummy_redis
+
+    monkeypatch.setattr(cache_module, "get_redis", _get_redis)
+    monkeypatch.setattr(rate_limit_module, "get_redis", _get_redis)
+    monkeypatch.setattr(api_main_app, "get_redis", _get_redis)
     monkeypatch.setattr(api_main_app, "close_redis", _noop_close)
     monkeypatch.setattr(api_main_app, "redis_available", False)
     main_app.app.dependency_overrides = {}
 
     transport = httpx.ASGITransport(app=main_app.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        client.app = main_app.app
-        yield client
+        yield AppClientWrapper(client, main_app.app)
 
     main_app.app.dependency_overrides = {}
 

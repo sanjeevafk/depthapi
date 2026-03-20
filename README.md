@@ -76,11 +76,59 @@ All model calls go through a LiteLLM proxy that exposes stable aliases. The back
 
 | Method | Path                | Description                                    | Auth? | Rate-limited? |
 |--------|---------------------|------------------------------------------------|-------|---------------|
-| GET    | `/api/health`       | Redis, model providers, auth status            | No    | No            |
+| GET    | `/api/health`       | Dependency status (`ok|degraded|down`)         | No    | No            |
 | GET    | `/api/pinned`       | Curated & trending topics                      | No    | Light         |
 | POST   | `/api/query`        | Main query endpoint — returns layered output   | Optional | Yes        |
 | POST   | `/api/export`       | Convert result to file (txt/md)                | No    | Yes           |
 | GET    | `/api/usage`        | Current user quota & usage (Pro users)         | Yes   | No            |
+
+## Streaming Limits
+
+- SSE heartbeat sent at least every 2s to keep connections alive.
+- Streaming responses are capped at 25s and emit a graceful cutoff message on timeout.
+- If streaming cannot start within the startup timeout, the backend falls back to non-streaming output.
+- Partial responses are treated as final; retries are user-triggered and idempotent by message id.
+
+## Degraded Mode (LiteLLM)
+
+- On startup, the backend validates LiteLLM config (`LITELLM_BASE_URL` format and API key presence) and logs structured warning/error events.
+- Missing LiteLLM config disables chat endpoints in degraded mode (`503`) while keeping the rest of the app available.
+- Invalid LiteLLM credentials return structured errors (`invalid_api_key`) instead of silent failures.
+- Frontend polls `/api/health` and shows a banner when chat is unavailable.
+
+`/api/health` response shape:
+
+```json
+{
+  "status": "ok|degraded|down",
+  "litellm": { "status": "ok|degraded|down", "latency_ms": 0 },
+  "rate_limit": { "status": "ok|degraded|down" },
+  "db": { "status": "ok|degraded|down" }
+}
+```
+
+## Monitoring and Telemetry (Sentry)
+
+- Backend Sentry is enabled only when `SENTRY_DSN` is present and `SENTRY_ENABLED` is not `false`.
+- Frontend Sentry is enabled only when `VITE_SENTRY_DSN` is present and `VITE_SENTRY_ENABLED` is not `false`.
+- Release tagging is supported via `SENTRY_RELEASE` (backend) and `VITE_SENTRY_RELEASE` (frontend).
+- Sampling is enabled by default to reduce noise:
+  - Backend: `SENTRY_TRACES_SAMPLE_RATE` and `SENTRY_PROFILES_SAMPLE_RATE`
+  - Frontend: `VITE_SENTRY_TRACES_SAMPLE_RATE`
+- PII and secrets are redacted before telemetry is emitted:
+  - Emails, auth tokens, cookies, and headers are scrubbed.
+  - Query strings are removed from request URLs.
+- Telemetry hooks include `message_send`, `stream_start`, `stream_end`, and payment flow events.
+- Distributed tracing headers (`sentry-trace`, `baggage`) are propagated from frontend API calls to backend and forwarded to LiteLLM requests.
+- CI release automation: `.github/workflows/sentry-release.yml` creates releases from `github.sha` and associates commits.
+- Alert bootstrap script: `scripts/setup_sentry_alerts.sh` (requires `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, and `SENTRY_USER_ID`).
+## Payments and Pro Verification
+
+- Upgrade CTA calls backend `POST /api/payments/create-checkout` and redirects to the provider checkout URL.
+- Pro status is updated only by verified webhook events (`POST /api/payments/webhook/dodo` or legacy `/webhooks/dodo`).
+- Webhook events require valid HMAC signature verification and are processed idempotently to ignore duplicates safely.
+- Payment success grants Pro, while failed payments do not grant Pro; cancellation and renewal failure revoke Pro.
+- `/success` only refreshes profile state and redirects to `/app`; it never grants Pro by redirect alone.
 
 ## 🛠 Tech Stack
 

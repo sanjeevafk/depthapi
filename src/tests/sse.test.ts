@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { splitSseEvents, extractSseData } from '../lib/sse'
+import { splitSseEvents, parseSseEvent } from '../lib/sse'
 
 describe('sse utils', () => {
     it('splits complete events and remainder', () => {
@@ -25,14 +25,15 @@ describe('sse utils', () => {
         expect(result.remainder).toBe('')
     })
 
-    it('extracts data payload lines', () => {
-        const eventBlock = 'event: delta\n' + 'data: hello\n' + 'data: world\n'
-        const data = extractSseData(eventBlock)
-        expect(data).toBe('hello\nworld')
+    it('parses event with data, id, and event', () => {
+        const eventBlock = 'id: 7\n' + 'event: delta\n' + 'data: hello\n' + 'data: world\n'
+        const parsed = parseSseEvent(eventBlock)
+        expect(parsed).toEqual({ id: '7', event: 'delta', data: 'hello\nworld' })
     })
 
-    it('returns null when no data lines', () => {
-        const data = extractSseData('event: ping\n')
-        expect(data).toBeNull()
+    it('returns null when required fields are missing', () => {
+        expect(parseSseEvent('event: ping\n')).toBeNull()
+        expect(parseSseEvent('id: 1\ndata: hi\n')).toBeNull()
+        expect(parseSseEvent('event: ping\nid: 1\n')).toBeNull()
     })
 })

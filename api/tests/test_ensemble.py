@@ -44,3 +44,18 @@ async def test_ensemble_all_models_fail(monkeypatch):
 
     with pytest.raises(RuntimeError):
         await ensemble_module.ensemble_generate("topic", "eli5", use_premium=False, mode="learning")
+
+
+@pytest.mark.asyncio
+async def test_ensemble_falls_back_when_judge_fails(monkeypatch):
+    async def fake_generate_explanation(_topic, _level, _model, **_kwargs):
+        return "candidate"
+
+    async def fake_create_chat_completion(*_args, **_kwargs):
+        raise RuntimeError("judge down")
+
+    monkeypatch.setattr(ensemble_module, "generate_explanation", fake_generate_explanation)
+    monkeypatch.setattr(ensemble_module, "create_chat_completion", fake_create_chat_completion)
+
+    result = await ensemble_module.ensemble_generate("topic", "eli5", use_premium=False, mode="learning")
+    assert result == "candidate"

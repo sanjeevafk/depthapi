@@ -2,19 +2,28 @@
 
 import asyncio
 import os
+import time
 import structlog
-from datetime import datetime
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Response, Depends, HTTPException
+import httpx
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from routers import pinned, query, export, history, webhooks, payments, messages
+from auth import get_supabase_admin
 from services.cache import close_redis, get_redis
 from services.inference import close_client
-from services.llm_errors import LLMError, LLMBadRequest, LLMUnavailable
-from services.rate_limit import check_rate_limit
-from logging_config import setup_logging, logger
+from services.llm_client import get_litellm_config_state
+from services.llm_errors import LLMError, LLMBadRequest, LLMInvalidAPIKey, LLMUnavailable
+from logging_config import (
+    setup_logging,
+    logger,
+    generate_request_id,
+    is_valid_request_id,
+    log_sampled_success,
+)
 from config import get_settings
+from monitoring import init_sentry, capture_exception, continue_trace_from_headers, set_request_context
 
 
 redis_available = False
@@ -25,9 +34,30 @@ async def lifespan(app: FastAPI):
 
     """App lifespan: startup/shutdown."""
     setup_logging()
+    init_sentry(get_settings())
     
     global redis_available
     redis_available = False
+
+    config_state = get_litellm_config_state()
+    issues = config_state.get("issues")
+    if not isinstance(issues, list):
+        issues = []
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        level = str(issue.get("severity", "warning"))
+        event = "litellm_config_validation"
+        payload = {
+            "severity": level,
+            "issue_code": issue.get("code"),
+            "message": issue.get("message"),
+            "chat_enabled": bool(config_state.get("chat_enabled", False)),
+        }
+        if level == "error":
+            logger.error(event, **payload)
+        else:
+            logger.warning(event, **payload)
     
     try:
         r = await get_redis()
@@ -70,7 +100,7 @@ app.add_middleware(
     allow_origins=[origin.strip() for origin in allowed_origins],
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["content-type", "authorization"],
+    allow_headers=["content-type", "authorization", "x-request-id"],
     max_age=3600,
 )
 
@@ -85,7 +115,7 @@ async def security_headers(request: Request, call_next):
         "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://vercel.live; " 
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' blob: data: https://*.googleusercontent.com; "
-        "connect-src 'self' https://*.supabase.co https://*.groq.com https://api.groq.com; "
+        "connect-src 'self' https://*.supabase.co; "
         "font-src 'self' data:; "
         "object-src 'none'; "
         "base-uri 'self'; "
@@ -107,8 +137,26 @@ async def security_headers(request: Request, call_next):
 @app.middleware("http")
 async def structlog_middleware(request: Request, call_next):
     """Log requests with structlog."""
+    start = time.perf_counter()
+    incoming_request_id = request.headers.get("x-request-id")
+    request_id = incoming_request_id if is_valid_request_id(incoming_request_id) else generate_request_id()
+    request.state.request_id = request_id
+
     structlog.contextvars.clear_contextvars()
+    continue_trace_from_headers(
+        {
+            "sentry-trace": request.headers.get("sentry-trace", ""),
+            "baggage": request.headers.get("baggage", ""),
+        }
+    )
+    set_request_context(
+        request_id=request_id,
+        path=request.url.path,
+        method=request.method,
+        client_ip=request.client.host if request.client else None,
+    )
     structlog.contextvars.bind_contextvars(
+        request_id=request_id,
         path=request.url.path,
         method=request.method,
         client_ip=request.client.host if request.client else None,
@@ -116,22 +164,33 @@ async def structlog_middleware(request: Request, call_next):
     
     try:
         response = await call_next(request)
+        duration_ms = round((time.perf_counter() - start) * 1000, 2)
         structlog.contextvars.bind_contextvars(
             status_code=response.status_code,
+            latency_ms=duration_ms,
         )
+        response.headers["X-Request-ID"] = request_id
         if response.status_code >= 400:
-             logger.warning("http_request_failed")
+            logger.warning("http_request_failed", request_id=request_id, sampled=False)
         else:
-             logger.info("http_request_success")
+            log_sampled_success(
+                "http_request_success",
+                request_id=request_id,
+                status_code=response.status_code,
+                latency_ms=duration_ms,
+                sampled=True,
+            )
         return response
     except Exception as e:
-        logger.error("http_request_exception", error=str(e))
+        capture_exception(e, request_id=request_id, path=request.url.path, method=request.method)
+        logger.error("http_request_exception", request_id=request_id, error=str(e), sampled=False)
         raise
 
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Global error handler."""
+    capture_exception(exc, request_id=getattr(request.state, "request_id", None), path=request.url.path)
     logger.error("global_exception", error=str(exc))
     return JSONResponse(status_code=500, content={"error": "Internal server error"})
 
@@ -139,77 +198,80 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.exception_handler(LLMUnavailable)
 async def llm_unavailable_handler(request: Request, exc: LLMUnavailable):
     """Handle missing LLM configuration."""
+    capture_exception(exc, request_id=getattr(request.state, "request_id", None), handler="llm_unavailable")
     logger.warning("llm_unavailable", error=str(exc))
     return JSONResponse(
         status_code=503,
-        content={"error": "Service Unavailable", "detail": str(exc)}
+        content={
+            "error": {
+                "type": getattr(exc, "error_type", "service_degraded"),
+                "message": str(exc),
+                "retryable": getattr(exc, "retryable", False),
+            },
+            "detail": str(exc),
+        },
+    )
+
+
+@app.exception_handler(LLMInvalidAPIKey)
+async def llm_invalid_api_key_handler(request: Request, exc: LLMInvalidAPIKey):
+    """Handle invalid LiteLLM credentials."""
+    capture_exception(exc, request_id=getattr(request.state, "request_id", None), handler="llm_invalid_api_key")
+    logger.error("llm_invalid_api_key", error=str(exc))
+    return JSONResponse(
+        status_code=502,
+        content={
+            "error": {
+                "type": getattr(exc, "error_type", "invalid_api_key"),
+                "message": str(exc),
+                "retryable": getattr(exc, "retryable", False),
+            },
+            "detail": str(exc),
+        },
     )
 
 
 @app.exception_handler(LLMBadRequest)
 async def llm_bad_request_handler(request: Request, exc: LLMBadRequest):
     """Handle invalid LLM requests."""
+    capture_exception(exc, request_id=getattr(request.state, "request_id", None), handler="llm_bad_request")
     logger.error("llm_bad_request", error=str(exc))
     return JSONResponse(
         status_code=400,
-        content={"error": "Bad Request", "detail": str(exc)}
+        content={
+            "error": {
+                "type": getattr(exc, "error_type", "bad_request"),
+                "message": str(exc),
+                "retryable": getattr(exc, "retryable", False),
+            },
+            "detail": str(exc),
+        },
     )
 
 
 @app.exception_handler(LLMError)
 async def llm_error_handler(request: Request, exc: LLMError):
     """Handle general LLM errors."""
+    capture_exception(exc, request_id=getattr(request.state, "request_id", None), handler="llm_error")
     logger.error("llm_error", error=str(exc))
     return JSONResponse(
         status_code=400,
-        content={"error": "Bad Request", "detail": str(exc)}
+        content={
+            "error": {
+                "type": getattr(exc, "error_type", "llm_error"),
+                "message": str(exc),
+                "retryable": getattr(exc, "retryable", True),
+            },
+            "detail": str(exc),
+        },
     )
 
 
 # app.include_router(pinned.router, prefix="/api") removed - duplicate below
 
-async def conditional_rate_limit(request: Request, response: Response):
-    """
-    Apply rate limiting ONLY if Redis is available.
-    In development (when Redis fails), this becomes a no-op.
-    """
-    if not redis_available:
-        return
-
-    try:
-        limit = max(int(get_settings().rate_limit_per_user or 0), 0)
-        if limit <= 0:
-            return
-
-        client = getattr(request, "client", None)
-        client_ip = client.host if client else "unknown"
-        identifier = f"ip:{client_ip}"
-        result = await check_rate_limit(identifier=identifier, limit=limit, window_seconds=60)
-        if not result.allowed:
-            retry_after = max(result.retry_after, 1)
-            raise HTTPException(
-                status_code=429,
-                detail=f"Rate limit reached. Please wait {retry_after} seconds and try again.",
-                headers={"Retry-After": str(retry_after)},
-            )
-    except HTTPException:
-        raise
-    except Exception:
-        pass
-
-
-
 app.include_router(pinned.router, prefix="/api")
-app.include_router(
-    messages.router,
-    prefix="/api",
-    dependencies=[Depends(conditional_rate_limit)],
-)
-app.include_router(
-    query.router,
-    prefix="/api",
-    dependencies=[Depends(conditional_rate_limit)],
-)
+app.include_router(messages.router, prefix="/api")
+app.include_router(query.router, prefix="/api")
 app.include_router(export.router, prefix="/api")
 app.include_router(history.router, prefix="/api")
 app.include_router(webhooks.router)  # No prefix - webhooks use full path
@@ -218,40 +280,116 @@ app.include_router(payments.router, prefix="/api")
 
 @app.get("/api/health", tags=["health"])
 async def health():
-    """Health check with dependency status."""
+    """Lightweight dependency health checks with degraded state semantics."""
     settings = get_settings()
-    status: dict = {
-        "status": "ok",
-        "timestamp": datetime.utcnow().isoformat(),
-        "environment": settings.environment,
+    config_state = get_litellm_config_state()
+    litellm_base_url = str(config_state.get("base_url") or "")
+    litellm_api_key = settings.litellm_virtual_key or settings.litellm_master_key
+
+    async def check_litellm() -> dict[str, object]:
+        if not bool(config_state.get("chat_enabled", False)):
+            return {
+                "status": "degraded",
+                "latency_ms": 0,
+                "reachable": False,
+                "key_valid": False,
+                "chat_enabled": False,
+            }
+
+        url = litellm_base_url.rstrip("/")
+        if not url.endswith("/v1"):
+            url = f"{url}/v1"
+        models_url = f"{url}/models"
+
+        start = time.perf_counter()
+        try:
+            timeout = min(max(float(settings.litellm_timeout_seconds), 1.0), 2.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.get(
+                    models_url,
+                    headers={"Authorization": f"Bearer {litellm_api_key}"},
+                )
+            latency_ms = int((time.perf_counter() - start) * 1000)
+
+            if response.status_code in {401, 403}:
+                logger.error("litellm_invalid_key_detected", severity="error", status_code=response.status_code)
+                return {
+                    "status": "down",
+                    "latency_ms": latency_ms,
+                    "reachable": True,
+                    "key_valid": False,
+                    "chat_enabled": False,
+                }
+
+            if response.status_code >= 500:
+                return {
+                    "status": "down",
+                    "latency_ms": latency_ms,
+                    "reachable": True,
+                    "key_valid": True,
+                    "chat_enabled": False,
+                }
+            return {
+                "status": "ok",
+                "latency_ms": latency_ms,
+                "reachable": True,
+                "key_valid": True,
+                "chat_enabled": True,
+            }
+        except Exception as exc:
+            logger.warning("litellm_health_probe_failed", severity="warning", error=str(exc))
+            return {
+                "status": "down",
+                "latency_ms": 0,
+                "reachable": False,
+                "key_valid": bool(litellm_api_key),
+                "chat_enabled": False,
+            }
+
+    async def check_rate_limit() -> dict[str, str]:
+        try:
+            redis = await asyncio.wait_for(get_redis(), timeout=0.35)
+            await asyncio.wait_for(redis.ping(), timeout=0.35)
+            return {"status": "ok"}
+        except Exception as exc:
+            is_prod = settings.environment == "production"
+            status = "down" if is_prod else "degraded"
+            log_fn = logger.error if is_prod else logger.warning
+            log_fn("rate_limit_health_probe_failed", severity="error" if is_prod else "warning", error=str(exc))
+            return {"status": status}
+
+    async def check_db() -> dict[str, str]:
+        try:
+            if not settings.supabase_url or not settings.supabase_service_role_key:
+                logger.warning("db_health_degraded_missing_config", severity="warning")
+                return {"status": "degraded"}
+            supabase = await asyncio.wait_for(asyncio.to_thread(get_supabase_admin), timeout=0.35)
+            return {"status": "ok" if supabase else "degraded"}
+        except Exception as exc:
+            logger.error("db_health_probe_failed", severity="error", error=str(exc))
+            return {"status": "down"}
+
+    litellm, rate_limit, db = await asyncio.gather(check_litellm(), check_rate_limit(), check_db())
+
+    component_statuses = [
+        str(litellm.get("status", "down")),
+        rate_limit["status"],
+        db["status"],
+    ]
+    overall = "ok"
+    if "down" in component_statuses:
+        overall = "down"
+    elif "degraded" in component_statuses:
+        overall = "degraded"
+
+    return {
+        "status": overall,
+        "litellm": {"status": litellm["status"], "latency_ms": litellm["latency_ms"]},
+        "rate_limit": {"status": rate_limit["status"]},
+        "db": {"status": db["status"]},
+        "chat_enabled": bool(litellm.get("chat_enabled", False)),
+        "key_valid": bool(litellm.get("key_valid", False)),
     }
-
-
-    try:
-        r = await get_redis()
-        await r.ping()
-        status["redis"] = "✓ healthy"
-    except Exception as e:
-        status["redis"] = f"✗ error: {str(e)}"
-        is_prod = settings.environment == "production"
-        if is_prod:
-
-            return JSONResponse(status_code=503, content=status)
-
-    try:
-        from google import genai
-        status["google_genai"] = "✓ installed"
-    except Exception as e:
-        status["google_genai"] = f"✗ {str(e)}"
-
-    status["dodo"] = {
-        "payment_link_id": "configured" if settings.dodo_payment_link_id else "missing",
-        "webhook_secret": "configured" if settings.dodo_webhook_secret else (
-            "fallback_api_key" if settings.dodo_api_key else "missing"
-        ),
-    }
-
-    return status
 
 
 # Catch-all route for debugging (should be last)

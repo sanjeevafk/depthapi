@@ -7,9 +7,7 @@
         "dev": "vite",
         "dev:full": "node scripts/dev-full.mjs",
         "api:dev": "cd api && ../.venv/bin/python -m uvicorn main:app --reload --port 8000",
-        "api:test": "cd api && ../.venv/bin/python -m pytest",
-        "api:test:model-provider": "cd api && ../.venv/bin/python -m pytest tests/test_model_provider.py",
-        "api:install": ".venv/bin/python -m pip install -r api/requirements.txt",
+        "api:test": "cross-env PYTHONPATH=. .venv/bin/python -m pytest api/tests",        "api:install": ".venv/bin/python -m pip install -r api/requirements.txt",
         "build": "node node_modules/vite/bin/vite.js build",
         "vercel-build": "npm run build",
         "type-check": "tsc -b",
@@ -17,9 +15,11 @@
         "format": "prettier --write src/",
         "format:check": "prettier --check src/",
         "preview": "vite preview",
-        "test": "vitest"
+        "test": "vitest",
+        "test:smoke": "playwright test --reporter=line"
     },
     "dependencies": {
+        "@sentry/browser": "^9.39.0",
         "@supabase/supabase-js": "^2.91.0",
         "@tanstack/query-sync-storage-persister": "^5.69.0",
         "@tanstack/react-query": "^5.69.0",
@@ -27,7 +27,7 @@
         "framer-motion": "^12.28.1",
         "lucide-react": "^0.562.0",
         "marked": "^17.0.1",
-        "mermaid": "^11.4.1",
+        "mermaid": "^11.13.0",
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
         "react-markdown": "^10.1.0",
@@ -38,6 +38,7 @@
     },
     "devDependencies": {
         "@eslint/js": "^9.17.0",
+        "@playwright/test": "^1.53.0",
         "@testing-library/jest-dom": "^6.4.2",
         "@testing-library/react": "^14.2.1",
         "@types/node": "^25.0.9",
@@ -45,6 +46,7 @@
         "@types/react-dom": "^18.2.17",
         "@vitejs/plugin-react": "^4.2.1",
         "autoprefixer": "^10.4.17",
+        "cross-env": "^10.1.0",
         "eslint": "^9.17.0",
         "eslint-plugin-react-hooks": "^5.0.0",
         "eslint-plugin-react-refresh": "^0.4.14",
@@ -60,7 +62,7 @@
     },
     "overrides": {
         "ajv": "^6.14.0",
-        "dompurify": "3.2.7",
+        "dompurify": "3.3.2",
         "minimatch": "^9.0.7",
         "rollup": "^4.58.1"
     }

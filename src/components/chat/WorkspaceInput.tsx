@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, Paperclip } from "lucide-react";
 import DepthDropdown from "./DepthDropdown";
 import { useChatStore } from "../../stores/useChatStore";
@@ -9,6 +9,8 @@ interface WorkspaceInputProps {
   workspace: Workspace;
   depthLevel: DepthLevel;
   onDepthChange: (level: DepthLevel) => void;
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
 const WORKSPACE_PLACEHOLDERS: Record<Workspace, string> = {
@@ -27,18 +29,22 @@ export default function WorkspaceInput({
   workspace,
   depthLevel,
   onDepthChange,
+  disabled = false,
+  disabledReason,
 }: WorkspaceInputProps): JSX.Element {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const baseHeightRef = useRef<number | null>(null);
   const sendMessage = useChatStore((state) => state.sendMessage);
   const isLoading = useChatStore((state) => state.isLoading);
   const currentPromptMode = useChatStore((state) => state.currentPromptMode);
+  const MAX_TEXTAREA_HEIGHT = 180;
 
-  const isSendDisabled = isLoading || value.trim().length === 0;
+  const isSendDisabled = disabled || isLoading || value.trim().length === 0;
 
   const placeholder = useMemo(
-    () => WORKSPACE_PLACEHOLDERS[workspace],
-    [workspace],
+    () => (disabled && disabledReason ? disabledReason : WORKSPACE_PLACEHOLDERS[workspace]),
+    [disabled, disabledReason, workspace],
   );
 
   const handleSend = async () => {
@@ -60,6 +66,20 @@ export default function WorkspaceInput({
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    if (baseHeightRef.current === null) {
+      baseHeightRef.current = textarea.scrollHeight;
+    }
+    textarea.style.height = "auto";
+    const nextHeight = Math.min(textarea.scrollHeight, MAX_TEXTAREA_HEIGHT);
+    const minHeight = baseHeightRef.current ?? nextHeight;
+    textarea.style.height = `${Math.max(minHeight, nextHeight)}px`;
+    textarea.style.overflowY =
+      textarea.scrollHeight > MAX_TEXTAREA_HEIGHT ? "auto" : "hidden";
+  }, [value]);
+
   return (
     <div className="sticky bottom-0 z-20 bg-gradient-to-t from-slate-100/95 via-slate-100/70 to-transparent px-4 pb-4 pt-8 dark:from-dark-900/95 dark:via-dark-900/70 sm:px-6 sm:pb-6">
       <div className="mx-auto w-full max-w-3xl">
@@ -77,6 +97,7 @@ export default function WorkspaceInput({
             }}
             placeholder={placeholder}
             aria-label="Message input"
+            disabled={disabled}
             className="w-full resize-none bg-transparent text-base text-slate-700 placeholder:text-slate-400 focus:outline-none dark:text-slate-200 dark:placeholder:text-slate-500"
           />
 
