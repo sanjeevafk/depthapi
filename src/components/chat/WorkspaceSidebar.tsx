@@ -157,7 +157,14 @@ export default function WorkspaceSidebar({
                   aria-current={isActive ? "page" : undefined}
                 >
                   <Icon className="h-4 w-4" />
-                  <span className={`inline-block ${labelClassName}`}>{option.label}</span>
+                  <span className={`inline-flex min-w-0 flex-col ${labelClassName}`}>
+                    <span className="truncate text-sm font-medium leading-tight">
+                      {option.label}
+                    </span>
+                    <span className="truncate text-[11px] leading-tight text-slate-500 dark:text-slate-400">
+                      {option.description}
+                    </span>
+                  </span>
                   {isCollapsed && (
                     <span className="pointer-events-none absolute left-full top-1/2 ml-3 hidden -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-xs text-white opacity-0 shadow-sm transition group-hover:opacity-100 md:block">
                       {option.label}

@@ -57,11 +57,34 @@ describe("WorkspaceSidebar", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Socratic" }));
+    fireEvent.click(screen.getByRole("button", { name: /Socratic/i }));
 
     expect(onNewThread).toHaveBeenCalledTimes(1);
     expect(onWorkspaceChange).toHaveBeenCalledWith("socratic");
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows persistent workspace descriptions", () => {
+    render(
+      <WorkspaceSidebar
+        workspace="learn"
+        conversations={conversations}
+        currentConversationId="conv-1"
+        isOpen
+        isCollapsed={false}
+        userName="Tester"
+        onClose={onClose}
+        onToggleCollapse={onToggleCollapse}
+        onNewThread={onNewThread}
+        onWorkspaceChange={onWorkspaceChange}
+        onSelectConversation={onSelectConversation}
+        onDeleteConversation={onDeleteConversation}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /Learn\s+Quick\s+Learning/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Socratic\s+Guided\s+Thinking/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Technical\s+Deep\s+Analysis/i })).toBeInTheDocument();
   });
 
   it("deletes a conversation only after confirmation", () => {

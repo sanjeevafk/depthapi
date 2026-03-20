@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 import time
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -17,6 +18,42 @@ from services.llm_client import close_llm_client, create_chat_completion, stream
 async def close_client():
     """Close shared LLM client resources."""
     await close_llm_client()
+
+
+def _normalize_question_signature(question: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", question.lower()).strip()
+
+
+def _extract_socratic_questions(response: str) -> list[str]:
+    if not isinstance(response, str) or not response.strip():
+        return []
+
+    candidates = [segment.strip() for segment in re.findall(r"[^?]*\?", response)]
+    if not candidates:
+        return []
+
+    unique_questions: list[str] = []
+    seen_signatures: set[str] = set()
+    for question in candidates:
+        signature = _normalize_question_signature(question)
+        if not signature or signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
+        unique_questions.append(question)
+
+    return unique_questions
+
+
+def _enforce_socratic_response_constraints(response: str) -> str:
+    """Return a concise Socratic reply capped to 2-3 progressive questions."""
+    questions = _extract_socratic_questions(response)
+    if not questions:
+        return response
+
+    constrained = "\n".join(questions[:3])
+    return f"{constrained}\n\nShare your answer, and I will guide the next step."
+
+
 def _extract_usage_dict(usage_obj) -> dict[str, int] | None:
     if usage_obj is None:
         return None
@@ -159,7 +196,8 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
             topic=topic,
             conversation_context=kwargs.get("conversation_context", "No prior context."),
         )
-        return await call_model(model or "socratic", prompt, **kwargs)
+        response = await call_model(model or "socratic", prompt, **kwargs)
+        return _enforce_socratic_response_constraints(response)
 
     template = PROMPTS.get(level)
     if not template:
@@ -214,14 +252,29 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
     )
     stream_telemetry: dict[str, object] = {}
     stream_start = time.perf_counter()
-    async for chunk in stream_chat_completion(
-        model=alias,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=kwargs.get("temperature", 0.7),
-        request_id=request_id,
-        telemetry_sink=stream_telemetry,
-    ):
-        yield chunk
+    if mode == SOCRATIC_MODE:
+        socratic_chunks: list[str] = []
+        async for chunk in stream_chat_completion(
+            model=alias,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=kwargs.get("temperature", 0.7),
+            request_id=request_id,
+            telemetry_sink=stream_telemetry,
+        ):
+            socratic_chunks.append(chunk)
+
+        constrained_response = _enforce_socratic_response_constraints("".join(socratic_chunks))
+        for index in range(0, len(constrained_response), 400):
+            yield constrained_response[index : index + 400]
+    else:
+        async for chunk in stream_chat_completion(
+            model=alias,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=kwargs.get("temperature", 0.7),
+            request_id=request_id,
+            telemetry_sink=stream_telemetry,
+        ):
+            yield chunk
 
     stream_duration_ms = round((time.perf_counter() - stream_start) * 1000, 2)
     model_inference_ms = stream_telemetry.get("model_inference_ms")
