@@ -15,6 +15,7 @@ const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi
 const BEARER_PATTERN = /(bearer\s+)[a-z0-9._-]+/gi
 
 let monitoringInitialized = false
+let windowListenersAttached = false
 
 const DEFAULT_TRACE_TARGETS = ['localhost', '/api', import.meta.env.VITE_API_URL || '']
 const NOISE_ERROR_PATTERNS = [
@@ -112,6 +113,32 @@ export const initMonitoring = (): boolean => {
         beforeSend: createBeforeSend,
         beforeBreadcrumb: createBeforeBreadcrumb,
     })
+
+    if (typeof window !== 'undefined' && !windowListenersAttached) {
+        window.addEventListener('error', (event: ErrorEvent) => {
+            if (!monitoringInitialized) return
+            const error = event.error instanceof Error
+                ? event.error
+                : new Error(event.message || 'Unhandled window error')
+            captureFrontendError(error, { source: 'window.error', message: event.message })
+            if (typeof event.preventDefault === 'function') {
+                event.preventDefault()
+            }
+        })
+
+        window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
+            if (!monitoringInitialized) return
+            const error = event.reason instanceof Error
+                ? event.reason
+                : new Error(String(event.reason || 'Unhandled promise rejection'))
+            captureFrontendError(error, { source: 'window.unhandledrejection' })
+            if (typeof event.preventDefault === 'function') {
+                event.preventDefault()
+            }
+        })
+
+        windowListenersAttached = true
+    }
 
     monitoringInitialized = true
     return true

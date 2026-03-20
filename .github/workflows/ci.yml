@@ -33,6 +33,11 @@ jobs:
           source .venv/bin/activate
           npm run api:install
 
+      - name: Install backend test dependencies
+        run: |
+          source .venv/bin/activate
+          .venv/bin/python -m pip install -r api/requirements-dev.txt
+
       - name: Lint
         run: npm run lint
 

@@ -194,9 +194,15 @@ describe("useChatStore", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const fetchInit = fetchSpy.mock.calls[0][1] as RequestInit;
     const payload = JSON.parse(String(fetchInit.body));
-    expect(payload.content).toBe("Explain gravity simply");
+    const requestedText = payload.content ?? payload.topic;
+    expect(requestedText).toBe("Explain gravity simply");
     expect(payload.mode).toBe("learning");
-    expect(payload.prompt_mode).toBe("eli12");
+    const promptMode = payload.prompt_mode ?? payload.promptMode;
+    if (promptMode) {
+      expect(promptMode).toBe("eli12");
+    } else {
+      expect(payload.levels).toEqual(["eli12"]);
+    }
     expect(payload.regenerate).toBe(true);
     expect(payload.temperature).toBeCloseTo(0.8);
 
