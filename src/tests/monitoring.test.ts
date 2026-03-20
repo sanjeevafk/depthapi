@@ -4,7 +4,9 @@ const sentryMocks = vi.hoisted(() => {
   const init = vi.fn();
   const captureMessage = vi.fn();
   const captureException = vi.fn();
-  const browserTracingIntegration = vi.fn(() => ({ name: "browserTracingIntegration" }));
+  const browserTracingIntegration = vi.fn(() => ({
+    name: "browserTracingIntegration",
+  }));
   const getTraceData = vi.fn(() => ({
     "sentry-trace": "abc123-def456",
     baggage: "sentry-release=test",
@@ -12,29 +14,33 @@ const sentryMocks = vi.hoisted(() => {
   const setUser = vi.fn();
   const setTag = vi.fn();
   const setContext = vi.fn();
-  const withScope = vi.fn((callback: (scope: {
-    setExtra: (key: string, value: unknown) => void;
-    setTag: (key: string, value: string) => void;
-    setLevel: (level: string) => void;
-  }) => void) => {
-    const extras: Record<string, unknown> = {};
-    const tags: Record<string, string> = {};
-    let level = "";
+  const withScope = vi.fn(
+    (
+      callback: (scope: {
+        setExtra: (key: string, value: unknown) => void;
+        setTag: (key: string, value: string) => void;
+        setLevel: (level: string) => void;
+      }) => void,
+    ) => {
+      const extras: Record<string, unknown> = {};
+      const tags: Record<string, string> = {};
+      let level = "";
 
-    callback({
-      setExtra: (key, value) => {
-        extras[key] = value;
-      },
-      setTag: (key, value) => {
-        tags[key] = value;
-      },
-      setLevel: (nextLevel) => {
-        level = nextLevel;
-      },
-    });
+      callback({
+        setExtra: (key, value) => {
+          extras[key] = value;
+        },
+        setTag: (key, value) => {
+          tags[key] = value;
+        },
+        setLevel: (nextLevel) => {
+          level = nextLevel;
+        },
+      });
 
-    return { extras, tags, level };
-  });
+      return { extras, tags, level };
+    },
+  );
 
   return {
     init,
@@ -116,7 +122,9 @@ describe("frontend monitoring", () => {
       status: "failed",
     });
 
-    expect(sentryMocks.captureMessage).toHaveBeenCalledWith("telemetry.payment_checkout_error");
+    expect(sentryMocks.captureMessage).toHaveBeenCalledWith(
+      "telemetry.payment_checkout_error",
+    );
     expect(receivedDetail).toEqual({
       event: "payment_checkout_error",
       payload: {

@@ -14,7 +14,6 @@ import services.cache as cache_module
 import services.search as search_module
 import services.llm_client as llm_client_module
 import services.inference as inference_module
-import services.ensemble as ensemble_module
 import services.rate_limit as rate_limit_module
 
 
@@ -213,7 +212,6 @@ def patch_llm_client(monkeypatch):
     monkeypatch.setattr(llm_client_module, "stream_chat_completion", fake_stream_chat_completion)
     monkeypatch.setattr(inference_module, "create_chat_completion", fake_create_chat_completion)
     monkeypatch.setattr(inference_module, "stream_chat_completion", fake_stream_chat_completion)
-    monkeypatch.setattr(ensemble_module, "create_chat_completion", fake_create_chat_completion)
 
 
 @pytest.fixture(autouse=True)

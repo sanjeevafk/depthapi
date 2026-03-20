@@ -63,28 +63,6 @@ Begin the Socratic dialogue now. Speak warmly and encouragingly. Use short quest
 Output ONLY the Socratic questions and gentle guidance. No "Thought:", no markdown headers, no final summary.""" ,
 }
 
-# ====================== ENSEMBLE JUDGE ======================
-JUDGE_PROMPT = """You are an expert judge evaluating multiple explanations for the same topic: "{topic}"
-
-{responses}
-
-Rate each response (0-5) on:
-- Accuracy & correctness
-- Clarity & age-appropriateness
-- Engagement & memorability
-- Conciseness (no fluff)
-- Originality / vividness
-
-Then synthesize the strongest final response for the user.
-
-Output valid JSON only:
-{{
-  "best_index": 0,
-  "scores": [5, 4, 3],
-  "reason": "brief one-sentence explanation why this one won",
-  "final_response": "the final response to return to the user"
-}}"""
-
 # ====================== TECHNICAL DEPTH MODE ======================
 TECHNICAL_DEPTH_PROMPT = """
 You are a world-class technical writer and researcher.
@@ -117,12 +95,101 @@ Instructions:
 CRITICAL: Base everything strictly on the given context. If context is insufficient, say so clearly in the summary.
 """
 
-# ====================== MODEL CONFIGS ======================
-LEARNING_CANDIDATE_MODELS = [
-    "learning-candidate-1",
-    "learning-candidate-2",
-]
-JUDGE_MODEL = "z-ai/glm-4.5-air:free"
-
 # Helper for easy access
 ALL_MODES = list(PROMPTS.keys())
+
+# ====================== TECHNICAL MODE v2 (structured, no search) ======================
+
+_TECHNICAL_DEEPER_LAYER = """
+## Deeper Layer
+Provide mathematical detail, formal definitions, or mechanistic precision.
+Be exact. Use notation where it helps clarity.
+"""
+
+_TECHNICAL_DIAGRAM_INSTRUCTION = """
+## Visual
+Include a mermaid code block using a {diagram_type} diagram.
+The diagram must represent the core mechanism described above - not restate
+the text. Keep it under 15 nodes. Use short, clear labels.
+Example format:
+```mermaid
+{diagram_type}
+    ...
+```
+"""
+
+TECHNICAL_STRUCTURED_PROMPT = """You are a precise technical explainer with deep \
+expertise. Your goal is clear understanding, not exhaustive coverage.
+
+Respond using EXACTLY this markdown structure. Do not skip sections.
+Do not add sections not listed here.
+
+## Core Idea
+2-3 sentences. The single most important thing to understand.
+
+## First Principles Breakdown
+Build from fundamentals. No assumed knowledge beyond basic concepts.
+Use numbered steps if the concept is sequential.
+
+## Intuition
+One strong analogy or mental model. Make it concrete and memorable.
+{deeper_layer_instruction}
+## Edge Cases / Limitations
+What breaks this model. Where it fails or misleads. Be specific.
+
+## Connections
+2-3 related concepts that illuminate this one. One sentence each.
+{diagram_instruction}
+Topic: {topic}
+
+Respond now. Do not restate these instructions."""
+
+TECHNICAL_COMPARE_PROMPT = """You are a precise technical analyst. Your goal is a
+clear, structured comparison with explicit tradeoffs.
+
+Respond using EXACTLY this markdown structure for topic: {topic}
+
+## Option A
+**Summary:** [1-2 sentences]
+**Strengths:** [2-3 bullets]
+**Weaknesses:** [2-3 bullets]
+
+## Option B
+**Summary:** [1-2 sentences]
+**Strengths:** [2-3 bullets]
+**Weaknesses:** [2-3 bullets]
+
+## Key Differences
+- [bullet]
+- [bullet]
+- [bullet]
+
+## Recommendation
+One short paragraph. Be decisive and conditional when appropriate.
+
+Do not add sections not listed above. Respond now."""
+
+TECHNICAL_BRAINSTORM_PROMPT = """You are a precise technical advisor exploring \
+design space. Your goal is actionable, comparative thinking.
+
+Respond using EXACTLY this markdown structure for topic: {topic}
+
+## Approach 1: Simple / Practical
+**Idea:** [core approach in one sentence]
+**How it works:** [2-3 sentences]
+**Tradeoffs:** [what you gain, what you give up]
+**When to use:** [specific conditions]
+
+## Approach 2: Scalable / Advanced
+**Idea:** [core approach in one sentence]
+**How it works:** [2-3 sentences]
+**Tradeoffs:** [what you gain, what you give up]
+**When to use:** [specific conditions]
+
+## Approach 3: Unconventional
+**Idea:** [core approach in one sentence]
+**How it works:** [2-3 sentences]
+**Tradeoffs:** [what you gain, what you give up]
+**When to use:** [specific conditions]
+{diagram_instruction}
+Do not add sections not listed above. Respond now."""

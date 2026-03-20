@@ -57,7 +57,10 @@ export default function ChatPage(): JSX.Element {
   const handleUpgrade = async () => {
     try {
       await createCheckoutSession((error) => {
-        notifyToast(error.message || "Unable to start checkout. Please try again.", "error");
+        notifyToast(
+          error.message || "Unable to start checkout. Please try again.",
+          "error",
+        );
       });
     } catch {
       notifyToast("Unable to start checkout. Please try again.", "error");
@@ -121,9 +124,10 @@ export default function ChatPage(): JSX.Element {
         setChatEnabled(backendChatEnabled);
 
         if (!backendChatEnabled) {
-          const message = health.key_valid === false
-            ? "Chat is temporarily unavailable because LiteLLM credentials are invalid."
-            : "Chat is temporarily unavailable because LiteLLM is not configured.";
+          const message =
+            health.key_valid === false
+              ? "Chat is temporarily unavailable because LiteLLM credentials are invalid."
+              : "Chat is temporarily unavailable because LiteLLM is not configured.";
           setHealthMessage(message);
           return;
         }
@@ -132,7 +136,9 @@ export default function ChatPage(): JSX.Element {
       } catch {
         if (disposed) return;
         setChatEnabled(false);
-        setHealthMessage("Chat is temporarily unavailable while health checks are recovering.");
+        setHealthMessage(
+          "Chat is temporarily unavailable while health checks are recovering.",
+        );
       }
     };
 

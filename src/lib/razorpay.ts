@@ -1,67 +1,67 @@
 interface RazorpayOptions {
-    key: string;
-    amount: number;
-    currency: string;
-    name: string;
-    description: string;
-    handler: (response: unknown) => void;
-    prefill?: {
-        name?: string;
-        email?: string;
-        contact?: string;
-    };
-    theme?: {
-        color?: string;
-    };
+  key: string;
+  amount: number;
+  currency: string;
+  name: string;
+  description: string;
+  handler: (response: unknown) => void;
+  prefill?: {
+    name?: string;
+    email?: string;
+    contact?: string;
+  };
+  theme?: {
+    color?: string;
+  };
 }
 
 interface RazorpayInstance {
-    open: () => void;
-    close: () => void;
+  open: () => void;
+  close: () => void;
 }
 
 declare global {
-    interface Window {
-        Razorpay: new (options: RazorpayOptions) => RazorpayInstance;
-    }
+  interface Window {
+    Razorpay: new (options: RazorpayOptions) => RazorpayInstance;
+  }
 }
 
 export const loadRazorpay = (): Promise<boolean> => {
-    return new Promise((resolve) => {
-        if (window.Razorpay) {
-            resolve(true);
-            return;
-        }
-        const script = document.createElement('script');
-        script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-        script.onload = () => resolve(true);
-        script.onerror = () => resolve(false);
-        document.body.appendChild(script);
-    });
+  return new Promise((resolve) => {
+    if (window.Razorpay) {
+      resolve(true);
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
 };
 
 export const openCheckout = async (
-    onSuccess: () => void,
-    onError: (error: Error) => void
+  onSuccess: () => void,
+  onError: (error: Error) => void,
 ) => {
-    // MOCK FLOW IF KEYS ARE MISSING
-    // Since we don't have keys in this environment yet, we simulate the flow
-    const MOCK_MODE = true;
+  // MOCK FLOW IF KEYS ARE MISSING
+  // Since we don't have keys in this environment yet, we simulate the flow
+  const MOCK_MODE = true;
 
-    if (MOCK_MODE) {
-        console.log('Mocking Razorpay Checkout...');
-        setTimeout(() => {
-            const confirm = window.confirm('Simulate successful payment?');
-            if (confirm) {
-                onSuccess();
-            } else {
-                onError(new Error('Payment cancelled by user'));
-            }
-        }, 1000);
-        return;
-    }
+  if (MOCK_MODE) {
+    console.log("Mocking Razorpay Checkout...");
+    setTimeout(() => {
+      const confirm = window.confirm("Simulate successful payment?");
+      if (confirm) {
+        onSuccess();
+      } else {
+        onError(new Error("Payment cancelled by user"));
+      }
+    }, 1000);
+    return;
+  }
 
-    /* 
+  /* 
     // REAL IMPLEMENTATION TO BE ENABLED WHEN KEYS ARE PRESENT
     const res = await loadRazorpay();
     if (!res) {

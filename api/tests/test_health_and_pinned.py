@@ -129,7 +129,7 @@ async def test_invalid_litellm_key_returns_structured_error(app_client, monkeypa
     async def invalid_key(*_args, **_kwargs):
         raise LLMInvalidAPIKey("LiteLLM rejected credentials.")
 
-    monkeypatch.setattr(query_module, "ensemble_generate", invalid_key)
+    monkeypatch.setattr(query_module, "generate_explanation", invalid_key)
 
     resp = await app_client.post(
         "/api/query",
