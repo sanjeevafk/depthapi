@@ -16,9 +16,13 @@ class Settings(BaseSettings):
     litellm_timeout_seconds: int = 60
 
     stream_max_seconds: int = 25
+    technical_stream_max_seconds: int = 45
     stream_heartbeat_seconds: int = 2
     stream_start_timeout_seconds: int = 2
+    technical_stream_start_timeout_seconds: float = 6.0
     stream_idempotency_ttl_seconds: int = 90
+    stream_idempotency_stale_seconds: int = 20
+    stream_fallback_budget_seconds: int = 6
     trusted_proxies: str = ""
 
     redis_url: str = "redis://localhost:6379"

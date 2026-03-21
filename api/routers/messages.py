@@ -169,10 +169,15 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         max(int(getattr(config_settings, "stream_idempotency_ttl_seconds", 90)), 60),
         120,
     )
+    idempotency_stale_seconds = max(
+        5,
+        min(int(getattr(config_settings, "stream_idempotency_stale_seconds", 20)), idempotency_ttl_seconds),
+    )
     trusted_proxies = _trusted_proxies_from_settings(config_settings)
 
     idempotency_key = _idempotency_key(user_id, client_message_id)
     idempotency_payload = await cache_get(idempotency_key)
+    idempotency_claimed = False
     if idempotency_payload:
         status = idempotency_payload.get("status")
         cached_response = idempotency_payload.get("response")
@@ -189,7 +194,25 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             )
 
         if status == "in_progress":
-            raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
+            started_at = idempotency_payload.get("started_at")
+            now_ts = int(time.time())
+            started_ts = int(started_at) if isinstance(started_at, (int, float)) else now_ts
+            age_seconds = max(now_ts - started_ts, 0)
+            if age_seconds < idempotency_stale_seconds:
+                raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
+            reclaimed = await cache_set(
+                idempotency_key,
+                {
+                    "status": "reclaimed",
+                    "reclaimed_at": now_ts,
+                    "previous_started_at": started_ts,
+                    "message_id": client_message_id,
+                },
+                ttl=idempotency_ttl_seconds,
+            )
+            if not reclaimed:
+                raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
+            idempotency_claimed = True
 
     estimated_tokens = estimate_tokens_for_text(content)
     client_ip = _resolve_client_ip(request, trusted_proxies=trusted_proxies)
@@ -235,8 +258,15 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     if selected_mode == LEARNING_MODE and not is_prod:
         stream_start_timeout_seconds = max(raw_start_timeout, float(stream_max_seconds))
     elif selected_mode == TECHNICAL_MODE:
-        technical_cap = max(2.0, min(float(stream_max_seconds) * 0.6, 8.0))
-        stream_start_timeout_seconds = min(max(raw_start_timeout, 2.0), technical_cap)
+        stream_max_seconds = max(
+            stream_max_seconds,
+            int(getattr(config_settings, "technical_stream_max_seconds", 45)),
+        )
+        technical_start_timeout = float(
+            getattr(config_settings, "technical_stream_start_timeout_seconds", max(raw_start_timeout, 6.0))
+        )
+        technical_cap = max(4.0, min(float(stream_max_seconds) * 0.75, 20.0))
+        stream_start_timeout_seconds = min(max(technical_start_timeout, 2.0), technical_cap)
         fallback_budget_seconds = max(fallback_budget_seconds, 4.0)
     else:
         cap = 2.0 if is_prod else 5.0
@@ -268,12 +298,16 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
 
     idempotency_record = {
         "status": "in_progress",
+        "started_at": int(time.time()),
         "message_id": client_message_id,
         "assistant_client_id": assistant_client_id,
         "mode": selected_mode,
         "prompt_mode": prompt_mode,
     }
-    reserved = await cache_set_if_absent(idempotency_key, idempotency_record, idempotency_ttl_seconds)
+    if idempotency_claimed:
+        reserved = await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
+    else:
+        reserved = await cache_set_if_absent(idempotency_key, idempotency_record, idempotency_ttl_seconds)
     if not reserved:
         existing = await cache_get(idempotency_key)
         if existing:
@@ -288,7 +322,13 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     prompt_mode=existing.get("prompt_mode") or prompt_mode,
                 )
             if status == "in_progress":
-                raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
+                started_at = existing.get("started_at")
+                now_ts = int(time.time())
+                started_ts = int(started_at) if isinstance(started_at, (int, float)) else now_ts
+                age_seconds = max(now_ts - started_ts, 0)
+                if age_seconds < idempotency_stale_seconds:
+                    raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
+                await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
             if status == "failed":
                 await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
 
@@ -413,6 +453,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         abort_reason = None
         tokens_after_abort = 0
         timed_out = False
+        response_truncated = False
         fallback_used = False
         start_timeout = False
         telemetry_sink: dict[str, Any] = {}
@@ -722,7 +763,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             )
             if not aborted:
                 if full_content.strip():
-                    if not req.regenerate:
+                    if not req.regenerate and not response_truncated:
                         await cache_set(cache_key, {"response": full_content}, ttl=cache_ttl_seconds)
                     await cache_set(
                         idempotency_key,
