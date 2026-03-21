@@ -41,6 +41,36 @@ async def test_query_stream_fallback_on_start_timeout(app_client, monkeypatch, t
 
 
 @pytest.mark.asyncio
+async def test_query_stream_fallback_on_stream_exception(app_client, monkeypatch, test_settings):
+    test_settings.stream_start_timeout_seconds = 0.1
+    test_settings.stream_max_seconds = 2
+    test_settings.stream_heartbeat_seconds = 0.05
+
+    async def crashing_stream(*_args, **_kwargs):
+        raise RuntimeError("upstream stream failure")
+        yield "unreachable"
+
+    async def fallback_generate(*_args, **_kwargs):
+        return "fallback after stream exception"
+
+    monkeypatch.setattr(query_module, "generate_stream_explanation", crashing_stream)
+    monkeypatch.setattr(query_module, "generate_explanation", fallback_generate)
+    monkeypatch.setattr(query_module, "get_settings", lambda: test_settings)
+
+    resp = await app_client.post(
+        "/api/query/stream",
+        json={"topic": "test", "levels": ["eli5"], "mode": "learning"},
+    )
+
+    assert resp.status_code == 200
+    text = resp.text
+    assert "event: chunk" in text
+    assert "fallback after stream exception" in text
+    assert "event: done" in text
+    assert "event: error" not in text
+
+
+@pytest.mark.asyncio
 async def test_messages_idempotency_replay(app_client, monkeypatch, test_settings):
     test_settings.stream_start_timeout_seconds = 0.5
     test_settings.stream_max_seconds = 2
@@ -92,6 +122,62 @@ async def test_messages_idempotency_replay(app_client, monkeypatch, test_setting
         assert replay.status_code == 200
         assert "\"replay\":true" in replay.text.replace(" ", "")
         assert len(fake_supabase.inserts) == 2
+    finally:
+        main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
+
+
+@pytest.mark.asyncio
+async def test_messages_fallback_on_stream_exception(app_client, monkeypatch, test_settings):
+    test_settings.stream_start_timeout_seconds = 0.1
+    test_settings.stream_max_seconds = 2
+    test_settings.stream_heartbeat_seconds = 0.05
+
+    user = SimpleNamespace(id="user-stream-fallback", email="user@example.com", user_metadata={})
+
+    async def fake_verify_token():
+        return {"user": user}
+
+    async def fake_is_pro(*_args, **_kwargs):
+        return False
+
+    async def crashing_stream(*_args, **_kwargs):
+        raise RuntimeError("stream exploded")
+        yield "unreachable"
+
+    async def fallback_generate(*_args, **_kwargs):
+        return "message fallback response"
+
+    fake_supabase = FakeSupabase(
+        responses={
+            "conversations": {"id": "conv-fallback", "user_id": user.id, "mode": "socratic", "settings": {}},
+            "messages": [{"id": "assistant-fallback"}],
+            "users": {"is_pro": False},
+        }
+    )
+
+    main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
+    monkeypatch.setattr(messages_module, "check_is_pro", fake_is_pro)
+    monkeypatch.setattr(messages_module, "generate_stream_explanation", crashing_stream)
+    monkeypatch.setattr(messages_module, "generate_explanation", fallback_generate)
+    monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: fake_supabase)
+    monkeypatch.setattr(messages_module, "get_settings", lambda: test_settings)
+
+    try:
+        payload = {
+            "conversation_id": "conv-fallback",
+            "content": "hello",
+            "client_generated_id": "3d204b5f-fbf4-4ef7-b223-5f58eab1e7bf",
+            "assistant_client_id": "4f8ae3b6-d23f-4b17-9405-118fd7f79ece",
+            "mode": "socratic",
+            "prompt_mode": "eli5",
+        }
+
+        resp = await app_client.post("/api/messages", json=payload)
+        assert resp.status_code == 200
+        assert "event: delta" in resp.text
+        assert "message fallback response" in resp.text
+        assert "event: done" in resp.text
+        assert "event: error" not in resp.text
     finally:
         main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
 

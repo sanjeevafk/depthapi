@@ -1331,7 +1331,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         });
 
         const shouldFallback =
-          response.status === 404 || response.status === 405;
+          response.status === 404 ||
+          response.status === 405 ||
+          response.status >= 500;
         if (shouldFallback) {
           await fallbackToQueryStream("fallback");
           return;

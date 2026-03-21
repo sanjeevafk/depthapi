@@ -650,6 +650,53 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 retry=bool(req.regenerate),
                 sampled=False,
             )
+            if not aborted and not full_content.strip():
+                fallback_used = True
+                try:
+                    fallback_content = await asyncio.wait_for(
+                        generate_explanation(
+                            content,
+                            prompt_mode,
+                            mode=selected_mode,
+                            temperature=request_temperature,
+                            regenerate=req.regenerate,
+                            request_id=request_id,
+                            user_id=user_id,
+                            telemetry_sink=telemetry_sink,
+                        ),
+                        timeout=max(stream_max_seconds - (time.perf_counter() - start_time), 1),
+                    )
+                    full_content = str(fallback_content)
+                    for index in range(0, len(full_content), chunk_size):
+                        chunk = full_content[index : index + chunk_size]
+                        record_chunk()
+                        yield emit("delta", {"delta": chunk, "assistant_message_id": assistant_message_id})
+                    yield emit("done", "[DONE]")
+                    if not req.regenerate:
+                        await cache_set(cache_key, {"response": full_content}, ttl=cache_ttl_seconds)
+                    await cache_set(
+                        idempotency_key,
+                        {
+                            "status": "completed",
+                            "response": full_content,
+                            "assistant_message_id": assistant_message_id,
+                            "mode": selected_mode,
+                            "prompt_mode": prompt_mode,
+                        },
+                        ttl=idempotency_ttl_seconds,
+                    )
+                    return
+                except Exception as fallback_exc:
+                    logger.error(
+                        "messages_exception_fallback_failed",
+                        error=str(fallback_exc),
+                        request_id=request_id,
+                        user_id_hash=user_id_hash,
+                        conversation_id=req.conversation_id,
+                        content_hash=content_hash,
+                        retry=bool(req.regenerate),
+                        sampled=False,
+                    )
             await cache_set(
                 idempotency_key,
                 {"status": "failed", "message_id": client_message_id},
