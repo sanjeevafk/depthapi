@@ -1,4 +1,5 @@
 import asyncio
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -124,6 +125,105 @@ async def test_messages_idempotency_replay(app_client, monkeypatch, test_setting
         assert len(fake_supabase.inserts) == 2
     finally:
         main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
+
+
+@pytest.mark.asyncio
+async def test_messages_reclaims_stale_in_progress_idempotency(app_client, monkeypatch, test_settings):
+    user = SimpleNamespace(id="user-reclaim", email="user@example.com", user_metadata={})
+    stale_started_at = int(time.time()) - 999
+
+    async def fake_verify_token():
+        return {"user": user}
+
+    async def fake_is_pro(*_args, **_kwargs):
+        return False
+
+    async def fast_stream(*_args, **_kwargs):
+        yield "ok"
+
+    async def fake_cache_get(key):
+        if str(key).startswith("knowbear:idempotency:"):
+            return {"status": "in_progress", "started_at": stale_started_at}
+        return None
+
+    async def fake_cache_set(_key, _value, ttl=None):
+        return True
+
+    fake_supabase = FakeSupabase(
+        responses={
+            "conversations": {"id": "conv-reclaim", "user_id": user.id, "mode": "learning", "settings": {}},
+            "messages": [{"id": "assistant-reclaim"}],
+            "users": {"is_pro": False},
+        }
+    )
+
+    main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
+    monkeypatch.setattr(messages_module, "check_is_pro", fake_is_pro)
+    monkeypatch.setattr(messages_module, "generate_stream_explanation", fast_stream)
+    monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: fake_supabase)
+    monkeypatch.setattr(messages_module, "cache_get", fake_cache_get)
+    monkeypatch.setattr(messages_module, "cache_set", fake_cache_set)
+    monkeypatch.setattr(messages_module, "get_settings", lambda: test_settings)
+
+    try:
+        payload = {
+            "conversation_id": "conv-reclaim",
+            "content": "hello",
+            "client_generated_id": "8a5f7736-2edb-4f7b-bf45-9b8f2ea1ea1e",
+            "assistant_client_id": "8f2c9e58-0ae5-4fce-bc73-51f1ca6f43c4",
+            "mode": "learning",
+            "prompt_mode": "eli5",
+        }
+
+        resp = await app_client.post("/api/messages", json=payload)
+        assert resp.status_code == 200
+        assert "event: delta" in resp.text
+        assert "ok" in resp.text
+    finally:
+        main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
+
+
+@pytest.mark.asyncio
+async def test_query_stream_idempotency_replay_with_message_id(app_client, monkeypatch, test_settings):
+    store: dict[str, dict] = {}
+
+    async def fake_stream(*_args, **_kwargs):
+        yield "hello replay"
+
+    async def fake_cache_get(key):
+        return store.get(str(key))
+
+    async def fake_cache_set(key, value, ttl=None):
+        store[str(key)] = value
+        return True
+
+    async def fake_cache_set_if_absent(key, value, ttl):
+        k = str(key)
+        if k in store:
+            return False
+        store[k] = value
+        return True
+
+    monkeypatch.setattr(query_module, "generate_stream_explanation", fake_stream)
+    monkeypatch.setattr(query_module, "cache_get", fake_cache_get)
+    monkeypatch.setattr(query_module, "cache_set", fake_cache_set)
+    monkeypatch.setattr(query_module, "cache_set_if_absent", fake_cache_set_if_absent)
+    monkeypatch.setattr(query_module, "get_settings", lambda: test_settings)
+
+    payload = {
+        "topic": "test",
+        "levels": ["eli5"],
+        "mode": "learning",
+        "message_id": "232c2670-6ad8-48fb-a9a4-b416cc654e79",
+    }
+
+    first = await app_client.post("/api/query/stream", json=payload)
+    assert first.status_code == 200
+    assert "hello replay" in first.text
+
+    second = await app_client.post("/api/query/stream", json=payload)
+    assert second.status_code == 200
+    assert "\"replay\":true" in second.text.replace(" ", "")
 
 
 @pytest.mark.asyncio

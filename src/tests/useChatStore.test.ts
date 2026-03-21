@@ -210,7 +210,7 @@ describe("useChatStore streaming", () => {
       )
       .mockResolvedValueOnce(
         makeSseResponse([
-          'id: 1\nevent: chunk\ndata: {"chunk":"Recovered"}\n\n',
+          'id: 1\nevent: delta\ndata: {"delta":"Recovered"}\n\n',
           "id: 2\nevent: done\ndata: [DONE]\n\n",
         ]),
       );
