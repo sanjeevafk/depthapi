@@ -140,6 +140,15 @@ async def technical_mode_handler(
 
     fallback_triggered = False
     fallback_reason: str | None = None
+    best_effort_response: str | None = None
+
+    def _ensure_terminal_char(value: str) -> str:
+        trimmed = value.rstrip()
+        if not trimmed:
+            return value
+        if trimmed[-1] in {".", "?", "!", "`"}:
+            return trimmed
+        return f"{trimmed}."
 
     async def _call(model_alias: str) -> str | None:
         """Single model call. Returns content string or None on any failure."""
@@ -161,6 +170,8 @@ async def technical_mode_handler(
                     depth=depth,
                 )
                 return None
+            nonlocal best_effort_response
+            best_effort_response = str(result)
             return result
         except Exception as exc:
             _tech_logger.warning(
@@ -209,8 +220,12 @@ async def technical_mode_handler(
 
     if response is None:
         fallback_triggered = True
-        fallback_reason = "all_models_failed"
-        response = TECHNICAL_LAST_RESORT_RESPONSE
+        if best_effort_response and best_effort_response.strip():
+            fallback_reason = "best_effort_unvalidated"
+            response = _ensure_terminal_char(best_effort_response)
+        else:
+            fallback_reason = "all_models_failed"
+            response = TECHNICAL_LAST_RESORT_RESPONSE
 
     _tech_logger.info(
         "technical_mode_complete",
