@@ -183,6 +183,95 @@ async def test_messages_fallback_on_stream_exception(app_client, monkeypatch, te
 
 
 @pytest.mark.asyncio
+async def test_query_stream_partial_failure_returns_done_without_error(app_client, monkeypatch, test_settings):
+    test_settings.stream_start_timeout_seconds = 0.1
+    test_settings.stream_max_seconds = 2
+    test_settings.stream_heartbeat_seconds = 0.05
+    user = SimpleNamespace(id="user-query-partial", email="user@example.com", user_metadata={})
+
+    async def fake_auth():
+        return {"user": user}
+
+    async def fake_is_pro(*_args, **_kwargs):
+        return True
+
+    async def partial_then_fail(*_args, **_kwargs):
+        yield "partial technical chunk"
+        raise RuntimeError("stream interrupted")
+
+    main_app.app.dependency_overrides[query_module.verify_token_optional] = fake_auth
+    monkeypatch.setattr(query_module, "check_is_pro", fake_is_pro)
+    monkeypatch.setattr(query_module, "generate_stream_explanation", partial_then_fail)
+    monkeypatch.setattr(query_module, "get_settings", lambda: test_settings)
+
+    try:
+        resp = await app_client.post(
+            "/api/query/stream",
+            json={"topic": "test", "levels": ["eli15"], "mode": "technical"},
+        )
+
+        assert resp.status_code == 200
+        text = resp.text
+        assert "partial technical chunk" in text
+        assert "event: done" in text
+        assert "event: error" not in text
+    finally:
+        main_app.app.dependency_overrides.pop(query_module.verify_token_optional, None)
+
+
+@pytest.mark.asyncio
+async def test_messages_partial_failure_returns_done_without_error(app_client, monkeypatch, test_settings):
+    test_settings.stream_start_timeout_seconds = 0.1
+    test_settings.stream_max_seconds = 2
+    test_settings.stream_heartbeat_seconds = 0.05
+
+    user = SimpleNamespace(id="user-stream-partial", email="user@example.com", user_metadata={})
+
+    async def fake_verify_token():
+        return {"user": user}
+
+    async def fake_is_pro(*_args, **_kwargs):
+        return True
+
+    async def partial_then_fail(*_args, **_kwargs):
+        yield "partial technical chunk"
+        raise RuntimeError("stream interrupted")
+
+    fake_supabase = FakeSupabase(
+        responses={
+            "conversations": {"id": "conv-partial", "user_id": user.id, "mode": "technical", "settings": {}},
+            "messages": [{"id": "assistant-partial"}],
+            "users": {"is_pro": True},
+        }
+    )
+
+    main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
+    monkeypatch.setattr(messages_module, "check_is_pro", fake_is_pro)
+    monkeypatch.setattr(messages_module, "generate_stream_explanation", partial_then_fail)
+    monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: fake_supabase)
+    monkeypatch.setattr(messages_module, "get_settings", lambda: test_settings)
+
+    try:
+        payload = {
+            "conversation_id": "conv-partial",
+            "content": "hello",
+            "client_generated_id": "1eb91e58-e2b6-4f47-bece-f8dca3854e95",
+            "assistant_client_id": "6d46d539-5f21-47bc-9e46-c21810108ba8",
+            "mode": "technical",
+            "prompt_mode": "eli15",
+        }
+
+        resp = await app_client.post("/api/messages", json=payload)
+        assert resp.status_code == 200
+        assert "event: delta" in resp.text
+        assert "partial technical chunk" in resp.text
+        assert "event: done" in resp.text
+        assert "event: error" not in resp.text
+    finally:
+        main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
+
+
+@pytest.mark.asyncio
 async def test_messages_abort_logs_confirmation(app_client, monkeypatch, test_settings):
     test_settings.stream_start_timeout_seconds = 0.5
     test_settings.stream_max_seconds = 1

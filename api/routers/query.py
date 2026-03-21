@@ -273,6 +273,10 @@ async def query_topic_stream(
     stream_max_seconds = max(int(getattr(settings, "stream_max_seconds", 25)), 1)
     if not is_prod:
         stream_max_seconds = max(stream_max_seconds, 60)
+    fallback_budget_seconds = max(
+        1.0,
+        min(float(getattr(settings, "stream_fallback_budget_seconds", 6)), float(stream_max_seconds)),
+    )
     heartbeat_seconds = min(
         max(float(getattr(settings, "stream_heartbeat_seconds", 2)), 0.1),
         2,
@@ -281,7 +285,9 @@ async def query_topic_stream(
     if mode == LEARNING_MODE and not is_prod:
         stream_start_timeout_seconds = max(raw_start_timeout, float(stream_max_seconds))
     elif mode == TECHNICAL_MODE:
-        stream_start_timeout_seconds = float(stream_max_seconds)
+        technical_cap = max(2.0, min(float(stream_max_seconds) * 0.6, 8.0))
+        stream_start_timeout_seconds = min(max(raw_start_timeout, 2.0), technical_cap)
+        fallback_budget_seconds = max(fallback_budget_seconds, 4.0)
     else:
         cap = 2.0 if is_prod else 5.0
         stream_start_timeout_seconds = min(max(raw_start_timeout, 0.1), cap)
@@ -405,7 +411,13 @@ async def query_topic_stream(
                             user_id=user_id_raw,
                             telemetry_sink=telemetry_sink,
                         ),
-                        timeout=max(stream_max_seconds - (time.perf_counter() - start_time), 1),
+                        timeout=max(
+                            min(
+                                stream_max_seconds - (time.perf_counter() - start_time),
+                                fallback_budget_seconds,
+                            ),
+                            1,
+                        ),
                     )
                 except Exception as exc:
                     logger.error(
@@ -468,7 +480,13 @@ async def query_topic_stream(
                             user_id=user_id_raw,
                             telemetry_sink=telemetry_sink,
                         ),
-                        timeout=max(stream_max_seconds - (time.perf_counter() - start_time), 1),
+                        timeout=max(
+                            min(
+                                stream_max_seconds - (time.perf_counter() - start_time),
+                                fallback_budget_seconds,
+                            ),
+                            1,
+                        ),
                     )
                     full_content = str(fallback_content)
                     for index in range(0, len(full_content), chunk_size):
@@ -492,6 +510,14 @@ async def query_topic_stream(
                         retry=bool(req.regenerate),
                         sampled=False,
                     )
+            if full_content.strip():
+                yield emit("chunk", {"chunk": "\n\n[Connection interrupted. Partial technical response delivered.]"})
+                yield emit("done", "[DONE]")
+                if full_content.strip():
+                    await cache_set(_cache_key(topic, level, mode), {"text": full_content})
+                if auth_data:
+                    asyncio.create_task(save_to_history(auth_data["user"], topic, [level], mode))
+                return
             yield emit("error", {"error": "An error occurred while streaming. Please try again."})
             yield emit("done", "[DONE]")
         finally:
