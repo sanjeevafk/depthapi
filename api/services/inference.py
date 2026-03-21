@@ -461,12 +461,17 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             ):
                 streamed_chunks += 1
                 yield chunk
-        except Exception:
-            if streamed_chunks > 0:
-                raise
-            full_response = await technical_mode_handler(topic, **kwargs)
-            for index in range(0, len(full_response), 400):
-                yield full_response[index : index + 400]
+        except Exception as exc:
+            _tech_logger.warning(
+                "technical_stream_failed",
+                error=str(exc),
+                streamed_chunks=streamed_chunks,
+                model_alias=alias,
+            )
+            if streamed_chunks == 0:
+                full_response = await technical_mode_handler(topic, **kwargs)
+                for index in range(0, len(full_response), 400):
+                    yield full_response[index : index + 400]
 
         stream_duration_ms = round((time.perf_counter() - stream_start) * 1000, 2)
         model_inference_ms = stream_telemetry.get("model_inference_ms")

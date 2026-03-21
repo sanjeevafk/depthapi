@@ -156,6 +156,10 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     stream_max_seconds = max(int(getattr(config_settings, "stream_max_seconds", 25)), 1)
     if not is_prod:
         stream_max_seconds = max(stream_max_seconds, 60)
+    fallback_budget_seconds = max(
+        1.0,
+        min(float(getattr(config_settings, "stream_fallback_budget_seconds", 6)), float(stream_max_seconds)),
+    )
     heartbeat_seconds = min(
         max(float(getattr(config_settings, "stream_heartbeat_seconds", 2)), 0.1),
         2,
@@ -231,7 +235,9 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     if selected_mode == LEARNING_MODE and not is_prod:
         stream_start_timeout_seconds = max(raw_start_timeout, float(stream_max_seconds))
     elif selected_mode == TECHNICAL_MODE:
-        stream_start_timeout_seconds = float(stream_max_seconds)
+        technical_cap = max(2.0, min(float(stream_max_seconds) * 0.6, 8.0))
+        stream_start_timeout_seconds = min(max(raw_start_timeout, 2.0), technical_cap)
+        fallback_budget_seconds = max(fallback_budget_seconds, 4.0)
     else:
         cap = 2.0 if is_prod else 5.0
         stream_start_timeout_seconds = min(max(raw_start_timeout, 0.1), cap)
@@ -569,7 +575,13 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                             user_id=user_id,
                             telemetry_sink=telemetry_sink,
                         ),
-                        timeout=max(stream_max_seconds - (time.perf_counter() - start_time), 1),
+                        timeout=max(
+                            min(
+                                stream_max_seconds - (time.perf_counter() - start_time),
+                                fallback_budget_seconds,
+                            ),
+                            1,
+                        ),
                     )
                 except Exception as exc:
                     logger.error(
@@ -664,7 +676,13 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                             user_id=user_id,
                             telemetry_sink=telemetry_sink,
                         ),
-                        timeout=max(stream_max_seconds - (time.perf_counter() - start_time), 1),
+                        timeout=max(
+                            min(
+                                stream_max_seconds - (time.perf_counter() - start_time),
+                                fallback_budget_seconds,
+                            ),
+                            1,
+                        ),
                     )
                     full_content = str(fallback_content)
                     for index in range(0, len(full_content), chunk_size):
@@ -703,6 +721,30 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 ttl=idempotency_ttl_seconds,
             )
             if not aborted:
+                if full_content.strip():
+                    if not req.regenerate:
+                        await cache_set(cache_key, {"response": full_content}, ttl=cache_ttl_seconds)
+                    await cache_set(
+                        idempotency_key,
+                        {
+                            "status": "completed",
+                            "response": full_content,
+                            "assistant_message_id": assistant_message_id,
+                            "mode": selected_mode,
+                            "prompt_mode": prompt_mode,
+                            "partial": True,
+                        },
+                        ttl=idempotency_ttl_seconds,
+                    )
+                    yield emit(
+                        "delta",
+                        {
+                            "delta": "\n\n[Connection interrupted. Partial technical response delivered.]",
+                            "assistant_message_id": assistant_message_id,
+                        },
+                    )
+                    yield emit("done", "[DONE]")
+                    return
                 yield emit("error", {"error": "Streaming failed"})
                 yield emit("done", "[DONE]")
         finally:
