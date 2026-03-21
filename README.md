@@ -5,10 +5,15 @@ KnowBear is an AI-powered product that delivers explanations at exactly the righ
 - Live demo: https://knowbear.vercel.app (now-deprecated v1)
 - Deprecated v1 repo: https://github.com/voidcommit-afk/knowbear-v1
 
+## Status
+
+- v2 is implemented and live in this repository, including technical-mode intent/depth handling, streaming reliability hardening, Pro/payment enforcement, and degraded-mode health behavior.
+- v3 is the next track, focused on grounded retrieval and citation-backed responses.
+
 ## Core Features
 
 - Layered explanation levels: ELI5, ELI10, ELI12, ELI15, Meme
-- Dedicated modes: Learning, Technical, Socratic
+- Dedicated modes: learning, technical, socratic
 - Technical mode v2 with intent detection (explain, compare, brainstorm), depth control, and optional diagram guidance
 - Stable alias-based model routing through LiteLLM with explicit fallbacks
 - SSE streaming with heartbeat, start timeout, and graceful cutoffs
