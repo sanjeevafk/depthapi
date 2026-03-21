@@ -213,6 +213,16 @@ const getModeForWorkspace = (workspace: Workspace): ChatMode => {
   return "learning";
 };
 
+const toPersistedConversationMode = (
+  mode: ChatMode,
+  promptMode: PromptMode,
+): string => {
+  // Database constraints in some deployments do not include "learning".
+  // Persist the concrete prompt mode for learn workspace while keeping
+  // canonical mode in settings.mode for UI/runtime behavior.
+  return mode === "learning" ? promptMode : mode;
+};
+
 const asString = (value: unknown): string | undefined => {
   return typeof value === "string" ? value : undefined;
 };
@@ -462,6 +472,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       : conversation
         ? { mode, prompt_mode: nextPromptMode }
         : undefined;
+    const persistedMode = toPersistedConversationMode(mode, nextPromptMode);
 
     set((state) => ({
       workspace: nextWorkspace,
@@ -489,7 +500,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     void supabase
       .from("conversations")
-      .update({ mode, settings: nextSettings ?? conversation.settings })
+      .update({ mode: persistedMode, settings: nextSettings ?? conversation.settings })
       .eq("id", currentConversationId);
   },
 
@@ -936,6 +947,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const effectivePromptMode = isPromptMode(requestedMode)
       ? requestedMode
       : requestedPromptMode;
+    const persistedConversationMode = toPersistedConversationMode(
+      requestedMode,
+      effectivePromptMode,
+    );
 
     set({ isLoading: true, isDraftThread: false });
 
@@ -950,7 +965,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               .insert({
                 user_id: authData.user.id,
                 title,
-                mode: requestedMode,
+                mode: persistedConversationMode,
                 settings: {
                   mode: requestedMode,
                   prompt_mode: effectivePromptMode,
@@ -1417,7 +1432,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const { error: updateError } = await supabase
           .from("conversations")
           .update({
-            mode: requestedMode,
+            mode: persistedConversationMode,
             settings: conversationSettings,
             updated_at: new Date().toISOString(),
           })
@@ -1442,7 +1457,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           .insert({
             user_id: authData.user.id,
             title: localConversation.title || truncateTitle(trimmed),
-            mode: requestedMode,
+            mode: persistedConversationMode,
             settings: {
               ...(localConversation.settings || {}),
               mode: requestedMode,
