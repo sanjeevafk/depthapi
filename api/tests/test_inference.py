@@ -129,3 +129,33 @@ async def test_technical_mode_handler_uses_minimal_prompt_when_prompt_builder_em
 
     assert result == "valid technical response"
     assert captured["prompt"] == inference_module.TECHNICAL_MINIMAL_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_generate_stream_explanation_technical_streams_via_llm_stream(monkeypatch):
+    async def fake_stream_chat_completion(*_args, **_kwargs):
+        yield "chunk-a"
+        yield "chunk-b"
+
+    async def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("technical_mode_handler should not be used for primary stream path")
+
+    monkeypatch.setattr(inference_module, "stream_chat_completion", fake_stream_chat_completion)
+    monkeypatch.setattr(inference_module, "technical_mode_handler", fail_if_called)
+    monkeypatch.setattr(
+        inference_module,
+        "detect_intent_and_depth",
+        lambda _topic: {"intent": "explain", "depth": "shallow"},
+    )
+    monkeypatch.setattr(inference_module, "detect_diagram_type", lambda _topic: None)
+    monkeypatch.setattr(inference_module, "build_technical_prompt", lambda *_args, **_kwargs: "prompt")
+
+    streamed = []
+    async for chunk in inference_module.generate_stream_explanation(
+        "topic",
+        "eli15",
+        mode="technical",
+    ):
+        streamed.append(chunk)
+
+    assert streamed == ["chunk-a", "chunk-b"]

@@ -408,15 +408,81 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
     route_telemetry_sink = kwargs.get("telemetry_sink") if isinstance(kwargs.get("telemetry_sink"), dict) else None
     prompt = ""
 
-    # ── TECHNICAL MODE (v2) — pseudo-streaming ──────────────────────────────
     if mode == TECHNICAL_MODE:
-        full_response = await technical_mode_handler(topic, **kwargs)
-        chunk_size = 400
-        for i in range(0, len(full_response), chunk_size):
-            yield full_response[i : i + chunk_size]
+        intent = "unknown"
+        depth = "shallow"
+        diagram_type = "generic"
+        try:
+            classification = detect_intent_and_depth(topic)
+            intent = classification["intent"]
+            depth = classification["depth"]
+            diagram_type = detect_diagram_type(topic)
+        except Exception as exc:
+            _tech_logger.warning(
+                "technical_stream_classification_failed",
+                error=str(exc),
+                intent=intent,
+                depth=depth,
+                diagram_type=diagram_type,
+            )
+
+        prompt = build_technical_prompt(topic, intent, depth, diagram_type)
+        if not prompt or not prompt.strip():
+            prompt = TECHNICAL_MINIMAL_PROMPT
+
+        alias = model or TECHNICAL_MODEL_PRIMARY
+        stream_telemetry: dict[str, object] = {}
+        stream_start = time.perf_counter()
+        streamed_chunks = 0
+
+        try:
+            async for chunk in stream_chat_completion(
+                model=alias,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=TECHNICAL_MAX_TOKENS,
+                temperature=TECHNICAL_TEMPERATURE,
+                request_id=request_id,
+                telemetry_sink=stream_telemetry,
+            ):
+                streamed_chunks += 1
+                yield chunk
+        except Exception:
+            if streamed_chunks > 0:
+                raise
+            full_response = await technical_mode_handler(topic, **kwargs)
+            for index in range(0, len(full_response), 400):
+                yield full_response[index : index + 400]
+
+        stream_duration_ms = round((time.perf_counter() - stream_start) * 1000, 2)
+        model_inference_ms = stream_telemetry.get("model_inference_ms")
+        token_usage = stream_telemetry.get("token_usage")
+        estimated_cost_usd = stream_telemetry.get("estimated_cost_usd")
+        model_name = stream_telemetry.get("model")
+
+        if route_telemetry_sink is not None:
+            route_telemetry_sink["token_usage"] = token_usage
+            route_telemetry_sink["estimated_cost_usd"] = estimated_cost_usd
+            route_telemetry_sink["model_inference_ms"] = model_inference_ms
+            route_telemetry_sink["stream_duration_ms"] = stream_duration_ms
+            route_telemetry_sink["model_alias"] = alias
+            route_telemetry_sink["model"] = model_name
+
+        log_sampled_success(
+            "llm_stream_observed",
+            request_id=request_id,
+            user_id_hash=anonymized_user_id,
+            model_alias=alias,
+            model=model_name,
+            latency_ms=model_inference_ms,
+            stream_duration_ms=stream_duration_ms,
+            token_usage=token_usage,
+            estimated_cost_usd=estimated_cost_usd,
+            retry=retry_flag,
+            sampled=True,
+        )
         return
-    # ────────────────────────────────────────────────────────────────────────
-    elif mode == SOCRATIC_MODE:
+
+    if mode == SOCRATIC_MODE:
         template = PROMPTS.get("socratic")
         if not template:
             raise ValueError("Unknown mode template: socratic")
