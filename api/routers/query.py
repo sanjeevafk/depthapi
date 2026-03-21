@@ -454,6 +454,43 @@ async def query_topic_stream(
                 retry=bool(req.regenerate),
                 sampled=False,
             )
+            if not full_content.strip():
+                fallback_used = True
+                try:
+                    fallback_content = await asyncio.wait_for(
+                        generate_explanation(
+                            topic,
+                            level,
+                            mode=mode,
+                            temperature=req.temperature,
+                            regenerate=req.regenerate,
+                            request_id=request_id,
+                            user_id=user_id_raw,
+                            telemetry_sink=telemetry_sink,
+                        ),
+                        timeout=max(stream_max_seconds - (time.perf_counter() - start_time), 1),
+                    )
+                    full_content = str(fallback_content)
+                    for index in range(0, len(full_content), chunk_size):
+                        record_chunk()
+                        yield emit("chunk", {"chunk": full_content[index : index + chunk_size]})
+                    yield emit("done", "[DONE]")
+                    if full_content.strip():
+                        await cache_set(_cache_key(topic, level, mode), {"text": full_content})
+                    if auth_data:
+                        asyncio.create_task(save_to_history(auth_data["user"], topic, [level], mode))
+                    return
+                except Exception as fallback_exc:
+                    logger.error(
+                        "streaming_exception_fallback_failed",
+                        request_id=request_id,
+                        user_id_hash=user_id_hash,
+                        topic_hash=topic_hash,
+                        error=str(fallback_exc),
+                        mode=mode,
+                        retry=bool(req.regenerate),
+                        sampled=False,
+                    )
             yield emit("error", {"error": "An error occurred while streaming. Please try again."})
             yield emit("done", "[DONE]")
         finally:
