@@ -336,7 +336,7 @@ async def test_query_stream_waits_for_history_persistence(app_client, monkeypatc
     calls = []
 
     async def fake_save_to_history(*_args, **_kwargs):
-        await asyncio.sleep(0.06)
+        await asyncio.sleep(0.1)
         calls.append(True)
 
     main_app.app.dependency_overrides[query_module.verify_token_optional] = fake_auth
@@ -356,7 +356,7 @@ async def test_query_stream_waits_for_history_persistence(app_client, monkeypatc
         assert resp.status_code == 200
         assert "history save check" in resp.text
         assert calls == [True]
-        assert elapsed >= 0.05
+        assert elapsed >= 0.08
     finally:
         main_app.app.dependency_overrides.pop(query_module.verify_token_optional, None)
 
@@ -776,9 +776,11 @@ async def test_messages_stream_performance_guardrails(app_client, monkeypatch, t
 
         resp = await app_client.post("/api/messages", json=payload)
         assert resp.status_code == 200
-        assert captured.get("first_event_ms") is not None
-        assert captured.get("first_event_ms") <= 2000
-        assert captured.get("latency_ms") is not None
-        assert captured.get("latency_ms") <= 30000
+        first_event_ms = captured.get("first_event_ms")
+        latency_ms = captured.get("latency_ms")
+        assert first_event_ms is not None
+        assert first_event_ms <= 2000
+        assert latency_ms is not None
+        assert latency_ms <= 30000
     finally:
         main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
