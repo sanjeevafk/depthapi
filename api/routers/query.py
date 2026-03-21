@@ -69,6 +69,33 @@ def _query_stream_idempotency_key(scope: str, message_id: str) -> str:
     return f"knowbear:query_stream:idempotency:{digest}"
 
 
+async def _persist_history_safely(user, topic: str, levels: list[str], mode: str) -> None:
+    """Persist history within a bounded timeout so request lifecycles remain responsive."""
+    timeout_seconds = max(float(get_settings().stream_heartbeat_seconds or 1.0), 1.0)
+    try:
+        await asyncio.wait_for(
+            save_to_history(user, topic, levels, mode),
+            timeout=min(timeout_seconds, 3.0),
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "save_to_history_timeout",
+            user_id_hash=anonymize_user_id(str(getattr(user, "id", "") or "") or None),
+            topic_hash=anonymize_text(topic),
+            mode=normalize_mode(mode),
+            sampled=False,
+        )
+    except Exception as exc:
+        logger.error(
+            "save_to_history_unhandled",
+            error=str(exc),
+            user_id_hash=anonymize_user_id(str(getattr(user, "id", "") or "") or None),
+            topic_hash=anonymize_text(topic),
+            mode=normalize_mode(mode),
+            sampled=False,
+        )
+
+
 def _build_stream_replay_response(
     *,
     topic: str,
@@ -169,7 +196,7 @@ async def query_topic(
 
     if not missing_levels and not req.bypass_cache:
         if auth_data:
-            asyncio.create_task(save_to_history(auth_data["user"], topic, levels, mode))
+            await _persist_history_safely(auth_data["user"], topic, levels, mode)
         return QueryResponse(topic=topic, explanations=explanations, cached=True)
 
     level_telemetry = {level: {} for level in missing_levels}
@@ -209,7 +236,7 @@ async def query_topic(
             )
 
     if auth_data:
-        asyncio.create_task(save_to_history(auth_data["user"], topic, levels, mode))
+        await _persist_history_safely(auth_data["user"], topic, levels, mode)
 
     token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     estimated_cost_usd = 0.0
@@ -468,7 +495,7 @@ async def query_topic_stream(
                         yield emit("chunk", {"chunk": content[index : index + chunk_size]})
                     yield emit("done", "[DONE]")
                     if auth_data:
-                        asyncio.create_task(save_to_history(auth_data["user"], topic, [level], mode))
+                        await _persist_history_safely(auth_data["user"], topic, [level], mode)
                     return
 
             stream = generate_stream_explanation(
@@ -560,7 +587,7 @@ async def query_topic_stream(
                 if full_content.strip():
                     await cache_set(_cache_key(topic, level, mode), {"text": full_content})
                 if auth_data:
-                    asyncio.create_task(save_to_history(auth_data["user"], topic, [level], mode))
+                    await _persist_history_safely(auth_data["user"], topic, [level], mode)
                 return
 
             if timed_out:
@@ -571,7 +598,7 @@ async def query_topic_stream(
             if full_content.strip():
                 await cache_set(_cache_key(topic, level, mode), {"text": full_content})
             if auth_data:
-                asyncio.create_task(save_to_history(auth_data["user"], topic, [level], mode))
+                await _persist_history_safely(auth_data["user"], topic, [level], mode)
 
             yield emit("done", "[DONE]")
         except Exception as exc:
@@ -615,7 +642,7 @@ async def query_topic_stream(
                     if full_content.strip():
                         await cache_set(_cache_key(topic, level, mode), {"text": full_content})
                     if auth_data:
-                        asyncio.create_task(save_to_history(auth_data["user"], topic, [level], mode))
+                        await _persist_history_safely(auth_data["user"], topic, [level], mode)
                     return
                 except Exception as fallback_exc:
                     logger.error(
@@ -635,7 +662,7 @@ async def query_topic_stream(
                 if full_content.strip():
                     await cache_set(_cache_key(topic, level, mode), {"text": full_content})
                 if auth_data:
-                    asyncio.create_task(save_to_history(auth_data["user"], topic, [level], mode))
+                    await _persist_history_safely(auth_data["user"], topic, [level], mode)
                 return
             yield emit("error", {"error": "An error occurred while streaming. Please try again."})
             yield emit("done", "[DONE]")

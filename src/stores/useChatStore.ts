@@ -1098,6 +1098,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const controller = new AbortController();
     const streamStartedAt = Date.now();
     let streamStarted = false;
+    let usedQueryFallback = false;
     set((state) => ({
       streamControllers: {
         ...state.streamControllers,
@@ -1271,6 +1272,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         });
 
         const fallbackToQueryStream = async (reason: "local" | "fallback") => {
+          usedQueryFallback = true;
           const fallbackLevel = toQueryLevel(effectivePromptMode);
           trackTelemetry("stream_start", {
             endpoint: "/api/query/stream",
@@ -1305,10 +1307,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
           return;
         };
 
+        const hasPersistedConversation =
+          typeof conversationId === "string" && !conversationId.startsWith("local-");
         const shouldUseMessagesEndpoint =
           Boolean(session?.access_token) &&
           supabaseConfigured &&
-          !conversationId.startsWith("local-");
+          hasPersistedConversation;
 
         if (!shouldUseMessagesEndpoint) {
           await fallbackToQueryStream("local");
@@ -1349,7 +1353,166 @@ export const useChatStore = create<ChatState>((set, get) => ({
         );
       };
 
+      const persistFallbackConversationState = async () => {
+        if (!supabaseConfigured || !conversationId || conversationId.startsWith("local-")) return;
+
+        const { data: authData } = await supabase.auth.getUser();
+        if (!authData?.user) return;
+
+        const assistantMessage = get().messageIds
+          .map((id) => get().messagesById[id])
+          .find(
+            (message) =>
+              message?.clientGeneratedId === assistantClientId ||
+              message?.metadata?.assistant_client_id === assistantClientId,
+          );
+
+        const assistantContent = assistantMessage?.content?.trim() ?? "";
+        if (!assistantContent) return;
+
+        const modeMetadata = {
+          mode: requestedMode,
+          prompt_mode: effectivePromptMode,
+          temperature: requestTemperature,
+        };
+
+        const messageRows = [
+          ...(!skipUserMessage
+            ? [
+                {
+                  conversation_id: conversationId,
+                  role: "user",
+                  content: trimmed,
+                  metadata: {
+                    client_id: clientMessageId,
+                    ...modeMetadata,
+                  },
+                },
+              ]
+            : []),
+          {
+            conversation_id: conversationId,
+            role: "assistant",
+            content: assistantContent,
+            metadata: {
+              assistant_client_id: assistantClientId,
+              ...modeMetadata,
+            },
+          },
+        ];
+
+        const { error: insertError } = await supabase
+          .from("messages")
+          .insert(messageRows);
+        if (insertError) throw insertError;
+
+        const existingConversation = get().conversations.find(
+          (item) => item.id === conversationId,
+        );
+        const conversationSettings = {
+          ...(existingConversation?.settings || {}),
+          mode: requestedMode,
+          prompt_mode: effectivePromptMode,
+        };
+        const { error: updateError } = await supabase
+          .from("conversations")
+          .update({
+            mode: requestedMode,
+            settings: conversationSettings,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", conversationId);
+        if (updateError) throw updateError;
+      };
+
+      const promoteLocalConversationState = async () => {
+        if (!supabaseConfigured || !conversationId || !conversationId.startsWith("local-")) return;
+
+        const { data: authData } = await supabase.auth.getUser();
+        if (!authData?.user) return;
+
+        const state = get();
+        const localConversation = state.conversations.find(
+          (item) => item.id === conversationId,
+        );
+        if (!localConversation) return;
+
+        const { data: remoteConversation, error: createConversationError } = await supabase
+          .from("conversations")
+          .insert({
+            user_id: authData.user.id,
+            title: localConversation.title || truncateTitle(trimmed),
+            mode: requestedMode,
+            settings: {
+              ...(localConversation.settings || {}),
+              mode: requestedMode,
+              prompt_mode: effectivePromptMode,
+            },
+          })
+          .select("id, title, mode, settings, created_at, updated_at")
+          .single();
+
+        if (createConversationError || !remoteConversation) {
+          throw createConversationError || new Error("Failed to create remote conversation");
+        }
+
+        const messageRows = state.messageIds
+          .map((id) => state.messagesById[id])
+          .filter((message): message is Message => Boolean(message))
+          .filter((message) => message.content.trim().length > 0)
+          .map((message) => ({
+            conversation_id: remoteConversation.id,
+            role: message.role,
+            content: message.content,
+            attachments: message.attachments || [],
+            metadata: {
+              ...(message.metadata || {}),
+              ...(message.role === "assistant"
+                ? {
+                    assistant_client_id:
+                      message.metadata?.assistant_client_id || message.clientGeneratedId,
+                  }
+                : {
+                    client_id: message.metadata?.client_id || message.clientGeneratedId,
+                  }),
+            },
+          }));
+
+        if (messageRows.length > 0) {
+          const { error: insertMessagesError } = await supabase
+            .from("messages")
+            .insert(messageRows);
+          if (insertMessagesError) throw insertMessagesError;
+        }
+
+        set((currentState) => ({
+          conversations: currentState.conversations
+            .map((item) =>
+              item.id === conversationId
+                ? ({
+                    ...(remoteConversation as Conversation),
+                    settings:
+                      (remoteConversation as Conversation).settings ||
+                      item.settings ||
+                      null,
+                  } as Conversation)
+                : item,
+            )
+            .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1)),
+          currentConversationId:
+            currentState.currentConversationId === conversationId
+              ? remoteConversation.id
+              : currentState.currentConversationId,
+        }));
+
+        conversationId = remoteConversation.id;
+      };
+
       await executeStream();
+      if (usedQueryFallback) {
+        await persistFallbackConversationState();
+      }
+      await promoteLocalConversationState();
       if (streamStarted) {
         trackTelemetry("stream_end", {
           status: "success",
@@ -1525,6 +1688,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
     const message = messageKey ? state.messagesById[messageKey] : undefined;
     if (!message?.retryPayload) return;
+    const retryPayloadBase = message.retryPayload;
 
     // Suspend any active streams before sending a fresh retry request.
     get().abortAllStreams();
@@ -1539,7 +1703,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       syncStatus: "pending",
       error: undefined,
       retryPayload: {
-        ...current.retryPayload,
+        ...retryPayloadBase,
         clientMessageId: nextClientMessageId,
         assistantClientId: nextAssistantClientId,
       },
@@ -1549,10 +1713,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       },
     }));
 
-    await get().sendMessage(message.retryPayload.content, {
-      mode: message.retryPayload.mode as ChatMode,
-      promptMode: message.retryPayload.promptMode,
-      temperature: message.retryPayload.temperature,
+    await get().sendMessage(retryPayloadBase.content, {
+      mode: retryPayloadBase.mode as ChatMode,
+      promptMode: retryPayloadBase.promptMode,
+      temperature: retryPayloadBase.temperature,
       clientMessageId: nextClientMessageId,
       assistantClientId: nextAssistantClientId,
       skipUserMessage: true,
