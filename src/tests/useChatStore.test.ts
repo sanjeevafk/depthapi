@@ -134,7 +134,7 @@ describe("useChatStore streaming", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
 
     const sendPromise = useChatStore.getState().sendMessage("Timeout");
-    await vi.advanceTimersByTimeAsync(20_000);
+    await vi.advanceTimersByTimeAsync(45_000);
     await sendPromise;
 
     const assistant = findAssistantMessage();
@@ -194,6 +194,44 @@ describe("useChatStore streaming", () => {
     expect(updated?.content).toBe("Retry ok");
     expect(updated?.syncStatus).toBe("synced");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const firstBody = JSON.parse((fetchMock.mock.calls[0]?.[1]?.body as string) || "{}");
+    const secondBody = JSON.parse((fetchMock.mock.calls[1]?.[1]?.body as string) || "{}");
+    expect(firstBody.message_id).toBeTruthy();
+    expect(secondBody.message_id).toBeTruthy();
+    expect(secondBody.message_id).not.toBe(firstBody.message_id);
+  });
+
+  it("retries with fresh ids after duplicate-in-progress error", async () => {
+    const fetchMock = vi
+      .fn<(...args: FetchArgs) => Promise<Response>>()
+      .mockResolvedValueOnce(
+        makeErrorResponse(409, { detail: "Duplicate request already in progress." }),
+      )
+      .mockResolvedValueOnce(
+        makeSseResponse([
+          'id: 1\nevent: chunk\ndata: {"chunk":"Recovered"}\n\n',
+          "id: 2\nevent: done\ndata: [DONE]\n\n",
+        ]),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await useChatStore.getState().sendMessage("Duplicate case");
+
+    const failed = findAssistantMessage();
+    expect(failed?.syncStatus).toBe("failed");
+    expect(failed?.error).toContain("Retry will send a new request");
+
+    await useChatStore.getState().retrySync(failed?.clientGeneratedId || "");
+
+    const updated = findAssistantMessage();
+    expect(updated?.syncStatus).toBe("synced");
+    expect(updated?.content).toContain("Recovered");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const firstBody = JSON.parse((fetchMock.mock.calls[0]?.[1]?.body as string) || "{}");
+    const secondBody = JSON.parse((fetchMock.mock.calls[1]?.[1]?.body as string) || "{}");
+    expect(secondBody.message_id).not.toBe(firstBody.message_id);
   });
 });
 
