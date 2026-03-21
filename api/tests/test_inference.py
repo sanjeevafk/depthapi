@@ -201,12 +201,16 @@ async def test_generate_stream_explanation_technical_partial_stream_failure_is_g
     monkeypatch.setattr(inference_module, "detect_diagram_type", lambda _topic: None)
     monkeypatch.setattr(inference_module, "build_technical_prompt", lambda *_args, **_kwargs: "prompt")
 
+    telemetry_sink: dict[str, object] = {}
     chunks = []
     async for chunk in inference_module.generate_stream_explanation(
         "topic",
         "eli15",
         mode="technical",
+        telemetry_sink=telemetry_sink,
     ):
         chunks.append(chunk)
 
     assert chunks == ["partial"]
+    assert telemetry_sink.get("stream_completed") is False
+    assert telemetry_sink.get("partial_failure") is True

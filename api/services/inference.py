@@ -449,6 +449,8 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         stream_telemetry: dict[str, object] = {}
         stream_start = time.perf_counter()
         streamed_chunks = 0
+        stream_completed = True
+        partial_failure = False
 
         try:
             async for chunk in stream_chat_completion(
@@ -472,6 +474,16 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
                 full_response = await technical_mode_handler(topic, **kwargs)
                 for index in range(0, len(full_response), 400):
                     yield full_response[index : index + 400]
+            else:
+                stream_completed = False
+                partial_failure = True
+                _tech_logger.warning(
+                    "technical_stream_partial_failure",
+                    error=str(exc),
+                    streamed_chunks=streamed_chunks,
+                    model_alias=alias,
+                    partial_failure=True,
+                )
 
         stream_duration_ms = round((time.perf_counter() - stream_start) * 1000, 2)
         model_inference_ms = stream_telemetry.get("model_inference_ms")
@@ -486,20 +498,38 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             route_telemetry_sink["stream_duration_ms"] = stream_duration_ms
             route_telemetry_sink["model_alias"] = alias
             route_telemetry_sink["model"] = model_name
+            route_telemetry_sink["stream_completed"] = stream_completed
+            route_telemetry_sink["partial_failure"] = partial_failure
 
-        log_sampled_success(
-            "llm_stream_observed",
-            request_id=request_id,
-            user_id_hash=anonymized_user_id,
-            model_alias=alias,
-            model=model_name,
-            latency_ms=model_inference_ms,
-            stream_duration_ms=stream_duration_ms,
-            token_usage=token_usage,
-            estimated_cost_usd=estimated_cost_usd,
-            retry=retry_flag,
-            sampled=True,
-        )
+        if stream_completed:
+            log_sampled_success(
+                "llm_stream_observed",
+                request_id=request_id,
+                user_id_hash=anonymized_user_id,
+                model_alias=alias,
+                model=model_name,
+                latency_ms=model_inference_ms,
+                stream_duration_ms=stream_duration_ms,
+                token_usage=token_usage,
+                estimated_cost_usd=estimated_cost_usd,
+                retry=retry_flag,
+                sampled=True,
+            )
+        else:
+            _tech_logger.warning(
+                "llm_stream_observed_partial_failure",
+                request_id=request_id,
+                user_id_hash=anonymized_user_id,
+                model_alias=alias,
+                model=model_name,
+                latency_ms=model_inference_ms,
+                stream_duration_ms=stream_duration_ms,
+                token_usage=token_usage,
+                estimated_cost_usd=estimated_cost_usd,
+                retry=retry_flag,
+                streamed_chunks=streamed_chunks,
+                partial_failure=True,
+            )
         return
 
     if mode == SOCRATIC_MODE:
