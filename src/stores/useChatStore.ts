@@ -1139,7 +1139,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
-        const READ_TIMEOUT_MS = 20000;
+        // Technical responses can pause between chunks while tools/models run.
+        const READ_TIMEOUT_MS = 45000;
         let doneReceived = false;
 
         while (true) {
@@ -1382,6 +1383,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       let errorMessage = getErrorMessage(error, "Failed to send message");
+      const errorStatus =
+        typeof error === "object" && error !== null && "status" in error
+          ? (error as { status?: number }).status
+          : undefined;
+      if (errorStatus === 409) {
+        errorMessage =
+          "Previous request is still in progress. Retry will send a new request.";
+      }
       if (/timed out/i.test(errorMessage)) {
         errorMessage = "Streaming timed out. Retry.";
       }
@@ -1517,22 +1526,37 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const message = messageKey ? state.messagesById[messageKey] : undefined;
     if (!message?.retryPayload) return;
 
+    // Suspend any active streams before sending a fresh retry request.
+    get().abortAllStreams();
+
+    const nextClientMessageId = makeClientId();
+    const nextAssistantClientId = makeClientId();
+
     removePendingSync(messageId);
-    get().updateMessageByClientId(
-      message.clientGeneratedId || messageId,
-      (current) => ({
-        ...current,
-        syncStatus: "pending",
-        error: undefined,
-      }),
-    );
+    get().updateMessageByClientId(message.clientGeneratedId || messageId, (current) => ({
+      ...current,
+      clientGeneratedId: nextAssistantClientId,
+      syncStatus: "pending",
+      error: undefined,
+      retryPayload: {
+        ...current.retryPayload,
+        clientMessageId: nextClientMessageId,
+        assistantClientId: nextAssistantClientId,
+      },
+      metadata: {
+        ...current.metadata,
+        assistant_client_id: nextAssistantClientId,
+      },
+    }));
 
     await get().sendMessage(message.retryPayload.content, {
       mode: message.retryPayload.mode as ChatMode,
       promptMode: message.retryPayload.promptMode,
       temperature: message.retryPayload.temperature,
-      clientMessageId: message.retryPayload.clientMessageId,
-      assistantClientId: message.retryPayload.assistantClientId,
+      clientMessageId: nextClientMessageId,
+      assistantClientId: nextAssistantClientId,
+      skipUserMessage: true,
+      replaceMessageId: messageKey,
     });
   },
 }));
