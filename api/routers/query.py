@@ -487,6 +487,7 @@ async def query_topic_stream(
                         user_id_hash=user_id_hash,
                         topic_hash=topic_hash,
                         error=str(fallback_exc),
+                        original_error=str(exc),
                         mode=mode,
                         retry=bool(req.regenerate),
                         sampled=False,

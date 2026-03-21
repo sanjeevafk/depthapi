@@ -164,7 +164,7 @@ async def test_generate_stream_explanation_technical_streams_via_llm_stream(monk
 @pytest.mark.asyncio
 async def test_technical_mode_handler_returns_best_effort_when_validation_fails(monkeypatch):
     async def fake_call_model(*_args, **_kwargs):
-        return "This is useful but does not match strict markdown sections"
+        return "This is useful but does not match strict markdown sections."
 
     monkeypatch.setattr(inference_module, "call_model", fake_call_model)
     monkeypatch.setattr(
