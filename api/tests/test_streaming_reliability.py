@@ -320,6 +320,48 @@ async def test_query_stream_partial_failure_returns_done_without_error(app_clien
 
 
 @pytest.mark.asyncio
+async def test_query_stream_waits_for_history_persistence(app_client, monkeypatch, fake_user):
+    async def fake_auth():
+        return {"user": fake_user}
+
+    async def fake_stream(*_args, **_kwargs):
+        yield "history save check"
+
+    async def fake_cache_get(_key):
+        return None
+
+    async def fake_cache_set(_key, _value, ttl=None):
+        return True
+
+    calls = []
+
+    async def fake_save_to_history(*_args, **_kwargs):
+        await asyncio.sleep(0.06)
+        calls.append(True)
+
+    main_app.app.dependency_overrides[query_module.verify_token_optional] = fake_auth
+    monkeypatch.setattr(query_module, "generate_stream_explanation", fake_stream)
+    monkeypatch.setattr(query_module, "cache_get", fake_cache_get)
+    monkeypatch.setattr(query_module, "cache_set", fake_cache_set)
+    monkeypatch.setattr(query_module, "save_to_history", fake_save_to_history)
+
+    try:
+        start = time.perf_counter()
+        resp = await app_client.post(
+            "/api/query/stream",
+            json={"topic": "Persist stream", "levels": ["eli5"], "mode": "learning"},
+        )
+        elapsed = time.perf_counter() - start
+
+        assert resp.status_code == 200
+        assert "history save check" in resp.text
+        assert calls == [True]
+        assert elapsed >= 0.05
+    finally:
+        main_app.app.dependency_overrides.pop(query_module.verify_token_optional, None)
+
+
+@pytest.mark.asyncio
 async def test_messages_partial_failure_returns_done_without_error(app_client, monkeypatch, test_settings):
     test_settings.stream_start_timeout_seconds = 0.1
     test_settings.stream_max_seconds = 2
