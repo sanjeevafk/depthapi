@@ -159,3 +159,24 @@ async def test_generate_stream_explanation_technical_streams_via_llm_stream(monk
         streamed.append(chunk)
 
     assert streamed == ["chunk-a", "chunk-b"]
+
+
+@pytest.mark.asyncio
+async def test_technical_mode_handler_returns_best_effort_when_validation_fails(monkeypatch):
+    async def fake_call_model(*_args, **_kwargs):
+        return "This is useful but does not match strict markdown sections"
+
+    monkeypatch.setattr(inference_module, "call_model", fake_call_model)
+    monkeypatch.setattr(
+        inference_module,
+        "validate_technical_response",
+        lambda *_args, **_kwargs: (False, "missing_structure"),
+    )
+    monkeypatch.setattr(inference_module, "detect_intent_and_depth", lambda _topic: {"intent": "explain", "depth": "medium"})
+    monkeypatch.setattr(inference_module, "detect_diagram_type", lambda _topic: None)
+    monkeypatch.setattr(inference_module, "build_technical_prompt", lambda *_args, **_kwargs: "prompt")
+
+    result = await inference_module.technical_mode_handler("topic")
+
+    assert "Unable to generate a response at this time" not in result
+    assert result.endswith(".")
