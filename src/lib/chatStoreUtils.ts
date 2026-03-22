@@ -212,13 +212,13 @@ export const messagesMatch = (existing: Message, incoming: Message): boolean => 
   // 1. Canonical client ID — most reliable, set at creation time
   const existingClientId =
     existing.clientGeneratedId ||
-    existing.metadata?.client_id ||
-    existing.metadata?.assistant_client_id;
+    existing.metadata?.assistant_client_id ||
+    existing.metadata?.client_id;
 
   const incomingClientId =
     incoming.clientGeneratedId ||
-    incoming.metadata?.client_id ||
-    incoming.metadata?.assistant_client_id;
+    incoming.metadata?.assistant_client_id ||
+    incoming.metadata?.client_id;
 
   if (existingClientId && incomingClientId && existingClientId === incomingClientId) {
     return true;

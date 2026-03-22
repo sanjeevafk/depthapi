@@ -647,7 +647,8 @@ async def query_topic_stream(
                         sampled=False,
                     )
             if full_content.strip():
-                yield emit("chunk", {"chunk": "\n\n[Connection interrupted. Partial technical response delivered.]"})
+                mode_label = "technical " if mode == TECHNICAL_MODE else ""
+                yield emit("chunk", {"chunk": f"\n\n[Connection interrupted. Partial {mode_label}response delivered.]"})
                 yield emit("done", "[DONE]")
                 if full_content.strip():
                     await cache_set(_cache_key(topic, level, mode), {"text": full_content})
@@ -725,11 +726,11 @@ async def query_topic_stream(
 
 async def save_to_history(user, topic: str, levels: list[str], mode: str) -> None:
     """
-    Background task: persist a query to the user's history.
+    Persist a query to the user's history.
 
     Failures are logged as errors with full context but do not propagate —
     history loss is preferable to crashing the response task.
-    Callers must NOT await this function; use asyncio.create_task().
+    Typically called via _persist_history_safely() for bounded execution.
     """
     user_id_hash = anonymize_user_id(str(getattr(user, "id", "") or ""))
     topic_hash = anonymize_text(topic)

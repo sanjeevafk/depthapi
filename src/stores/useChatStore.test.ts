@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConversationStore } from "../stores/useConversationStore";
 import { useMessageStore } from "../stores/useMessageStore";
 import type { Message } from "../types/chat";
@@ -423,6 +423,10 @@ describe("useChatStore streaming", () => {
     resetStore();
     vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("aborts the underlying fetch when a stream read timeout occurs", async () => {
