@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, Paperclip } from "lucide-react";
 import DepthDropdown from "./DepthDropdown";
 import { useChatStore } from "../../stores/useChatStore";
-import type { DepthLevel, Workspace } from "../../stores/useChatStore";
+import type { DepthLevel, Workspace } from "../../lib/chatStoreUtils";
 import type { ChatMode, PromptMode } from "../../types/chat";
 
 interface WorkspaceInputProps {
