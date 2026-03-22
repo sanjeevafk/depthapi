@@ -20,7 +20,7 @@ from services.inference import generate_explanation, generate_stream_explanation
 from services.llm_client import get_litellm_config_state
 from services.llm_errors import LLMUnavailable
 from services.rate_limit import enforce_request_controls, estimate_tokens_for_text
-from services.streaming import SseEventBuilder
+from services.streaming import SseEventBuilder, SSE_RESPONSE_HEADERS
 from utils import (
     DEFAULT_CHAT_MODE,
     PROMPT_MODE_ALIASES,
@@ -113,7 +113,7 @@ def _build_replay_response(
     return StreamingResponse(
         replay_generator(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        headers=SSE_RESPONSE_HEADERS,
     )
 
 
@@ -156,6 +156,11 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     stream_max_seconds = max(int(getattr(config_settings, "stream_max_seconds", 25)), 1)
     if not is_prod:
         stream_max_seconds = max(stream_max_seconds, 60)
+    fallback_budget_seconds = max(
+        1.0,
+        min(float(getattr(config_settings, "stream_fallback_budget_seconds", 6)), float(stream_max_seconds)),
+    )
+    fallback_timeout_seconds = max(fallback_budget_seconds, 3.0)
     heartbeat_seconds = min(
         max(float(getattr(config_settings, "stream_heartbeat_seconds", 2)), 0.1),
         2,
@@ -165,10 +170,15 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         max(int(getattr(config_settings, "stream_idempotency_ttl_seconds", 90)), 60),
         120,
     )
+    idempotency_stale_seconds = max(
+        5,
+        min(int(getattr(config_settings, "stream_idempotency_stale_seconds", 20)), idempotency_ttl_seconds),
+    )
     trusted_proxies = _trusted_proxies_from_settings(config_settings)
 
     idempotency_key = _idempotency_key(user_id, client_message_id)
     idempotency_payload = await cache_get(idempotency_key)
+    idempotency_claimed = False
     if idempotency_payload:
         status = idempotency_payload.get("status")
         cached_response = idempotency_payload.get("response")
@@ -185,7 +195,25 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             )
 
         if status == "in_progress":
-            raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
+            started_at = idempotency_payload.get("started_at")
+            now_ts = int(time.time())
+            started_ts = int(started_at) if isinstance(started_at, (int, float)) else now_ts
+            age_seconds = max(now_ts - started_ts, 0)
+            if age_seconds < idempotency_stale_seconds:
+                raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
+            reclaimed = await cache_set(
+                idempotency_key,
+                {
+                    "status": "reclaimed",
+                    "reclaimed_at": now_ts,
+                    "previous_started_at": started_ts,
+                    "message_id": client_message_id,
+                },
+                ttl=idempotency_ttl_seconds,
+            )
+            if not reclaimed:
+                raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
+            idempotency_claimed = True
 
     estimated_tokens = estimate_tokens_for_text(content)
     client_ip = _resolve_client_ip(request, trusted_proxies=trusted_proxies)
@@ -231,9 +259,19 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     if selected_mode == LEARNING_MODE and not is_prod:
         stream_start_timeout_seconds = max(raw_start_timeout, float(stream_max_seconds))
     elif selected_mode == TECHNICAL_MODE:
-        stream_start_timeout_seconds = float(stream_max_seconds)
+        stream_max_seconds = max(
+            stream_max_seconds,
+            int(getattr(config_settings, "technical_stream_max_seconds", 45)),
+        )
+        technical_start_timeout = float(
+            getattr(config_settings, "technical_stream_start_timeout_seconds", max(raw_start_timeout, 6.0))
+        )
+        technical_cap = max(4.0, min(float(stream_max_seconds) * 0.75, 20.0))
+        stream_start_timeout_seconds = min(max(technical_start_timeout, 2.0), technical_cap)
+        fallback_budget_seconds = max(fallback_budget_seconds, 4.0)
+        fallback_timeout_seconds = max(fallback_budget_seconds, 4.0)
     else:
-        cap = 2.0 if is_prod else 5.0
+        cap = 8.0 if is_prod else 15.0
         stream_start_timeout_seconds = min(max(raw_start_timeout, 0.1), cap)
 
     requested_prompt_mode = PROMPT_MODE_ALIASES.get(req.prompt_mode or "", req.prompt_mode or "")
@@ -262,12 +300,16 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
 
     idempotency_record = {
         "status": "in_progress",
+        "started_at": int(time.time()),
         "message_id": client_message_id,
         "assistant_client_id": assistant_client_id,
         "mode": selected_mode,
         "prompt_mode": prompt_mode,
     }
-    reserved = await cache_set_if_absent(idempotency_key, idempotency_record, idempotency_ttl_seconds)
+    if idempotency_claimed:
+        reserved = await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
+    else:
+        reserved = await cache_set_if_absent(idempotency_key, idempotency_record, idempotency_ttl_seconds)
     if not reserved:
         existing = await cache_get(idempotency_key)
         if existing:
@@ -282,7 +324,13 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     prompt_mode=existing.get("prompt_mode") or prompt_mode,
                 )
             if status == "in_progress":
-                raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
+                started_at = existing.get("started_at")
+                now_ts = int(time.time())
+                started_ts = int(started_at) if isinstance(started_at, (int, float)) else now_ts
+                age_seconds = max(now_ts - started_ts, 0)
+                if age_seconds < idempotency_stale_seconds:
+                    raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
+                await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
             if status == "failed":
                 await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
 
@@ -407,6 +455,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         abort_reason = None
         tokens_after_abort = 0
         timed_out = False
+        response_truncated = False
         fallback_used = False
         start_timeout = False
         telemetry_sink: dict[str, Any] = {}
@@ -569,7 +618,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                             user_id=user_id,
                             telemetry_sink=telemetry_sink,
                         ),
-                        timeout=max(stream_max_seconds - (time.perf_counter() - start_time), 1),
+                        timeout=fallback_timeout_seconds,
                     )
                 except Exception as exc:
                     logger.error(
@@ -650,12 +699,83 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 retry=bool(req.regenerate),
                 sampled=False,
             )
+            if not aborted and not full_content.strip():
+                fallback_used = True
+                try:
+                    fallback_content = await asyncio.wait_for(
+                        generate_explanation(
+                            content,
+                            prompt_mode,
+                            mode=selected_mode,
+                            temperature=request_temperature,
+                            regenerate=req.regenerate,
+                            request_id=request_id,
+                            user_id=user_id,
+                            telemetry_sink=telemetry_sink,
+                        ),
+                        timeout=fallback_timeout_seconds,
+                    )
+                    full_content = str(fallback_content)
+                    for index in range(0, len(full_content), chunk_size):
+                        chunk = full_content[index : index + chunk_size]
+                        record_chunk()
+                        yield emit("delta", {"delta": chunk, "assistant_message_id": assistant_message_id})
+                    yield emit("done", "[DONE]")
+                    if not req.regenerate:
+                        await cache_set(cache_key, {"response": full_content}, ttl=cache_ttl_seconds)
+                    await cache_set(
+                        idempotency_key,
+                        {
+                            "status": "completed",
+                            "response": full_content,
+                            "assistant_message_id": assistant_message_id,
+                            "mode": selected_mode,
+                            "prompt_mode": prompt_mode,
+                        },
+                        ttl=idempotency_ttl_seconds,
+                    )
+                    return
+                except Exception as fallback_exc:
+                    logger.error(
+                        "messages_exception_fallback_failed",
+                        error=str(fallback_exc),
+                        request_id=request_id,
+                        user_id_hash=user_id_hash,
+                        conversation_id=req.conversation_id,
+                        content_hash=content_hash,
+                        retry=bool(req.regenerate),
+                        sampled=False,
+                    )
             await cache_set(
                 idempotency_key,
                 {"status": "failed", "message_id": client_message_id},
                 ttl=idempotency_ttl_seconds,
             )
             if not aborted:
+                if full_content.strip():
+                    if not req.regenerate and not response_truncated:
+                        await cache_set(cache_key, {"response": full_content}, ttl=cache_ttl_seconds)
+                    await cache_set(
+                        idempotency_key,
+                        {
+                            "status": "completed",
+                            "response": full_content,
+                            "assistant_message_id": assistant_message_id,
+                            "mode": selected_mode,
+                            "prompt_mode": prompt_mode,
+                            "partial": True,
+                        },
+                        ttl=idempotency_ttl_seconds,
+                    )
+                    yield emit(
+                        "delta",
+                        {
+                            "delta": "\n\n[Connection interrupted. Partial technical response delivered.]",
+                            "assistant_message_id": assistant_message_id,
+                        },
+                    )
+                    yield emit("done", "[DONE]")
+                    return
                 yield emit("error", {"error": "Streaming failed"})
                 yield emit("done", "[DONE]")
         finally:
@@ -745,5 +865,5 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        headers=SSE_RESPONSE_HEADERS,
     )

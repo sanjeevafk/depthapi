@@ -140,6 +140,15 @@ async def technical_mode_handler(
 
     fallback_triggered = False
     fallback_reason: str | None = None
+    best_effort_response: str | None = None
+
+    def _ensure_terminal_char(value: str) -> str:
+        trimmed = value.rstrip()
+        if not trimmed:
+            return value
+        if trimmed[-1] in {".", "?", "!", "`"}:
+            return trimmed
+        return f"{trimmed}."
 
     async def _call(model_alias: str) -> str | None:
         """Single model call. Returns content string or None on any failure."""
@@ -161,6 +170,8 @@ async def technical_mode_handler(
                     depth=depth,
                 )
                 return None
+            nonlocal best_effort_response
+            best_effort_response = str(result)
             return result
         except Exception as exc:
             _tech_logger.warning(
@@ -209,8 +220,12 @@ async def technical_mode_handler(
 
     if response is None:
         fallback_triggered = True
-        fallback_reason = "all_models_failed"
-        response = TECHNICAL_LAST_RESORT_RESPONSE
+        if best_effort_response and best_effort_response.strip():
+            fallback_reason = "best_effort_unvalidated"
+            response = _ensure_terminal_char(best_effort_response)
+        else:
+            fallback_reason = "all_models_failed"
+            response = TECHNICAL_LAST_RESORT_RESPONSE
 
     _tech_logger.info(
         "technical_mode_complete",
@@ -408,15 +423,116 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
     route_telemetry_sink = kwargs.get("telemetry_sink") if isinstance(kwargs.get("telemetry_sink"), dict) else None
     prompt = ""
 
-    # ── TECHNICAL MODE (v2) — pseudo-streaming ──────────────────────────────
     if mode == TECHNICAL_MODE:
-        full_response = await technical_mode_handler(topic, **kwargs)
-        chunk_size = 400
-        for i in range(0, len(full_response), chunk_size):
-            yield full_response[i : i + chunk_size]
+        intent = "unknown"
+        depth = "shallow"
+        diagram_type = "generic"
+        try:
+            classification = detect_intent_and_depth(topic)
+            intent = classification["intent"]
+            depth = classification["depth"]
+            diagram_type = detect_diagram_type(topic)
+        except Exception as exc:
+            _tech_logger.warning(
+                "technical_stream_classification_failed",
+                error=str(exc),
+                intent=intent,
+                depth=depth,
+                diagram_type=diagram_type,
+            )
+
+        prompt = build_technical_prompt(topic, intent, depth, diagram_type)
+        if not prompt or not prompt.strip():
+            prompt = TECHNICAL_MINIMAL_PROMPT
+
+        alias = model or TECHNICAL_MODEL_PRIMARY
+        stream_telemetry: dict[str, object] = {}
+        stream_start = time.perf_counter()
+        streamed_chunks = 0
+        stream_completed = True
+        partial_failure = False
+
+        try:
+            async for chunk in stream_chat_completion(
+                model=alias,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=TECHNICAL_MAX_TOKENS,
+                temperature=TECHNICAL_TEMPERATURE,
+                request_id=request_id,
+                telemetry_sink=stream_telemetry,
+            ):
+                streamed_chunks += 1
+                yield chunk
+        except Exception as exc:
+            _tech_logger.warning(
+                "technical_stream_failed",
+                error=str(exc),
+                streamed_chunks=streamed_chunks,
+                model_alias=alias,
+            )
+            if streamed_chunks == 0:
+                full_response = await technical_mode_handler(topic, **kwargs)
+                for index in range(0, len(full_response), 400):
+                    yield full_response[index : index + 400]
+            else:
+                stream_completed = False
+                partial_failure = True
+                _tech_logger.warning(
+                    "technical_stream_partial_failure",
+                    error=str(exc),
+                    streamed_chunks=streamed_chunks,
+                    model_alias=alias,
+                    partial_failure=True,
+                )
+
+        stream_duration_ms = round((time.perf_counter() - stream_start) * 1000, 2)
+        model_inference_ms = stream_telemetry.get("model_inference_ms")
+        token_usage = stream_telemetry.get("token_usage")
+        estimated_cost_usd = stream_telemetry.get("estimated_cost_usd")
+        model_name = stream_telemetry.get("model")
+
+        if route_telemetry_sink is not None:
+            route_telemetry_sink["token_usage"] = token_usage
+            route_telemetry_sink["estimated_cost_usd"] = estimated_cost_usd
+            route_telemetry_sink["model_inference_ms"] = model_inference_ms
+            route_telemetry_sink["stream_duration_ms"] = stream_duration_ms
+            route_telemetry_sink["model_alias"] = alias
+            route_telemetry_sink["model"] = model_name
+            route_telemetry_sink["stream_completed"] = stream_completed
+            route_telemetry_sink["partial_failure"] = partial_failure
+
+        if stream_completed:
+            log_sampled_success(
+                "llm_stream_observed",
+                request_id=request_id,
+                user_id_hash=anonymized_user_id,
+                model_alias=alias,
+                model=model_name,
+                latency_ms=model_inference_ms,
+                stream_duration_ms=stream_duration_ms,
+                token_usage=token_usage,
+                estimated_cost_usd=estimated_cost_usd,
+                retry=retry_flag,
+                sampled=True,
+            )
+        else:
+            _tech_logger.warning(
+                "llm_stream_observed_partial_failure",
+                request_id=request_id,
+                user_id_hash=anonymized_user_id,
+                model_alias=alias,
+                model=model_name,
+                latency_ms=model_inference_ms,
+                stream_duration_ms=stream_duration_ms,
+                token_usage=token_usage,
+                estimated_cost_usd=estimated_cost_usd,
+                retry=retry_flag,
+                streamed_chunks=streamed_chunks,
+                partial_failure=True,
+            )
         return
-    # ────────────────────────────────────────────────────────────────────────
-    elif mode == SOCRATIC_MODE:
+
+    if mode == SOCRATIC_MODE:
         template = PROMPTS.get("socratic")
         if not template:
             raise ValueError("Unknown mode template: socratic")
@@ -443,10 +559,12 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             telemetry_sink=stream_telemetry,
         ):
             socratic_chunks.append(chunk)
+            yield chunk  # yield immediately - do not buffer
 
-        constrained_response = _enforce_socratic_response_constraints("".join(socratic_chunks))
-        for index in range(0, len(constrained_response), 400):
-            yield constrained_response[index : index + 400]
+        # NOTE: Socratic constraint enforcement (question capping) is now
+        # the caller's responsibility. The full response is available in
+        # the router's accumulated `full_content` after streaming ends.
+        # This trade-off is intentional: streaming health > post-processing.
     else:
         async for chunk in stream_chat_completion(
             model=alias,
