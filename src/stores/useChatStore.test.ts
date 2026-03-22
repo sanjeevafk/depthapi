@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConversationStore } from "../stores/useConversationStore";
 import { useMessageStore } from "../stores/useMessageStore";
+import type { Message } from "../types/chat";
 
 type MockBuilder = {
   select: () => MockBuilder;
@@ -321,6 +322,78 @@ describe("useChatStore", () => {
   });
 });
 
+describe("messagesMatch", () => {
+  beforeEach(() => {
+    resetStore();
+  });
+
+  it("matches on shared clientGeneratedId", () => {
+    const base: Message = {
+      id: "server-1",
+      role: "assistant",
+      content: "hello",
+      created_at: "2026-01-01T00:00:00Z",
+      clientGeneratedId: "client-abc",
+    };
+    const incoming: Message = {
+      id: "server-1",
+      role: "assistant",
+      content: "hello updated",
+      created_at: "2026-01-01T00:00:00Z",
+      clientGeneratedId: "client-abc",
+    };
+    useMessageStore.getState().clearMessages();
+    useMessageStore.getState().addMessage(base);
+    useMessageStore.getState().addMessage(incoming);
+    expect(useMessageStore.getState().messageIds).toHaveLength(1);
+    expect(
+      useMessageStore.getState().messagesById[
+        useMessageStore.getState().messageIds[0]
+      ].content,
+    ).toBe("hello updated");
+  });
+
+  it("matches on server id after client id is absent", () => {
+    const base: Message = {
+      id: "server-2",
+      role: "assistant",
+      content: "original",
+      created_at: "2026-01-01T00:00:00Z",
+    };
+    const incoming: Message = {
+      id: "server-2",
+      role: "assistant",
+      content: "updated",
+      created_at: "2026-01-01T00:00:00Z",
+    };
+    useMessageStore.getState().clearMessages();
+    useMessageStore.getState().addMessage(base);
+    useMessageStore.getState().addMessage(incoming);
+    expect(useMessageStore.getState().messageIds).toHaveLength(1);
+  });
+
+  it("does NOT match messages with different client ids", () => {
+    const base: Message = {
+      id: "server-3",
+      role: "assistant",
+      content: "first",
+      created_at: "2026-01-01T00:00:00Z",
+      clientGeneratedId: "client-x",
+    };
+    const incoming: Message = {
+      id: "server-4",
+      role: "assistant",
+      content: "second",
+      created_at: "2026-01-01T00:00:00Z",
+      clientGeneratedId: "client-y",
+    };
+    useMessageStore.getState().clearMessages();
+    useMessageStore.getState().addMessage(base);
+    useMessageStore.getState().addMessage(incoming);
+    expect(useMessageStore.getState().messageIds).toHaveLength(2);
+  });
+});
+
 const seedConversation = () => {
   const now = new Date().toISOString();
   useChatStore.setState({
@@ -350,6 +423,10 @@ describe("useChatStore streaming", () => {
     resetStore();
     vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("aborts the underlying fetch when a stream read timeout occurs", async () => {
