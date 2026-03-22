@@ -8,6 +8,8 @@ import type {
 import { LegacyStreamChunkSchema } from "./lib/sseSchemas";
 import type { Session } from "@supabase/supabase-js";
 import { getTracePropagationHeaders } from "./lib/monitoring";
+import type { ApiError } from "./lib/httpErrors";
+import { buildApiError } from "./lib/httpErrors";
 
 const API_URL = import.meta.env.VITE_API_URL || "";
 const SUPABASE_CONFIGURED =
@@ -123,11 +125,9 @@ async function fetchAPI<T>(
     });
     cleanup();
 
-    if (res.status === 429)
-      throw new Error(
-        "You are sending requests too quickly. Please wait a moment.",
-      );
-    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    if (!res.ok) {
+      throw await buildApiError(res);
+    }
 
     if (options?.responseType === "blob") {
       return (await res.blob()) as unknown as T;
@@ -208,7 +208,7 @@ export async function queryTopicStream(
       });
 
       if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
+        throw await buildApiError(response);
       }
 
       // Validate SSE content type
@@ -305,12 +305,18 @@ export async function queryTopicStream(
         return;
       }
 
+      const error = normalizeError(err) as ApiError;
+      const retryAllowed = error.detail?.retry_allowed !== false;
+      if (!retryAllowed) {
+        onError(error);
+        return;
+      }
+
       // Retry on network errors if not aborted
       if (retries < maxRetries && !signal?.aborted) {
         retries++;
         const delay =
           Math.min(8000, baseDelay * 2 ** (retries - 1)) + Math.random() * 250;
-        const error = normalizeError(err);
         console.warn(
           `Stream failed, retry ${retries}/${maxRetries} in ${Math.round(delay)}ms:`,
           error.message,
@@ -319,7 +325,6 @@ export async function queryTopicStream(
         return attemptStream();
       }
 
-      const error = normalizeError(err);
       await fallbackToNonStream(error.message || "Stream failed");
     }
   };
