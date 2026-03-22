@@ -347,7 +347,7 @@ const findAssistantMessage = () => {
 
 describe("useChatStore streaming", () => {
   beforeEach(() => {
-    useChatStore.setState(initialState, true);
+    resetStore();
     vi.restoreAllMocks();
     vi.useRealTimers();
   });

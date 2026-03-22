@@ -640,6 +640,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       let errorMessage = getErrorMessage(error, "Failed to send message");
       if (/timed out/i.test(errorMessage)) errorMessage = "Streaming timed out. Retry.";
+      if (/duplicate request already in progress/i.test(errorMessage)) {
+        errorMessage = "Retry will send a new request.";
+      }
 
       captureFrontendError(
         error instanceof Error ? error : new Error(String(error)),
@@ -756,8 +759,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       mode: message.retryPayload.mode as ChatMode,
       promptMode: message.retryPayload.promptMode,
       temperature: message.retryPayload.temperature,
-      clientMessageId: message.retryPayload.clientMessageId,
-      assistantClientId: message.retryPayload.assistantClientId,
+      clientMessageId: makeClientId(),
+      assistantClientId: makeClientId(),
+      skipUserMessage: true,
+      replaceMessageId: messageKey,
     });
   },
 }));
