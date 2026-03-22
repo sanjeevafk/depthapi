@@ -129,3 +129,88 @@ async def test_technical_mode_handler_uses_minimal_prompt_when_prompt_builder_em
 
     assert result == "valid technical response"
     assert captured["prompt"] == inference_module.TECHNICAL_MINIMAL_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_generate_stream_explanation_technical_streams_via_llm_stream(monkeypatch):
+    async def fake_stream_chat_completion(*_args, **_kwargs):
+        yield "chunk-a"
+        yield "chunk-b"
+
+    async def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("technical_mode_handler should not be used for primary stream path")
+
+    monkeypatch.setattr(inference_module, "stream_chat_completion", fake_stream_chat_completion)
+    monkeypatch.setattr(inference_module, "technical_mode_handler", fail_if_called)
+    monkeypatch.setattr(
+        inference_module,
+        "detect_intent_and_depth",
+        lambda _topic: {"intent": "explain", "depth": "shallow"},
+    )
+    monkeypatch.setattr(inference_module, "detect_diagram_type", lambda _topic: None)
+    monkeypatch.setattr(inference_module, "build_technical_prompt", lambda *_args, **_kwargs: "prompt")
+
+    streamed = []
+    async for chunk in inference_module.generate_stream_explanation(
+        "topic",
+        "eli15",
+        mode="technical",
+    ):
+        streamed.append(chunk)
+
+    assert streamed == ["chunk-a", "chunk-b"]
+
+
+@pytest.mark.asyncio
+async def test_technical_mode_handler_returns_best_effort_when_validation_fails(monkeypatch):
+    async def fake_call_model(*_args, **_kwargs):
+        return "This is useful but does not match strict markdown sections."
+
+    monkeypatch.setattr(inference_module, "call_model", fake_call_model)
+    monkeypatch.setattr(
+        inference_module,
+        "validate_technical_response",
+        lambda *_args, **_kwargs: (False, "missing_structure"),
+    )
+    monkeypatch.setattr(inference_module, "detect_intent_and_depth", lambda _topic: {"intent": "explain", "depth": "medium"})
+    monkeypatch.setattr(inference_module, "detect_diagram_type", lambda _topic: None)
+    monkeypatch.setattr(inference_module, "build_technical_prompt", lambda *_args, **_kwargs: "prompt")
+
+    result = await inference_module.technical_mode_handler("topic")
+
+    assert "Unable to generate a response at this time" not in result
+    assert result.endswith(".")
+
+
+@pytest.mark.asyncio
+async def test_generate_stream_explanation_technical_partial_stream_failure_is_graceful(monkeypatch):
+    async def partial_then_fail(*_args, **_kwargs):
+        yield "partial"
+        raise RuntimeError("stream broke")
+
+    async def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("technical_mode_handler should not run when partial stream already exists")
+
+    monkeypatch.setattr(inference_module, "stream_chat_completion", partial_then_fail)
+    monkeypatch.setattr(inference_module, "technical_mode_handler", fail_if_called)
+    monkeypatch.setattr(
+        inference_module,
+        "detect_intent_and_depth",
+        lambda _topic: {"intent": "explain", "depth": "medium"},
+    )
+    monkeypatch.setattr(inference_module, "detect_diagram_type", lambda _topic: None)
+    monkeypatch.setattr(inference_module, "build_technical_prompt", lambda *_args, **_kwargs: "prompt")
+
+    telemetry_sink: dict[str, object] = {}
+    chunks = []
+    async for chunk in inference_module.generate_stream_explanation(
+        "topic",
+        "eli15",
+        mode="technical",
+        telemetry_sink=telemetry_sink,
+    ):
+        chunks.append(chunk)
+
+    assert chunks == ["partial"]
+    assert telemetry_sink.get("stream_completed") is False
+    assert telemetry_sink.get("partial_failure") is True

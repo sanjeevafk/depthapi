@@ -1,6 +1,7 @@
 """Query endpoint for learning ensembles and direct-mode explanations."""
 
 import asyncio
+import hashlib
 import time
 import uuid
 from typing import Any
@@ -13,12 +14,12 @@ from pydantic import BaseModel, Field
 from auth import check_is_pro, ensure_user_exists, get_supabase_admin, verify_token_optional
 from config import get_settings
 from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
-from services.cache import cache_get, cache_set
+from services.cache import cache_get, cache_set, cache_set_if_absent
 from services.inference import generate_explanation, generate_stream_explanation
 from services.llm_client import get_litellm_config_state
 from services.llm_errors import LLMError, LLMUnavailable
 from services.rate_limit import enforce_request_controls, estimate_tokens_for_text
-from services.streaming import SseEventBuilder
+from services.streaming import SseEventBuilder, SSE_RESPONSE_HEADERS
 from utils import (
     DEFAULT_CHAT_MODE,
     FREE_LEVELS,
@@ -61,6 +62,69 @@ def _normalize_levels(levels: list[str]) -> list[str]:
 
 def _cache_key(topic: str, level: str, mode: str) -> str:
     return topic_cache_key(topic, level, mode=normalize_mode(mode))
+
+
+def _query_stream_idempotency_key(scope: str, message_id: str) -> str:
+    digest = hashlib.sha256(f"{scope}\x00{message_id}".encode("utf-8")).hexdigest()
+    return f"knowbear:query_stream:idempotency:{digest}"
+
+
+async def _persist_history_safely(user, topic: str, levels: list[str], mode: str) -> None:
+    """Persist history within a bounded timeout so request lifecycles remain responsive."""
+    timeout_seconds = max(float(get_settings().stream_heartbeat_seconds or 1.0), 1.0)
+    try:
+        await asyncio.wait_for(
+            save_to_history(user, topic, levels, mode),
+            timeout=min(timeout_seconds, 3.0),
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "save_to_history_timeout",
+            user_id_hash=anonymize_user_id(str(getattr(user, "id", "") or "") or None),
+            topic_hash=anonymize_text(topic),
+            mode=normalize_mode(mode),
+            sampled=False,
+        )
+    except Exception as exc:
+        logger.error(
+            "save_to_history_unhandled",
+            error=str(exc),
+            user_id_hash=anonymize_user_id(str(getattr(user, "id", "") or "") or None),
+            topic_hash=anonymize_text(topic),
+            mode=normalize_mode(mode),
+            sampled=False,
+        )
+
+
+def _build_stream_replay_response(
+    *,
+    topic: str,
+    level: str,
+    mode: str,
+    message_id: str,
+    content: str,
+) -> StreamingResponse:
+    async def replay_generator():
+        builder = SseEventBuilder()
+        yield builder.emit_json(
+            "meta",
+            {
+                "topic": topic,
+                "level": level,
+                "mode": mode,
+                "message_id": message_id,
+                "replay": True,
+            },
+        )
+        for index in range(0, len(content), 400):
+            yield builder.emit_json("chunk", {"chunk": content[index : index + 400]})
+        yield builder.emit("done", "[DONE]")
+
+    return StreamingResponse(
+        replay_generator(),
+        media_type="text/event-stream",
+        headers=SSE_RESPONSE_HEADERS,
+    )
 
 
 async def _stream_chunks(stream: AsyncIterable[str] | Iterable[str]) -> AsyncIterator[str]:
@@ -132,7 +196,7 @@ async def query_topic(
 
     if not missing_levels and not req.bypass_cache:
         if auth_data:
-            asyncio.create_task(save_to_history(auth_data["user"], topic, levels, mode))
+            await _persist_history_safely(auth_data["user"], topic, levels, mode)
         return QueryResponse(topic=topic, explanations=explanations, cached=True)
 
     level_telemetry = {level: {} for level in missing_levels}
@@ -172,7 +236,7 @@ async def query_topic(
             )
 
     if auth_data:
-        asyncio.create_task(save_to_history(auth_data["user"], topic, levels, mode))
+        await _persist_history_safely(auth_data["user"], topic, levels, mode)
 
     token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     estimated_cost_usd = 0.0
@@ -273,18 +337,108 @@ async def query_topic_stream(
     stream_max_seconds = max(int(getattr(settings, "stream_max_seconds", 25)), 1)
     if not is_prod:
         stream_max_seconds = max(stream_max_seconds, 60)
+    fallback_budget_seconds = max(
+        1.0,
+        min(float(getattr(settings, "stream_fallback_budget_seconds", 6)), float(stream_max_seconds)),
+    )
+    fallback_timeout_seconds = max(fallback_budget_seconds, 3.0)
     heartbeat_seconds = min(
         max(float(getattr(settings, "stream_heartbeat_seconds", 2)), 0.1),
         2,
     )
     raw_start_timeout = float(getattr(settings, "stream_start_timeout_seconds", 2))
+    idempotency_ttl_seconds = min(
+        max(int(getattr(settings, "stream_idempotency_ttl_seconds", 90)), 60),
+        120,
+    )
+    idempotency_stale_seconds = max(
+        5,
+        min(int(getattr(settings, "stream_idempotency_stale_seconds", 20)), idempotency_ttl_seconds),
+    )
     if mode == LEARNING_MODE and not is_prod:
         stream_start_timeout_seconds = max(raw_start_timeout, float(stream_max_seconds))
     elif mode == TECHNICAL_MODE:
-        stream_start_timeout_seconds = float(stream_max_seconds)
+        stream_max_seconds = max(stream_max_seconds, int(getattr(settings, "technical_stream_max_seconds", 45)))
+        technical_start_timeout = float(
+            getattr(settings, "technical_stream_start_timeout_seconds", max(raw_start_timeout, 6.0))
+        )
+        technical_cap = max(4.0, min(float(stream_max_seconds) * 0.75, 20.0))
+        stream_start_timeout_seconds = min(max(technical_start_timeout, 2.0), technical_cap)
+        fallback_budget_seconds = max(fallback_budget_seconds, 4.0)
+        fallback_timeout_seconds = max(fallback_budget_seconds, 4.0)
     else:
-        cap = 2.0 if is_prod else 5.0
+        cap = 8.0 if is_prod else 15.0
         stream_start_timeout_seconds = min(max(raw_start_timeout, 0.1), cap)
+
+    idempotency_key: str | None = None
+    idempotency_claimed = False
+    if message_id:
+        scope = user_id_raw or (request.client.host if request.client else "anonymous")
+        idempotency_key = _query_stream_idempotency_key(str(scope), message_id)
+        idempotency_payload = await cache_get(idempotency_key)
+        if idempotency_payload:
+            status = idempotency_payload.get("status")
+            if status == "completed" and idempotency_payload.get("response"):
+                return _build_stream_replay_response(
+                    topic=topic,
+                    level=level,
+                    mode=mode,
+                    message_id=message_id or "",
+                    content=str(idempotency_payload.get("response")),
+                )
+            if status == "in_progress":
+                now_ts = int(time.time())
+                started_at = idempotency_payload.get("started_at")
+                started_ts = int(started_at) if isinstance(started_at, (int, float)) else now_ts
+                age_seconds = max(now_ts - started_ts, 0)
+                if age_seconds < idempotency_stale_seconds:
+                    raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
+                reclaimed = await cache_set(
+                    idempotency_key,
+                    {
+                        "status": "reclaimed",
+                        "reclaimed_at": now_ts,
+                        "message_id": message_id,
+                        "mode": mode,
+                    },
+                    ttl=idempotency_ttl_seconds,
+                )
+                if not reclaimed:
+                    raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
+                idempotency_claimed = True
+
+    if idempotency_key:
+        idempotency_record = {
+            "status": "in_progress",
+            "started_at": int(time.time()),
+            "message_id": message_id,
+            "mode": mode,
+            "level": level,
+        }
+        if idempotency_claimed:
+            reserved = await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
+        else:
+            reserved = await cache_set_if_absent(idempotency_key, idempotency_record, idempotency_ttl_seconds)
+        if not reserved:
+            existing = await cache_get(idempotency_key)
+            if existing:
+                status = existing.get("status")
+                if status == "completed" and existing.get("response"):
+                    return _build_stream_replay_response(
+                        topic=topic,
+                        level=level,
+                        mode=mode,
+                        message_id=message_id or "",
+                        content=str(existing.get("response")),
+                    )
+                if status == "in_progress":
+                    now_ts = int(time.time())
+                    started_at = existing.get("started_at")
+                    started_ts = int(started_at) if isinstance(started_at, (int, float)) else now_ts
+                    age_seconds = max(now_ts - started_ts, 0)
+                    if age_seconds < idempotency_stale_seconds:
+                        raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
+                    await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
 
     async def event_generator():
         full_content = ""
@@ -343,7 +497,7 @@ async def query_topic_stream(
                         yield emit("chunk", {"chunk": content[index : index + chunk_size]})
                     yield emit("done", "[DONE]")
                     if auth_data:
-                        asyncio.create_task(save_to_history(auth_data["user"], topic, [level], mode))
+                        await _persist_history_safely(auth_data["user"], topic, [level], mode)
                     return
 
             stream = generate_stream_explanation(
@@ -405,7 +559,7 @@ async def query_topic_stream(
                             user_id=user_id_raw,
                             telemetry_sink=telemetry_sink,
                         ),
-                        timeout=max(stream_max_seconds - (time.perf_counter() - start_time), 1),
+                        timeout=fallback_timeout_seconds,
                     )
                 except Exception as exc:
                     logger.error(
@@ -429,7 +583,7 @@ async def query_topic_stream(
                 if full_content.strip():
                     await cache_set(_cache_key(topic, level, mode), {"text": full_content})
                 if auth_data:
-                    asyncio.create_task(save_to_history(auth_data["user"], topic, [level], mode))
+                    await _persist_history_safely(auth_data["user"], topic, [level], mode)
                 return
 
             if timed_out:
@@ -440,7 +594,7 @@ async def query_topic_stream(
             if full_content.strip():
                 await cache_set(_cache_key(topic, level, mode), {"text": full_content})
             if auth_data:
-                asyncio.create_task(save_to_history(auth_data["user"], topic, [level], mode))
+                await _persist_history_safely(auth_data["user"], topic, [level], mode)
 
             yield emit("done", "[DONE]")
         except Exception as exc:
@@ -454,9 +608,79 @@ async def query_topic_stream(
                 retry=bool(req.regenerate),
                 sampled=False,
             )
+            if not full_content.strip():
+                fallback_used = True
+                try:
+                    fallback_content = await asyncio.wait_for(
+                        generate_explanation(
+                            topic,
+                            level,
+                            mode=mode,
+                            temperature=req.temperature,
+                            regenerate=req.regenerate,
+                            request_id=request_id,
+                            user_id=user_id_raw,
+                            telemetry_sink=telemetry_sink,
+                        ),
+                        timeout=fallback_timeout_seconds,
+                    )
+                    full_content = str(fallback_content)
+                    for index in range(0, len(full_content), chunk_size):
+                        record_chunk()
+                        yield emit("chunk", {"chunk": full_content[index : index + chunk_size]})
+                    yield emit("done", "[DONE]")
+                    if full_content.strip():
+                        await cache_set(_cache_key(topic, level, mode), {"text": full_content})
+                    if auth_data:
+                        await _persist_history_safely(auth_data["user"], topic, [level], mode)
+                    return
+                except Exception as fallback_exc:
+                    logger.error(
+                        "streaming_exception_fallback_failed",
+                        request_id=request_id,
+                        user_id_hash=user_id_hash,
+                        topic_hash=topic_hash,
+                        error=str(fallback_exc),
+                        original_error=str(exc),
+                        mode=mode,
+                        retry=bool(req.regenerate),
+                        sampled=False,
+                    )
+            if full_content.strip():
+                yield emit("chunk", {"chunk": "\n\n[Connection interrupted. Partial technical response delivered.]"})
+                yield emit("done", "[DONE]")
+                if full_content.strip():
+                    await cache_set(_cache_key(topic, level, mode), {"text": full_content})
+                if auth_data:
+                    await _persist_history_safely(auth_data["user"], topic, [level], mode)
+                return
             yield emit("error", {"error": "An error occurred while streaming. Please try again."})
             yield emit("done", "[DONE]")
         finally:
+            if idempotency_key and message_id:
+                if full_content.strip():
+                    await cache_set(
+                        idempotency_key,
+                        {
+                            "status": "completed",
+                            "response": full_content,
+                            "message_id": message_id,
+                            "mode": mode,
+                            "level": level,
+                        },
+                        ttl=idempotency_ttl_seconds,
+                    )
+                else:
+                    await cache_set(
+                        idempotency_key,
+                        {
+                            "status": "failed",
+                            "message_id": message_id,
+                            "mode": mode,
+                            "level": level,
+                        },
+                        ttl=idempotency_ttl_seconds,
+                    )
             total_ms = (time.perf_counter() - start_time) * 1000
             avg_chunk_interval_ms = None
             if chunk_count > 1:
@@ -495,7 +719,7 @@ async def query_topic_stream(
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        headers=SSE_RESPONSE_HEADERS,
     )
 
 

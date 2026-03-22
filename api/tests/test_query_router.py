@@ -40,6 +40,44 @@ async def test_query_cache_hit_returns_cached(app_client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_query_waits_for_history_persistence(app_client, monkeypatch, fake_user):
+    async def fake_cache_get(_key):
+        return None
+
+    async def fake_cache_set(_key, _value):
+        return True
+
+    async def fake_generate_explanation(*_args, **_kwargs):
+        return "ok"
+
+    calls = []
+
+    async def fake_save_to_history(*_args, **_kwargs):
+        await asyncio.sleep(0.06)
+        calls.append(True)
+
+    async def fake_auth():
+        return {"user": fake_user}
+
+    monkeypatch.setattr(query_module, "cache_get", fake_cache_get)
+    monkeypatch.setattr(query_module, "cache_set", fake_cache_set)
+    monkeypatch.setattr(query_module, "generate_explanation", fake_generate_explanation)
+    monkeypatch.setattr(query_module, "save_to_history", fake_save_to_history)
+    app_client.app.dependency_overrides[auth_module.verify_token_optional] = fake_auth
+
+    start = asyncio.get_event_loop().time()
+    resp = await app_client.post(
+        "/api/query",
+        json={"topic": "Persistence", "levels": ["eli5"], "mode": "learning"},
+    )
+    elapsed = asyncio.get_event_loop().time() - start
+
+    assert resp.status_code == 200
+    assert calls == [True]
+    assert elapsed >= 0.05
+
+
+@pytest.mark.asyncio
 async def test_query_invalid_topic(app_client):
     resp = await app_client.post(
         "/api/query",

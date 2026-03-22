@@ -23,3 +23,5 @@ vite.config.d.ts
 
 local-docs/
 .vscode/settings.json
+.planning/debug
+test-results/
