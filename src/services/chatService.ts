@@ -5,6 +5,7 @@ import { getTracePropagationHeaders } from "../lib/monitoring";
 import { toQueryLevel } from "../lib/chatModes";
 import type { ChatMode, PromptMode } from "../types/chat";
 import { API_URL, createUuid, supabaseConfigured } from "../lib/chatStoreUtils";
+import { buildApiError } from "../lib/httpErrors";
 
 interface SendChatParams {
   conversationId: string;
@@ -40,26 +41,8 @@ const buildHeaders = async (): Promise<Record<string, string>> => {
   return headers;
 };
 
-const buildHttpError = async (response: Response): Promise<Error & { status?: number }> => {
-  let message = "";
-  try {
-    const payload = (await response.json()) as Record<string, unknown>;
-    const detail = payload.detail;
-    const error = payload.error;
-    if (typeof detail === "string" && detail.trim()) {
-      message = detail.trim();
-    } else if (typeof error === "string" && error.trim()) {
-      message = error.trim();
-    }
-  } catch {
-    // ignore non-json error payloads
-  }
-
-  const err = new Error(
-    message || `Request failed with status ${response.status}`,
-  ) as Error & { status?: number };
-  err.status = response.status;
-  return err;
+const buildHttpError = async (response: Response) => {
+  return buildApiError(response);
 };
 
 const handlePayload = (
