@@ -78,6 +78,61 @@ async def test_query_waits_for_history_persistence(app_client, monkeypatch, fake
 
 
 @pytest.mark.asyncio
+async def test_save_to_history_logs_error_and_returns_when_supabase_unavailable(
+    monkeypatch,
+):
+    """save_to_history must not raise — it logs and returns on any failure."""
+    user = SimpleNamespace(id="user-hist", email="h@example.com", user_metadata={})
+    errors_logged = []
+
+    async def fake_ensure_user_exists(_user):
+        pass  # succeed
+
+    def fake_get_supabase_admin():
+        return None  # simulate unavailable
+
+    def fake_log_error(event, **kwargs):
+        errors_logged.append(event)
+
+    monkeypatch.setattr(query_module, "ensure_user_exists", fake_ensure_user_exists)
+    monkeypatch.setattr(query_module, "get_supabase_admin", fake_get_supabase_admin)
+    monkeypatch.setattr(query_module.logger, "error", fake_log_error)
+
+    # Must not raise
+    await query_module.save_to_history(user, "topic", ["eli5"], "learning")
+
+    assert any("no_supabase_admin" in e for e in errors_logged)
+
+
+@pytest.mark.asyncio
+async def test_save_to_history_logs_error_on_fetch_failure(monkeypatch):
+    """save_to_history must log fetch errors and not propagate them."""
+    user = SimpleNamespace(id="user-hist2", email="h2@example.com", user_metadata={})
+    errors_logged = []
+
+    async def fake_ensure_user_exists(_user):
+        pass
+
+    class BrokenSupabase:
+        def table(self, _name):
+            raise RuntimeError("connection refused")
+
+    def fake_get_supabase_admin():
+        return BrokenSupabase()
+
+    def fake_log_error(event, **kwargs):
+        errors_logged.append(event)
+
+    monkeypatch.setattr(query_module, "ensure_user_exists", fake_ensure_user_exists)
+    monkeypatch.setattr(query_module, "get_supabase_admin", fake_get_supabase_admin)
+    monkeypatch.setattr(query_module.logger, "error", fake_log_error)
+
+    await query_module.save_to_history(user, "topic", ["eli5"], "learning")
+
+    assert any("fetch_failed" in e for e in errors_logged)
+
+
+@pytest.mark.asyncio
 async def test_query_invalid_topic(app_client):
     resp = await app_client.post(
         "/api/query",
