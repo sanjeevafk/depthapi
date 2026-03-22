@@ -264,7 +264,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         : undefined;
 
     convStore.setWorkspaceState(nextWorkspace, mode, nextPromptMode, nextDepthLevel);
-    useMessageStore.setState((state) => ({
+    useConversationStore.setState((state) => ({
       ...state,
       selectedLevel: nextDepthLevel as Level,
     }));

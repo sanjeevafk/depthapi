@@ -189,6 +189,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const trimmed = title.trim();
     if (!trimmed) return;
 
+    const existingConversation = get().conversations.find((item) => item.id === id);
+    if (!existingConversation) return;
+    const previousTitle = existingConversation.title;
+    const previousUpdatedAt = existingConversation.updated_at;
+
     const now = new Date().toISOString();
     set((state) => ({
       conversations: state.conversations
@@ -200,13 +205,38 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
     if (!supabaseConfigured || id.startsWith("local-")) return;
 
+    const rollbackRename = () => {
+      set((state) => ({
+        conversations: state.conversations
+          .map((item) =>
+            item.id === id
+              ? { ...item, title: previousTitle, updated_at: previousUpdatedAt }
+              : item,
+          )
+          .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1)),
+      }));
+    };
+
     try {
-      await supabase
+      const { data, error } = await supabase
         .from("conversations")
         .update({ title: trimmed, updated_at: now })
         .eq("id", id);
+
+      void data;
+      if (error) {
+        console.error("Failed to rename conversation:", {
+          id,
+          title: trimmed,
+          error,
+        });
+        rollbackRename();
+        notifyError("Failed to rename conversation.");
+      }
     } catch (error) {
       console.error("Failed to rename conversation:", error);
+      rollbackRename();
+      notifyError("Failed to rename conversation.");
     }
   },
 

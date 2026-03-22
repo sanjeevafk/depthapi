@@ -39,7 +39,14 @@ export const useMessageStore = create<MessageState>((set) => ({
       if (existingKey) {
         const nextMessagesById = {
           ...state.messagesById,
-          [existingKey]: { ...state.messagesById[existingKey], ...msg },
+          [existingKey]: {
+            ...state.messagesById[existingKey],
+            ...msg,
+            metadata: {
+              ...state.messagesById[existingKey].metadata,
+              ...msg.metadata,
+            },
+          },
         };
         if (!state.messageIds.includes(existingKey)) {
           return {
