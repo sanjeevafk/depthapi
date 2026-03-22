@@ -215,12 +215,14 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
             idempotency_claimed = True
 
+    is_pro = await check_is_pro(user_id)
     estimated_tokens = estimate_tokens_for_text(content)
     client_ip = _resolve_client_ip(request, trusted_proxies=trusted_proxies)
     await enforce_request_controls(
         user_id=user_id,
         client_ip=client_ip,
         estimated_tokens=estimated_tokens,
+        is_pro=is_pro,
     )
 
     supabase = get_supabase_admin()
@@ -283,7 +285,6 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     if prompt_mode not in SUPPORTED_PROMPT_MODES:
         prompt_mode = normalize_prompt_level(None)
 
-    is_pro = await check_is_pro(user_id)
     if selected_mode == TECHNICAL_MODE and not is_pro:
         raise HTTPException(status_code=403, detail="Technical mode is a Pro feature")
     request_temperature = max(0.0, min(float(req.temperature), 1.0))

@@ -196,6 +196,7 @@ async def enforce_request_controls(
     user_id: str | None,
     client_ip: str | None,
     estimated_tokens: int,
+    is_pro: bool = False,
 ) -> None:
     """Apply auth-scoped quota, distributed rate limiting, and circuit breaker checks.
 
@@ -209,7 +210,7 @@ async def enforce_request_controls(
     is_authenticated = bool(user_id)
     fail_open = is_authenticated
 
-    if is_authenticated:
+    if is_authenticated and not is_pro:
         try:
             quota_result = await check_daily_quota(user_id=str(user_id), estimated_tokens=estimated_tokens)
         except Exception as exc:
