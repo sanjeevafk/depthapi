@@ -1,0 +1,265 @@
+import { create } from "zustand";
+import { supabase } from "../lib/supabase";
+import type { ChatMode, Conversation, Message, PromptMode } from "../types/chat";
+import type { Level } from "../types";
+import {
+  asString,
+  notifyError,
+  resolveWorkspaceState,
+  type Workspace,
+  type DepthLevel,
+  DEFAULT_DEPTH_LEVEL,
+} from "../lib/chatStoreUtils";
+import { useMessageStore } from "./useMessageStore";
+
+const supabaseConfigured =
+  Boolean(import.meta.env.VITE_SUPABASE_URL) &&
+  Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY);
+
+interface ConversationState {
+  conversations: Conversation[];
+  currentConversationId: string | null;
+  isDraftThread: boolean;
+  isLoading: boolean;
+
+  // Derived workspace state (kept here because it derives from active conversation)
+  workspace: Workspace;
+  depthLevel: DepthLevel;
+  currentMode: ChatMode;
+  currentPromptMode: PromptMode;
+  selectedLevel: Level;
+
+  // Actions
+  syncConversations: (conversations: Conversation[]) => void;
+  selectConversation: (id: string) => Promise<void>;
+  renameConversation: (id: string, title: string) => Promise<void>;
+  deleteConversation: (id: string) => Promise<void>;
+  setWorkspaceState: (
+    workspace: Workspace,
+    mode: ChatMode,
+    promptMode: PromptMode,
+    depthLevel: DepthLevel,
+  ) => void;
+  setCurrentConversationId: (id: string | null) => void;
+  setIsDraftThread: (draft: boolean) => void;
+  setIsLoading: (loading: boolean) => void;
+  upsertConversation: (conversation: Conversation) => void;
+}
+
+export const useConversationStore = create<ConversationState>((set, get) => ({
+  conversations: [],
+  currentConversationId: null,
+  isDraftThread: false,
+  isLoading: false,
+  workspace: "learn",
+  depthLevel: DEFAULT_DEPTH_LEVEL,
+  currentMode: "learning",
+  currentPromptMode: DEFAULT_DEPTH_LEVEL as PromptMode,
+  selectedLevel: DEFAULT_DEPTH_LEVEL as Level,
+
+  setWorkspaceState: (workspace, mode, promptMode, depthLevel) =>
+    set({ workspace, currentMode: mode, currentPromptMode: promptMode, depthLevel, selectedLevel: depthLevel as Level }),
+
+  setCurrentConversationId: (id) => set({ currentConversationId: id }),
+  setIsDraftThread: (draft) => set({ isDraftThread: draft }),
+  setIsLoading: (loading) => set({ isLoading: loading }),
+
+  upsertConversation: (conversation: Conversation) => {
+    set((state) => {
+      const exists = state.conversations.some((c) => c.id === conversation.id);
+      const next = exists
+        ? state.conversations.map((c) =>
+            c.id === conversation.id ? conversation : c,
+          )
+        : [conversation, ...state.conversations];
+      return {
+        conversations: next.sort((a, b) =>
+          a.updated_at < b.updated_at ? 1 : -1,
+        ),
+      };
+    });
+  },
+
+  syncConversations: (conversations: Conversation[]) => {
+    set((state) => {
+      if (state.isDraftThread && state.currentConversationId === null) {
+        return { conversations };
+      }
+
+      const preferredId = state.currentConversationId;
+      const hasPreferred = preferredId
+        ? conversations.some((item) => item.id === preferredId)
+        : false;
+      const nextConversationId = hasPreferred
+        ? preferredId
+        : (conversations[0]?.id ?? null);
+      const activeConversation = conversations.find(
+        (item) => item.id === nextConversationId,
+      );
+      const conversationMode =
+        asString(activeConversation?.mode) ||
+        asString(activeConversation?.settings?.mode);
+      const conversationPrompt =
+        asString(activeConversation?.settings?.prompt_mode) ||
+        asString(activeConversation?.settings?.mode) ||
+        asString(activeConversation?.mode) ||
+        state.currentPromptMode;
+      const nextWorkspaceState = resolveWorkspaceState(
+        conversationMode,
+        conversationPrompt,
+        state.depthLevel,
+      );
+      return {
+        conversations,
+        currentConversationId: nextConversationId,
+        isDraftThread: false,
+        workspace: nextWorkspaceState.workspace,
+        depthLevel: nextWorkspaceState.depthLevel,
+        currentMode: nextWorkspaceState.mode,
+        currentPromptMode: nextWorkspaceState.promptMode,
+        selectedLevel: nextWorkspaceState.depthLevel as Level,
+      };
+    });
+  },
+
+  selectConversation: async (id: string) => {
+    if (!id) return;
+    const state = get();
+
+    if (
+      state.currentConversationId === id &&
+      (state.isLoading || useMessageStore.getState().messageIds.length > 0)
+    ) {
+      return;
+    }
+
+    const activeConversation = state.conversations.find(
+      (item) => item.id === id,
+    );
+    const conversationMode =
+      asString(activeConversation?.mode) ||
+      asString(activeConversation?.settings?.mode) ||
+      state.currentMode;
+    const conversationPrompt =
+      asString(activeConversation?.settings?.prompt_mode) ||
+      asString(activeConversation?.settings?.mode) ||
+      asString(activeConversation?.mode) ||
+      state.currentPromptMode;
+    const nextWorkspaceState = resolveWorkspaceState(
+      conversationMode,
+      conversationPrompt,
+      state.depthLevel,
+    );
+
+    useMessageStore.getState().clearMessages();
+    set({
+      currentConversationId: id,
+      isDraftThread: false,
+      isLoading: true,
+      workspace: nextWorkspaceState.workspace,
+      depthLevel: nextWorkspaceState.depthLevel,
+      currentMode: nextWorkspaceState.mode,
+      currentPromptMode: nextWorkspaceState.promptMode,
+      selectedLevel: nextWorkspaceState.depthLevel as Level,
+    });
+
+    if (!supabaseConfigured) {
+      set({ isLoading: false });
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from("messages")
+        .select("id, role, content, attachments, metadata, created_at")
+        .eq("conversation_id", id)
+        .order("created_at", { ascending: true });
+
+      if (error) throw error;
+      useMessageStore.getState().setMessages((data ?? []) as Message[]);
+    } catch (error) {
+      console.error("Failed to fetch messages:", error);
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  renameConversation: async (id: string, title: string) => {
+    if (!id) return;
+    const trimmed = title.trim();
+    if (!trimmed) return;
+
+    const now = new Date().toISOString();
+    set((state) => ({
+      conversations: state.conversations
+        .map((item) =>
+          item.id === id ? { ...item, title: trimmed, updated_at: now } : item,
+        )
+        .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1)),
+    }));
+
+    if (!supabaseConfigured || id.startsWith("local-")) return;
+
+    try {
+      await supabase
+        .from("conversations")
+        .update({ title: trimmed, updated_at: now })
+        .eq("id", id);
+    } catch (error) {
+      console.error("Failed to rename conversation:", error);
+    }
+  },
+
+  deleteConversation: async (id: string) => {
+    if (!id) return;
+
+    const state = get();
+    const targetConversation = state.conversations.find((c) => c.id === id);
+    if (!targetConversation) return;
+    const isActive = state.currentConversationId === id;
+
+    if (!id.startsWith("local-") && supabaseConfigured) {
+      try {
+        const { error } = await supabase
+          .from("conversations")
+          .delete()
+          .eq("id", id);
+        if (error) throw error;
+      } catch (error) {
+        console.error("Failed to delete conversation:", error);
+        notifyError("Failed to delete conversation.");
+        return;
+      }
+    }
+
+    const remaining = get()
+      .conversations.filter((c) => c.id !== id)
+      .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+
+    if (!isActive) {
+      set({ conversations: remaining });
+      return;
+    }
+
+    if (remaining.length === 0) {
+      set({ conversations: remaining });
+      useMessageStore.getState().clearMessages();
+      set({
+        currentConversationId: null,
+        isDraftThread: true,
+        isLoading: false,
+      });
+      return;
+    }
+
+    const nextId = remaining[0].id;
+    set({
+      conversations: remaining,
+      currentConversationId: nextId,
+      isDraftThread: false,
+      isLoading: false,
+    });
+    useMessageStore.getState().clearMessages();
+    await get().selectConversation(nextId);
+  },
+}));
