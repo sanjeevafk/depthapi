@@ -72,6 +72,39 @@ async def test_query_stream_fallback_on_stream_exception(app_client, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_query_stream_fallback_allows_slow_generation_budget(app_client, monkeypatch, test_settings):
+    test_settings.environment = "production"
+    test_settings.stream_start_timeout_seconds = 0.2
+    test_settings.stream_max_seconds = 1
+    test_settings.stream_fallback_budget_seconds = 2
+    test_settings.stream_heartbeat_seconds = 0.05
+
+    async def crashing_stream(*_args, **_kwargs):
+        raise RuntimeError("stream exploded immediately")
+        yield "unreachable"
+
+    async def slow_fallback_generate(*_args, **_kwargs):
+        await asyncio.sleep(1.2)
+        return "slow fallback response"
+
+    monkeypatch.setattr(query_module, "generate_stream_explanation", crashing_stream)
+    monkeypatch.setattr(query_module, "generate_explanation", slow_fallback_generate)
+    monkeypatch.setattr(query_module, "get_settings", lambda: test_settings)
+
+    resp = await app_client.post(
+        "/api/query/stream",
+        json={"topic": "slow-fallback", "levels": ["eli5"], "mode": "learning"},
+    )
+
+    assert resp.status_code == 200
+    text = resp.text
+    assert "event: chunk" in text
+    assert "slow fallback response" in text
+    assert "event: done" in text
+    assert "event: error" not in text
+
+
+@pytest.mark.asyncio
 async def test_messages_idempotency_replay(app_client, monkeypatch, test_settings):
     test_settings.stream_start_timeout_seconds = 0.5
     test_settings.stream_max_seconds = 2
@@ -278,6 +311,66 @@ async def test_messages_fallback_on_stream_exception(app_client, monkeypatch, te
         assert "message fallback response" in resp.text
         assert "event: done" in resp.text
         assert "event: error" not in resp.text
+    finally:
+        main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
+
+
+@pytest.mark.asyncio
+async def test_messages_fallback_allows_slow_generation_budget(app_client, monkeypatch, test_settings):
+    test_settings.environment = "production"
+    test_settings.stream_start_timeout_seconds = 0.2
+    test_settings.stream_max_seconds = 1
+    test_settings.stream_fallback_budget_seconds = 2
+    test_settings.stream_heartbeat_seconds = 0.05
+
+    user = SimpleNamespace(id="user-stream-slow-fallback", email="user@example.com", user_metadata={})
+
+    async def fake_verify_token():
+        return {"user": user}
+
+    async def fake_is_pro(*_args, **_kwargs):
+        return False
+
+    async def crashing_stream(*_args, **_kwargs):
+        raise RuntimeError("stream exploded immediately")
+        yield "unreachable"
+
+    async def slow_fallback_generate(*_args, **_kwargs):
+        await asyncio.sleep(1.2)
+        return "message slow fallback response"
+
+    fake_supabase = FakeSupabase(
+        responses={
+            "conversations": {"id": "conv-slow-fallback", "user_id": user.id, "mode": "learning", "settings": {}},
+            "messages": [{"id": "assistant-slow-fallback"}],
+            "users": {"is_pro": False},
+        }
+    )
+
+    main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
+    monkeypatch.setattr(messages_module, "check_is_pro", fake_is_pro)
+    monkeypatch.setattr(messages_module, "generate_stream_explanation", crashing_stream)
+    monkeypatch.setattr(messages_module, "generate_explanation", slow_fallback_generate)
+    monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: fake_supabase)
+    monkeypatch.setattr(messages_module, "get_settings", lambda: test_settings)
+
+    try:
+        payload = {
+            "conversation_id": "conv-slow-fallback",
+            "content": "hello",
+            "client_generated_id": "c9f4ea73-a8ba-49fa-aef8-6b6bc8f4d7ca",
+            "assistant_client_id": "1a2ecfdf-1ed2-49e9-ae18-22f6e3fbf54b",
+            "mode": "learning",
+            "prompt_mode": "eli5",
+        }
+
+        resp = await app_client.post("/api/messages", json=payload)
+        assert resp.status_code == 200
+        text = resp.text
+        assert "event: delta" in text
+        assert "message slow fallback response" in text
+        assert "event: done" in text
+        assert "event: error" not in text
     finally:
         main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
 
