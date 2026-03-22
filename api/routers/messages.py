@@ -215,12 +215,14 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
             idempotency_claimed = True
 
+    is_pro = await check_is_pro(user_id)
     estimated_tokens = estimate_tokens_for_text(content)
     client_ip = _resolve_client_ip(request, trusted_proxies=trusted_proxies)
     await enforce_request_controls(
         user_id=user_id,
         client_ip=client_ip,
         estimated_tokens=estimated_tokens,
+        is_pro=is_pro,
     )
 
     supabase = get_supabase_admin()
@@ -283,7 +285,6 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     if prompt_mode not in SUPPORTED_PROMPT_MODES:
         prompt_mode = normalize_prompt_level(None)
 
-    is_pro = await check_is_pro(user_id)
     if selected_mode == TECHNICAL_MODE and not is_pro:
         raise HTTPException(status_code=403, detail="Technical mode is a Pro feature")
     request_temperature = max(0.0, min(float(req.temperature), 1.0))
@@ -746,38 +747,49 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                         retry=bool(req.regenerate),
                         sampled=False,
                     )
+            if aborted:
+                await cache_set(
+                    idempotency_key,
+                    {"status": "failed", "message_id": client_message_id},
+                    ttl=idempotency_ttl_seconds,
+                )
+                return
+            if full_content.strip():
+                if not req.regenerate and not response_truncated:
+                    await cache_set(cache_key, {"response": full_content}, ttl=cache_ttl_seconds)
+                await cache_set(
+                    idempotency_key,
+                    {
+                        "status": "completed",
+                        "response": full_content,
+                        "assistant_message_id": assistant_message_id,
+                        "mode": selected_mode,
+                        "prompt_mode": prompt_mode,
+                        "partial": True,
+                    },
+                    ttl=idempotency_ttl_seconds,
+                )
+                mode_label = ""
+                if selected_mode == TECHNICAL_MODE:
+                    mode_label = "technical "
+                elif selected_mode == SOCRATIC_MODE:
+                    mode_label = "socratic "
+                yield emit(
+                    "delta",
+                    {
+                        "delta": f"\n\n[Connection interrupted. Partial {mode_label}response delivered.]",
+                        "assistant_message_id": assistant_message_id,
+                    },
+                )
+                yield emit("done", "[DONE]")
+                return
             await cache_set(
                 idempotency_key,
                 {"status": "failed", "message_id": client_message_id},
                 ttl=idempotency_ttl_seconds,
             )
-            if not aborted:
-                if full_content.strip():
-                    if not req.regenerate and not response_truncated:
-                        await cache_set(cache_key, {"response": full_content}, ttl=cache_ttl_seconds)
-                    await cache_set(
-                        idempotency_key,
-                        {
-                            "status": "completed",
-                            "response": full_content,
-                            "assistant_message_id": assistant_message_id,
-                            "mode": selected_mode,
-                            "prompt_mode": prompt_mode,
-                            "partial": True,
-                        },
-                        ttl=idempotency_ttl_seconds,
-                    )
-                    yield emit(
-                        "delta",
-                        {
-                            "delta": "\n\n[Connection interrupted. Partial technical response delivered.]",
-                            "assistant_message_id": assistant_message_id,
-                        },
-                    )
-                    yield emit("done", "[DONE]")
-                    return
-                yield emit("error", {"error": "Streaming failed"})
-                yield emit("done", "[DONE]")
+            yield emit("error", {"error": "Streaming failed"})
+            yield emit("done", "[DONE]")
         finally:
             total_ms = (time.perf_counter() - start_time) * 1000
             avg_chunk_interval_ms = None

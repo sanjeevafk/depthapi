@@ -179,6 +179,7 @@ async def query_topic(
         user_id=str(effective_user_id) if effective_user_id else None,
         client_ip=request.client.host if request.client else "unknown",
         estimated_tokens=estimated_tokens,
+        is_pro=is_verified_pro,
     )
 
     explanations: dict[str, str] = {}
@@ -322,6 +323,7 @@ async def query_topic_stream(
         user_id=str(effective_user_id) if effective_user_id else None,
         client_ip=request.client.host if request.client else "unknown",
         estimated_tokens=estimated_tokens,
+        is_pro=is_verified_pro,
     )
 
     message_id = None
