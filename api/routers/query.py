@@ -647,7 +647,8 @@ async def query_topic_stream(
                         sampled=False,
                     )
             if full_content.strip():
-                yield emit("chunk", {"chunk": "\n\n[Connection interrupted. Partial technical response delivered.]"})
+                mode_label = "technical " if mode == TECHNICAL_MODE else ""
+                yield emit("chunk", {"chunk": f"\n\n[Connection interrupted. Partial {mode_label}response delivered.]"})
                 yield emit("done", "[DONE]")
                 if full_content.strip():
                     await cache_set(_cache_key(topic, level, mode), {"text": full_content})
@@ -723,56 +724,101 @@ async def query_topic_stream(
     )
 
 
-async def save_to_history(user, topic: str, levels: list[str], mode: str):
-    """Background task to save query to history."""
+async def save_to_history(user, topic: str, levels: list[str], mode: str) -> None:
+    """
+    Persist a query to the user's history.
+
+    Failures are logged as errors with full context but do not propagate —
+    history loss is preferable to crashing the response task.
+    Typically called via _persist_history_safely() for bounded execution.
+    """
+    user_id_hash = anonymize_user_id(str(getattr(user, "id", "") or ""))
+    topic_hash = anonymize_text(topic)
+
     try:
         await ensure_user_exists(user)
-        supabase = get_supabase_admin()
-        if not supabase:
-            logger.error("save_to_history_task_no_supabase_admin")
-            return
+    except Exception as exc:
+        logger.error(
+            "save_to_history_ensure_user_failed",
+            error=str(exc),
+            error_type=type(exc).__name__,
+            user_id_hash=user_id_hash,
+            sampled=False,
+        )
+        return  # cannot proceed without a valid user row
 
-        def _fetch_existing():
-            return (
-                supabase.table("history")
-                .select("id, levels")
-                .eq("user_id", user.id)
-                .eq("topic", topic)
-                .execute()
-            )
+    supabase = get_supabase_admin()
+    if not supabase:
+        logger.error(
+            "save_to_history_no_supabase_admin",
+            user_id_hash=user_id_hash,
+            sampled=False,
+        )
+        return
 
-        existing = await asyncio.to_thread(_fetch_existing)
+    normalized_mode = normalize_mode(mode)
 
-        normalized_mode = normalize_mode(mode)
+    try:
+        existing = await asyncio.to_thread(
+            lambda: supabase.table("history")
+            .select("id, levels")
+            .eq("user_id", user.id)
+            .eq("topic", topic)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error(
+            "save_to_history_fetch_failed",
+            error=str(exc),
+            error_type=type(exc).__name__,
+            user_id_hash=user_id_hash,
+            topic_hash=topic_hash,
+            sampled=False,
+        )
+        return
 
+    try:
         data = getattr(existing, "data", None)
         if isinstance(data, list) and data and isinstance(data[0], dict):
             item_id = data[0].get("id")
             existing_levels = set(data[0].get("levels") or [])
             new_levels = list(existing_levels.union(set(levels)))
-            def _update_existing():
-                return (
-                    supabase.table("history")
-                    .update({"levels": new_levels, "mode": normalized_mode})
-                    .eq("id", item_id)
-                    .execute()
-                )
-
-            await asyncio.to_thread(_update_existing)
+            await asyncio.to_thread(
+                lambda: supabase.table("history")
+                .update({"levels": new_levels, "mode": normalized_mode})
+                .eq("id", item_id)
+                .execute()
+            )
+            logger.debug(
+                "save_to_history_updated",
+                user_id_hash=user_id_hash,
+                topic_hash=topic_hash,
+                mode=normalized_mode,
+            )
         else:
-            def _insert_new():
-                return (
-                    supabase.table("history")
-                    .insert({"user_id": user.id, "topic": topic, "levels": levels, "mode": normalized_mode})
-                    .execute()
-                )
-
-            await asyncio.to_thread(_insert_new)
+            await asyncio.to_thread(
+                lambda: supabase.table("history")
+                .insert({
+                    "user_id": user.id,
+                    "topic": topic,
+                    "levels": levels,
+                    "mode": normalized_mode,
+                })
+                .execute()
+            )
+            logger.debug(
+                "save_to_history_inserted",
+                user_id_hash=user_id_hash,
+                topic_hash=topic_hash,
+                mode=normalized_mode,
+            )
     except Exception as exc:
         logger.error(
-            "save_to_history_task_error",
+            "save_to_history_write_failed",
             error=str(exc),
-            user_id_hash=anonymize_user_id(str(getattr(user, "id", "") or "") or None),
-            topic_hash=anonymize_text(topic),
+            error_type=type(exc).__name__,
+            user_id_hash=user_id_hash,
+            topic_hash=topic_hash,
+            mode=normalized_mode,
             sampled=False,
         )

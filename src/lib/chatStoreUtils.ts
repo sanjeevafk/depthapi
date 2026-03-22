@@ -181,7 +181,12 @@ export const notifyError = (message: string) => {
   }
 };
 
-export const resolveMessageKey = (message: Message) => {
+/**
+ * Returns the canonical store key for a message.
+ * Preference order: clientGeneratedId > assistant_client_id > client_id > serverMessageId > id
+ * This key is used as the dict key in messagesById and as entries in messageIds.
+ */
+export const resolveMessageKey = (message: Message): string => {
   return (
     message.clientGeneratedId ||
     message.metadata?.assistant_client_id ||
@@ -191,69 +196,57 @@ export const resolveMessageKey = (message: Message) => {
   );
 };
 
-export const messagesMatch = (existing: Message, incoming: Message) => {
-  if (existing.id === incoming.id) return true;
-  if (
-    existing.clientGeneratedId &&
-    incoming.clientGeneratedId &&
-    existing.clientGeneratedId === incoming.clientGeneratedId
-  ) {
+/**
+ * Returns true if two message objects refer to the same logical message.
+ *
+ * Resolution order:
+ * 1. Canonical clientId match (set at message creation, most reliable)
+ * 2. Server-assigned id match (for messages loaded from the database)
+ * 3. Legacy fallback for messages created before this change
+ *
+ * Do not add new branches. If a new identity field is introduced,
+ * add it to the canonical clientId derivation in resolveMessageKey()
+ * instead.
+ */
+export const messagesMatch = (existing: Message, incoming: Message): boolean => {
+  // 1. Canonical client ID — most reliable, set at creation time
+  const existingClientId =
+    existing.clientGeneratedId ||
+    existing.metadata?.assistant_client_id ||
+    existing.metadata?.client_id;
+
+  const incomingClientId =
+    incoming.clientGeneratedId ||
+    incoming.metadata?.assistant_client_id ||
+    incoming.metadata?.client_id;
+
+  if (existingClientId && incomingClientId && existingClientId === incomingClientId) {
     return true;
   }
-  if (
-    incoming.metadata?.assistant_client_id &&
-    existing.clientGeneratedId === incoming.metadata.assistant_client_id
-  ) {
+
+  // 2. Server-assigned UUID — for messages loaded from Supabase that never
+  //    had a client ID (e.g. messages from a previous session)
+  if (existing.id && incoming.id && existing.id === incoming.id) {
     return true;
   }
-  if (
-    existing.metadata?.assistant_client_id &&
-    incoming.clientGeneratedId &&
-    existing.metadata.assistant_client_id === incoming.clientGeneratedId
-  ) {
-    return true;
-  }
+
+  // 3. Cross-reference: server id on one side, serverMessageId on the other
+  //    Handles the transition window when a local message gets its server id
   if (
     existing.serverMessageId &&
     incoming.id &&
     existing.serverMessageId === incoming.id
-  )
+  ) {
     return true;
+  }
   if (
     incoming.serverMessageId &&
     existing.id &&
     incoming.serverMessageId === existing.id
-  )
-    return true;
-  if (
-    incoming.metadata?.client_id &&
-    existing.id === incoming.metadata.client_id
-  )
-    return true;
-  if (
-    existing.metadata?.client_id &&
-    existing.metadata.client_id === incoming.id
-  )
-    return true;
-  if (
-    incoming.metadata?.client_id &&
-    existing.clientGeneratedId === incoming.metadata.client_id
-  )
-    return true;
-  if (
-    existing.metadata?.client_id &&
-    incoming.clientGeneratedId &&
-    existing.metadata.client_id === incoming.clientGeneratedId
   ) {
     return true;
   }
-  if (
-    incoming.metadata?.client_id &&
-    existing.metadata?.client_id &&
-    existing.metadata.client_id === incoming.metadata.client_id
-  ) {
-    return true;
-  }
+
   return false;
 };
 
