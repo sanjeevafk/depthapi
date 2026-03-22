@@ -69,6 +69,7 @@ async function fetchAPI<T>(
   path: string,
   options?: RequestInit & { responseType?: "json" | "blob" },
 ): Promise<T> {
+  let timeoutFired = false;
   const session = await getSupabaseSession();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -87,7 +88,10 @@ async function fetchAPI<T>(
   headers["x-request-id"] = createRequestId();
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 90000); // 90 seconds
+  const timeoutId = setTimeout(() => {
+    timeoutFired = true;
+    controller.abort();
+  }, 90000); // 90 seconds
   const externalSignal = options?.signal;
   const abortSignalAny = (
     AbortSignal as unknown as {
@@ -135,8 +139,12 @@ async function fetchAPI<T>(
     return await res.json();
   } catch (err) {
     cleanup();
-    if (isAbortError(err))
-      throw new Error("Request timed out. Please try again.");
+    if (isAbortError(err)) {
+      if (timeoutFired) {
+        throw new Error("Request timed out. Please try again.");
+      }
+      throw normalizeError(err);
+    }
     throw normalizeError(err);
   }
 }
@@ -148,10 +156,14 @@ export async function getPinnedTopics(): Promise<PinnedTopic[]> {
 export async function getHealth(): Promise<HealthResponse> {
   return fetchAPI("/api/health");
 }
-export async function queryTopic(req: QueryRequest): Promise<QueryResponse> {
+export async function queryTopic(
+  req: QueryRequest,
+  signal?: AbortSignal,
+): Promise<QueryResponse> {
   return fetchAPI("/api/query", {
     method: "POST",
     body: JSON.stringify(req),
+    signal,
   });
 }
 
@@ -177,12 +189,15 @@ export async function queryTopicStream(
   const baseDelay = 750;
 
   const fallbackToNonStream = async (reason: string): Promise<void> => {
+    if (signal?.aborted) {
+      return;
+    }
     try {
       console.warn(
         "Streaming unavailable, falling back to non-stream response:",
         reason,
       );
-      const data = await queryTopic(req);
+      const data = await queryTopic(req, signal);
       const preferredLevel = req.levels?.[0];
       const levelKey =
         preferredLevel && data.explanations?.[preferredLevel]
@@ -241,10 +256,14 @@ export async function queryTopicStream(
           );
         });
 
-        const { done, value } = await Promise.race([
-          readPromise,
-          timeoutPromise,
-        ]);
+        let readResult: ReadableStreamReadResult<Uint8Array>;
+        try {
+          readResult = await Promise.race([readPromise, timeoutPromise]);
+        } catch (e) {
+          reader.cancel().catch(() => {});
+          throw e;
+        }
+        const { done, value } = readResult;
         if (timeoutId) {
           clearTimeout(timeoutId);
         }
