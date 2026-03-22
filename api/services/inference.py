@@ -559,12 +559,9 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             telemetry_sink=stream_telemetry,
         ):
             socratic_chunks.append(chunk)
-            yield chunk  # yield immediately - do not buffer
-
-        # NOTE: Socratic constraint enforcement (question capping) is now
-        # the caller's responsibility. The full response is available in
-        # the router's accumulated `full_content` after streaming ends.
-        # This trade-off is intentional: streaming health > post-processing.
+        constrained_response = _enforce_socratic_response_constraints("".join(socratic_chunks))
+        for index in range(0, len(constrained_response), 400):
+            yield constrained_response[index : index + 400]
     else:
         async for chunk in stream_chat_completion(
             model=alias,

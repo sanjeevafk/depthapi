@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useConversationStore } from "../stores/useConversationStore";
+import { useMessageStore } from "../stores/useMessageStore";
 
 type MockBuilder = {
   select: () => MockBuilder;
@@ -43,11 +45,27 @@ vi.mock("../lib/supabase", () => ({
 
 import { useChatStore } from "./useChatStore";
 
-const initialState = useChatStore.getInitialState();
+const resetStore = () => {
+  useChatStore.setState(
+    {
+      theme: "dark",
+      isSidebarOpen: false,
+      isPro: false,
+      gatedModes: ["technical"],
+      upgradeModalOpen: false,
+      regenerationModalOpen: false,
+      regenerationTargetId: null,
+      regeneratingMessageId: null,
+      streamControllers: {},
+    } as never,
+  );
+  useMessageStore.setState(useMessageStore.getInitialState(), true);
+  useConversationStore.setState(useConversationStore.getInitialState(), true);
+};
 
 describe("useChatStore", () => {
   beforeEach(() => {
-    useChatStore.setState(initialState, true);
+    resetStore();
     vi.restoreAllMocks();
   });
 
@@ -58,8 +76,10 @@ describe("useChatStore", () => {
   it("aborts active streams when starting a new thread", () => {
     const controller = new AbortController();
 
-    useChatStore.setState({
+    useConversationStore.setState({
       currentConversationId: "local-conv-1",
+    });
+    useMessageStore.setState({
       messageIds: ["assistant-1"],
       messagesById: {
         "assistant-1": {
@@ -71,8 +91,8 @@ describe("useChatStore", () => {
           isStreaming: true,
         },
       },
-      streamControllers: { "assistant-client-1": controller },
     });
+    useChatStore.setState({ streamControllers: { "assistant-client-1": controller } });
 
     useChatStore.getState().startNewThread();
 
@@ -85,7 +105,7 @@ describe("useChatStore", () => {
   });
 
   it("deletes active conversation and switches to newest remaining conversation", async () => {
-    useChatStore.setState({
+    useConversationStore.setState({
       conversations: [
         {
           id: "local-old",
@@ -116,7 +136,7 @@ describe("useChatStore", () => {
   });
 
   it("deletes the last active conversation and starts a new draft thread", async () => {
-    useChatStore.setState({
+    useConversationStore.setState({
       conversations: [
         {
           id: "local-only",
@@ -152,7 +172,7 @@ describe("useChatStore", () => {
         ),
       );
 
-    useChatStore.setState({
+    useConversationStore.setState({
       currentConversationId: "local-conv-1",
       conversations: [
         {
@@ -164,6 +184,8 @@ describe("useChatStore", () => {
           updated_at: "2026-01-01T00:00:00.000Z",
         },
       ],
+    });
+    useMessageStore.setState({
       messageIds: ["user-1", "assistant-1"],
       messagesById: {
         "user-1": {
@@ -225,7 +247,7 @@ describe("useChatStore", () => {
       }),
     );
 
-    useChatStore.setState({
+    useConversationStore.setState({
       currentConversationId: "local-conv-2",
       conversations: [
         {
@@ -237,6 +259,8 @@ describe("useChatStore", () => {
           updated_at: "2026-01-01T00:00:00.000Z",
         },
       ],
+    });
+    useMessageStore.setState({
       messageIds: ["user-2", "assistant-2"],
       messagesById: {
         "user-2": {
@@ -273,6 +297,8 @@ describe("useChatStore", () => {
 
     useChatStore.setState({
       regeneratingMessageId: "assistant-locked",
+    });
+    useMessageStore.setState({
       messageIds: ["user-3", "assistant-locked"],
       messagesById: {
         "user-3": {
@@ -321,7 +347,7 @@ const findAssistantMessage = () => {
 
 describe("useChatStore streaming", () => {
   beforeEach(() => {
-    useChatStore.setState(initialState, true);
+    resetStore();
     vi.restoreAllMocks();
     vi.useRealTimers();
   });
