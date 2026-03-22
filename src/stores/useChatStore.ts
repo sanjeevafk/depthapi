@@ -12,6 +12,7 @@ import {
   trackTelemetry,
 } from "../lib/monitoring";
 import { sendChat } from "../services/chatService";
+import type { ApiError } from "../lib/httpErrors";
 import {
   makeLocalId,
   makeClientId,
@@ -638,7 +639,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return;
       }
 
+      const apiError = error as ApiError;
+      const errorDetail = apiError.detail;
+      const retryAllowed = errorDetail?.retry_allowed !== false;
       let errorMessage = getErrorMessage(error, "Failed to send message");
+      if (errorDetail?.type === "quota_exceeded") {
+        errorMessage = "Daily quota exceeded. Please try again after your quota resets.";
+      }
       if (/timed out/i.test(errorMessage)) errorMessage = "Streaming timed out. Retry.";
       if (/duplicate request already in progress/i.test(errorMessage)) {
         errorMessage = "Retry will send a new request.";
@@ -650,15 +657,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       );
       notifyError(errorMessage);
 
-      cachePendingSync({
-        id: assistantClientId,
-        content: trimmed,
-        mode: requestedMode,
-        promptMode: effectivePromptMode,
-        createdAt: new Date().toISOString(),
-        clientMessageId,
-        assistantClientId,
-      });
+      if (retryAllowed) {
+        cachePendingSync({
+          id: assistantClientId,
+          content: trimmed,
+          mode: requestedMode,
+          promptMode: effectivePromptMode,
+          createdAt: new Date().toISOString(),
+          clientMessageId,
+          assistantClientId,
+        });
+      }
 
       useMessageStore.getState().updateMessageByClientId(assistantClientId, (msg) => ({
         ...msg,
@@ -666,14 +675,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         isRegenerating: false,
         error: errorMessage,
         syncStatus: "failed",
-        retryPayload: {
-          content: trimmed,
-          mode: requestedMode,
-          promptMode: effectivePromptMode,
-          temperature: requestTemperature,
-          clientMessageId,
-          assistantClientId,
-        },
+        retryPayload: retryAllowed
+          ? {
+              content: trimmed,
+              mode: requestedMode,
+              promptMode: effectivePromptMode,
+              temperature: requestTemperature,
+              clientMessageId,
+              assistantClientId,
+            }
+          : undefined,
       }));
     } finally {
       controller.abort();
