@@ -219,8 +219,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const controller = get().streamControllers[clientId];
     if (controller) controller.abort();
     set((state) => {
-      const { [clientId]: _, ...rest } = state.streamControllers;
-      return { streamControllers: rest };
+      return {
+        streamControllers: Object.fromEntries(
+          Object.entries(state.streamControllers).filter(([key]) => key !== clientId),
+        ),
+      };
     });
     useMessageStore.getState().updateMessageByClientId(clientId, (msg) => ({
       ...msg,
@@ -672,8 +675,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } finally {
       controller.abort();
       set((state) => {
-        const { [assistantClientId]: _, ...rest } = state.streamControllers;
-        return { streamControllers: rest };
+        return {
+          streamControllers: Object.fromEntries(
+            Object.entries(state.streamControllers).filter(
+              ([key]) => key !== assistantClientId,
+            ),
+          ),
+        };
       });
       const stillStreaming = useMessageStore
         .getState()
