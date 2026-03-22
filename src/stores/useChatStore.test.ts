@@ -320,3 +320,73 @@ describe("useChatStore", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
+
+const seedConversation = () => {
+  const now = new Date().toISOString();
+  useChatStore.setState({
+    conversations: [
+      {
+        id: "local-test",
+        title: "Test",
+        mode: "learning",
+        settings: { mode: "learning", prompt_mode: "eli5" },
+        created_at: now,
+        updated_at: now,
+      },
+    ],
+    currentConversationId: "local-test",
+  });
+};
+
+const findAssistantMessage = () => {
+  const { messageIds, messagesById } = useChatStore.getState();
+  return messageIds
+    .map((id) => messagesById[id])
+    .find((message) => message?.role === "assistant");
+};
+
+describe("useChatStore streaming", () => {
+  beforeEach(() => {
+    useChatStore.setState(initialState, true);
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("aborts the underlying fetch when a stream read timeout occurs", async () => {
+    let abortFired = false;
+
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      init?.signal?.addEventListener("abort", () => {
+        abortFired = true;
+      });
+
+      const stream = new ReadableStream<Uint8Array>({
+        start() {
+          // Never enqueue chunks to trigger stream read timeout.
+        },
+      });
+
+      return Promise.resolve(
+        new Response(stream, {
+          headers: { "content-type": "text/event-stream" },
+          status: 200,
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.useFakeTimers();
+
+    seedConversation();
+    const sendPromise = useChatStore.getState().sendMessage("stall test");
+
+    // Advance past the 20s READ_TIMEOUT_MS
+    await vi.advanceTimersByTimeAsync(21_000);
+    await sendPromise;
+
+    expect(abortFired).toBe(true);
+
+    const assistant = findAssistantMessage();
+    expect(assistant?.isStreaming).toBe(false);
+    expect(assistant?.syncStatus).toBe("failed");
+  });
+});
