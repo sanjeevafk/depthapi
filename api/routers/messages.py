@@ -20,7 +20,7 @@ from services.inference import generate_explanation, generate_stream_explanation
 from services.llm_client import get_litellm_config_state
 from services.llm_errors import LLMUnavailable
 from services.rate_limit import enforce_request_controls, estimate_tokens_for_text
-from services.streaming import SseEventBuilder
+from services.streaming import SseEventBuilder, SSE_RESPONSE_HEADERS
 from utils import (
     DEFAULT_CHAT_MODE,
     PROMPT_MODE_ALIASES,
@@ -113,7 +113,7 @@ def _build_replay_response(
     return StreamingResponse(
         replay_generator(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        headers=SSE_RESPONSE_HEADERS,
     )
 
 
@@ -271,7 +271,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         fallback_budget_seconds = max(fallback_budget_seconds, 4.0)
         fallback_timeout_seconds = max(fallback_budget_seconds, 4.0)
     else:
-        cap = 2.0 if is_prod else 5.0
+        cap = 8.0 if is_prod else 15.0
         stream_start_timeout_seconds = min(max(raw_start_timeout, 0.1), cap)
 
     requested_prompt_mode = PROMPT_MODE_ALIASES.get(req.prompt_mode or "", req.prompt_mode or "")
@@ -865,5 +865,5 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        headers=SSE_RESPONSE_HEADERS,
     )

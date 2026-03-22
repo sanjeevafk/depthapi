@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from threading import Lock
+from dataclasses import dataclass
 from typing import Any
 
 import orjson
+
+SSE_RESPONSE_HEADERS: dict[str, str] = {
+    "Cache-Control": "no-cache",
+    "X-Accel-Buffering": "no",
+}
 
 
 def _normalize_data_lines(data: str) -> list[str]:
@@ -29,16 +33,11 @@ def format_sse_json(event: str, payload: dict[str, Any], event_id: int) -> str:
 @dataclass
 class SseEventBuilder:
     event_id: int = 0
-    _lock: Lock = field(default_factory=Lock, repr=False, init=False)
 
     def emit(self, event: str, data: str) -> str:
-        with self._lock:
-            self.event_id += 1
-            event_id = self.event_id
-        return format_sse(event, data, event_id)
+        self.event_id += 1
+        return format_sse(event, data, self.event_id)
 
     def emit_json(self, event: str, payload: dict[str, Any]) -> str:
-        with self._lock:
-            self.event_id += 1
-            event_id = self.event_id
-        return format_sse_json(event, payload, event_id)
+        self.event_id += 1
+        return format_sse_json(event, payload, self.event_id)

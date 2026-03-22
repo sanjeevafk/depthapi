@@ -1142,7 +1142,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const streamFromResponse = async (
         response: Response,
         handler: (payload: unknown) => void,
-      ) => {
+        signal: AbortSignal,
+      ): Promise<void> => {
         if (!response.body) {
           throw new Error("Streaming not supported in this environment");
         }
@@ -1155,57 +1156,70 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
-        // Technical responses can pause between chunks while tools/models run.
-        const READ_TIMEOUT_MS = 45000;
+        const READ_TIMEOUT_MS = 20_000;
         let doneReceived = false;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
-        while (true) {
-          const { value, done } = await Promise.race([
-            reader.read(),
-            new Promise<ReadableStreamReadResult<Uint8Array>>((_, reject) =>
-              setTimeout(
-                () => reject(new Error("Stream read timed out")),
-                READ_TIMEOUT_MS,
-              ),
-            ),
-          ]);
-          if (done) break;
+        const abortHandler = () => {
+          clearTimeout(timeoutId);
+          reader.cancel().catch(() => {});
+        };
+        signal.addEventListener("abort", abortHandler, { once: true });
 
-          buffer += decoder.decode(value, { stream: true });
+        try {
+          while (true) {
+            if (signal.aborted) break;
 
-          const { events, remainder } = splitSseEvents(buffer);
-          buffer = remainder;
-
-          for (const eventBlock of events) {
-            const parsed = parseSseEvent(eventBlock);
-            if (!parsed) {
-              console.warn("Skipping invalid SSE event:", eventBlock);
-              continue;
-            }
-            if (parsed.event === "heartbeat") continue;
-            if (parsed.event === "done" || parsed.data === "[DONE]") {
-              doneReceived = true;
-              break;
-            }
-
-            let payload: unknown = null;
+            let result: ReadableStreamReadResult<Uint8Array>;
             try {
-              payload = JSON.parse(parsed.data);
-            } catch {
-              payload = { delta: parsed.data };
+              result = await Promise.race([
+                reader.read(),
+                new Promise<ReadableStreamReadResult<Uint8Array>>((_, reject) => {
+                  timeoutId = setTimeout(
+                    () => reject(new Error("Stream read timed out")),
+                    READ_TIMEOUT_MS,
+                  );
+                }),
+              ]);
+            } finally {
+              clearTimeout(timeoutId);
             }
 
-            handler(payload);
-          }
+            const { value, done } = result;
 
-          if (doneReceived) {
-            try {
-              await reader.cancel();
-            } catch {
-              // ignore
+            buffer += done
+              ? decoder.decode(undefined, { stream: false })
+              : decoder.decode(value, { stream: true });
+
+            const { events, remainder } = splitSseEvents(buffer);
+            buffer = remainder;
+
+            for (const eventBlock of events) {
+              const parsed = parseSseEvent(eventBlock);
+              if (!parsed) {
+                console.warn("[sse] Skipping invalid SSE event:", eventBlock);
+                continue;
+              }
+              if (parsed.event === "heartbeat") continue;
+              if (parsed.event === "done" || parsed.data === "[DONE]") {
+                doneReceived = true;
+                break;
+              }
+
+              let payload: unknown;
+              try {
+                payload = JSON.parse(parsed.data);
+              } catch {
+                payload = { delta: parsed.data };
+              }
+              handler(payload);
             }
-            break;
+
+            if (done || doneReceived) break;
           }
+        } finally {
+          signal.removeEventListener("abort", abortHandler);
+          reader.cancel().catch(() => {});
         }
       };
 
@@ -1316,8 +1330,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             throw await buildHttpError(fallbackResponse);
           }
 
-          await streamFromResponse(fallbackResponse, (payload) =>
-            handleStreamingPayload(payload, "chunk"),
+          await streamFromResponse(
+            fallbackResponse,
+            (payload) => handleStreamingPayload(payload, "chunk"),
+            controller.signal,
           );
           return;
         };
@@ -1363,8 +1379,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
           throw await buildHttpError(response);
         }
 
-        await streamFromResponse(response, (payload) =>
-          handleStreamingPayload(payload, "delta"),
+        await streamFromResponse(
+          response,
+          (payload) => handleStreamingPayload(payload, "delta"),
+          controller.signal,
         );
       };
 
@@ -1618,6 +1636,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         retryPayload,
       }));
     } finally {
+      controller.abort();
       set((state) => {
         const { [assistantClientId]: removedController, ...rest } =
           state.streamControllers;
