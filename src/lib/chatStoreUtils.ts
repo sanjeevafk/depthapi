@@ -277,6 +277,10 @@ export const buildMessageRegistry = (messages: Message[]) => {
 
   for (const message of messages) {
     const key = resolveMessageKey(message);
+    if (!key) {
+      console.warn("Message has no identifiable key, skipping:", message);
+      continue;
+    }
     if (messagesById[key]) {
       messagesById[key] = { ...messagesById[key], ...message };
       continue;
