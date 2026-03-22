@@ -747,38 +747,49 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                         retry=bool(req.regenerate),
                         sampled=False,
                     )
+            if aborted:
+                await cache_set(
+                    idempotency_key,
+                    {"status": "failed", "message_id": client_message_id},
+                    ttl=idempotency_ttl_seconds,
+                )
+                return
+            if full_content.strip():
+                if not req.regenerate and not response_truncated:
+                    await cache_set(cache_key, {"response": full_content}, ttl=cache_ttl_seconds)
+                await cache_set(
+                    idempotency_key,
+                    {
+                        "status": "completed",
+                        "response": full_content,
+                        "assistant_message_id": assistant_message_id,
+                        "mode": selected_mode,
+                        "prompt_mode": prompt_mode,
+                        "partial": True,
+                    },
+                    ttl=idempotency_ttl_seconds,
+                )
+                mode_label = ""
+                if selected_mode == TECHNICAL_MODE:
+                    mode_label = "technical "
+                elif selected_mode == SOCRATIC_MODE:
+                    mode_label = "socratic "
+                yield emit(
+                    "delta",
+                    {
+                        "delta": f"\n\n[Connection interrupted. Partial {mode_label}response delivered.]",
+                        "assistant_message_id": assistant_message_id,
+                    },
+                )
+                yield emit("done", "[DONE]")
+                return
             await cache_set(
                 idempotency_key,
                 {"status": "failed", "message_id": client_message_id},
                 ttl=idempotency_ttl_seconds,
             )
-            if not aborted:
-                if full_content.strip():
-                    if not req.regenerate and not response_truncated:
-                        await cache_set(cache_key, {"response": full_content}, ttl=cache_ttl_seconds)
-                    await cache_set(
-                        idempotency_key,
-                        {
-                            "status": "completed",
-                            "response": full_content,
-                            "assistant_message_id": assistant_message_id,
-                            "mode": selected_mode,
-                            "prompt_mode": prompt_mode,
-                            "partial": True,
-                        },
-                        ttl=idempotency_ttl_seconds,
-                    )
-                    yield emit(
-                        "delta",
-                        {
-                            "delta": "\n\n[Connection interrupted. Partial technical response delivered.]",
-                            "assistant_message_id": assistant_message_id,
-                        },
-                    )
-                    yield emit("done", "[DONE]")
-                    return
-                yield emit("error", {"error": "Streaming failed"})
-                yield emit("done", "[DONE]")
+            yield emit("error", {"error": "Streaming failed"})
+            yield emit("done", "[DONE]")
         finally:
             total_ms = (time.perf_counter() - start_time) * 1000
             avg_chunk_interval_ms = None
