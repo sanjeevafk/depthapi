@@ -341,6 +341,7 @@ async def query_topic_stream(
         1.0,
         min(float(getattr(settings, "stream_fallback_budget_seconds", 6)), float(stream_max_seconds)),
     )
+    fallback_timeout_seconds = max(fallback_budget_seconds, 3.0)
     heartbeat_seconds = min(
         max(float(getattr(settings, "stream_heartbeat_seconds", 2)), 0.1),
         2,
@@ -364,6 +365,7 @@ async def query_topic_stream(
         technical_cap = max(4.0, min(float(stream_max_seconds) * 0.75, 20.0))
         stream_start_timeout_seconds = min(max(technical_start_timeout, 2.0), technical_cap)
         fallback_budget_seconds = max(fallback_budget_seconds, 4.0)
+        fallback_timeout_seconds = max(fallback_budget_seconds, 4.0)
     else:
         cap = 2.0 if is_prod else 5.0
         stream_start_timeout_seconds = min(max(raw_start_timeout, 0.1), cap)
@@ -557,13 +559,7 @@ async def query_topic_stream(
                             user_id=user_id_raw,
                             telemetry_sink=telemetry_sink,
                         ),
-                        timeout=max(
-                            min(
-                                stream_max_seconds - (time.perf_counter() - start_time),
-                                fallback_budget_seconds,
-                            ),
-                            1,
-                        ),
+                        timeout=fallback_timeout_seconds,
                     )
                 except Exception as exc:
                     logger.error(
@@ -626,13 +622,7 @@ async def query_topic_stream(
                             user_id=user_id_raw,
                             telemetry_sink=telemetry_sink,
                         ),
-                        timeout=max(
-                            min(
-                                stream_max_seconds - (time.perf_counter() - start_time),
-                                fallback_budget_seconds,
-                            ),
-                            1,
-                        ),
+                        timeout=fallback_timeout_seconds,
                     )
                     full_content = str(fallback_content)
                     for index in range(0, len(full_content), chunk_size):
