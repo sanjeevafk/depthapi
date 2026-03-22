@@ -82,7 +82,38 @@ async def test_generate_stream_explanation_socratic_limits_questions(monkeypatch
 
     combined = "".join(streamed)
     assert combined.count("?") <= 3
+    assert combined.count("How does it change in this process?") == 1
     assert "Share your answer, and I will guide the next step." in combined
+
+
+@pytest.mark.asyncio
+async def test_generate_stream_explanation_socratic_dedupes_and_caps_questions(monkeypatch):
+    async def fake_stream(*_args, **_kwargs):
+        chunks = [
+            "What is entropy? ",
+            "How does entropy change here? ",
+            "How does entropy change here? ",
+            "Why does entropy matter? ",
+            "How would you measure entropy in practice?",
+        ]
+        for chunk in chunks:
+            yield chunk
+
+    monkeypatch.setattr(inference_module, "stream_chat_completion", fake_stream)
+
+    streamed = []
+    async for chunk in inference_module.generate_stream_explanation(
+        "entropy",
+        "eli15",
+        mode="socratic",
+    ):
+        streamed.append(chunk)
+
+    combined = "".join(streamed)
+    assert combined.count("?") == 3
+    assert combined.count("How does entropy change here?") == 1
+    assert "How would you measure entropy in practice?" not in combined
+    assert combined.endswith("Share your answer, and I will guide the next step.")
 
 
 @pytest.mark.asyncio
