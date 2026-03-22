@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Bolt, ChevronDown } from "lucide-react";
-import type { DepthLevel } from "../../stores/useChatStore";
+import type { DepthLevel } from "../../lib/chatStoreUtils";
 
 interface DepthOption {
   id: DepthLevel;

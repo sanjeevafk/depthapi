@@ -14,7 +14,7 @@ import { getHealth } from "../api";
 import { useConversations } from "../hooks/useConversations";
 import { useMessages } from "../hooks/useMessages";
 import { useChatStore } from "../stores/useChatStore";
-import type { Workspace } from "../stores/useChatStore";
+import type { Workspace } from "../lib/chatStoreUtils";
 
 const WORKSPACE_LABELS: Record<Workspace, string> = {
   learn: "Learn",

@@ -10,7 +10,7 @@ import {
   Trash2,
 } from "lucide-react";
 import type { Conversation } from "../../types/chat";
-import type { Workspace } from "../../stores/useChatStore";
+import type { Workspace } from "../../lib/chatStoreUtils";
 
 interface WorkspaceSidebarProps {
   workspace: Workspace;

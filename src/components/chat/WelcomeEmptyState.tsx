@@ -1,4 +1,4 @@
-import type { Workspace } from "../../stores/useChatStore";
+import type { Workspace } from "../../lib/chatStoreUtils";
 import {
   WORKSPACE_CONTENT,
   WORKSPACE_ICONS,
