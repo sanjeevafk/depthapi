@@ -82,6 +82,41 @@ async def test_inference_logs_structured_observability_fields(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_inference_does_not_log_success_when_message_missing(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class DummyChoice:
+        def __init__(self):
+            self.message = None
+
+    class DummyResponse:
+        def __init__(self):
+            self.choices = [DummyChoice()]
+            self.usage = None
+            self.model = "openai/gpt-4o-mini"
+
+    async def fake_create_chat_completion(*_args, **_kwargs):
+        return DummyResponse()
+
+    def fake_log_sampled_success(event: str, **fields):
+        captured["event"] = event
+        captured.update(fields)
+
+    monkeypatch.setattr(inference_module, "create_chat_completion", fake_create_chat_completion)
+    monkeypatch.setattr(inference_module, "log_sampled_success", fake_log_sampled_success)
+
+    with pytest.raises(RuntimeError, match="LLM response missing message"):
+        await inference_module.call_model(
+            "default-fast",
+            "explain DNS",
+            request_id="req-missing-message",
+            user_id="user-1",
+        )
+
+    assert captured == {}
+
+
+@pytest.mark.asyncio
 async def test_litellm_client_receives_request_id_and_stream_telemetry(monkeypatch):
     class Chunk:
         def __init__(self, content: str | None):

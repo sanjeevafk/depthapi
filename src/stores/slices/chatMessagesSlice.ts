@@ -48,7 +48,7 @@ export const createChatMessagesSlice: StateCreator<
   [],
   [],
   ChatMessagesSlice
-> = (set, get) => ({
+> = (_set, get) => ({
   get conversations() {
     return useConversationStore.getState().conversations;
   },
@@ -112,10 +112,15 @@ export const createChatMessagesSlice: StateCreator<
       }));
 
       if (supabaseConfigured && !currentConversationId.startsWith("local-")) {
-        void supabase
+        supabase
           .from("conversations")
           .update({ mode, settings: nextSettings })
-          .eq("id", currentConversationId);
+          .eq("id", currentConversationId)
+          .then(({ error }) => {
+            if (error) {
+              console.error("Failed to persist mode change:", error);
+            }
+          });
       }
     }
   },
@@ -135,16 +140,24 @@ export const createChatMessagesSlice: StateCreator<
 
     if (currentConversationId && conversation && nextSettings) {
       useConversationStore.setState((state) => ({
+        ...state,
         conversations: state.conversations.map((c) =>
-          c.id === currentConversationId ? { ...c, settings: nextSettings } : c,
+          c.id === currentConversationId
+            ? { ...c, settings: nextSettings }
+            : c,
         ),
       }));
 
       if (supabaseConfigured && !currentConversationId.startsWith("local-")) {
-        void supabase
+        supabase
           .from("conversations")
           .update({ settings: nextSettings })
-          .eq("id", currentConversationId);
+          .eq("id", currentConversationId)
+          .then(({ error: err }: { error: unknown }) => {
+            if (err) {
+              console.error("Failed to persist prompt mode change:", err);
+            }
+          });
       }
     }
   },
