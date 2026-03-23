@@ -10,6 +10,11 @@ import type { Session } from "@supabase/supabase-js";
 import { getTracePropagationHeaders } from "./lib/monitoring";
 import type { ApiError } from "./lib/httpErrors";
 import { buildApiError } from "./lib/httpErrors";
+import {
+  EventStreamContentType,
+  fetchEventSource,
+  type EventSourceMessage,
+} from "@microsoft/fetch-event-source";
 
 const API_URL = import.meta.env.VITE_API_URL || "";
 const SUPABASE_CONFIGURED =
@@ -187,9 +192,40 @@ export async function queryTopicStream(
   let retries = 0;
   const maxRetries = 2;
   const baseDelay = 750;
+  let forceFallbackReason: string | null = null;
+  let streamCompleted = false;
+  let streamErrored = false;
+
+  const controller = new AbortController();
+  const abortSignalAny = (
+    AbortSignal as unknown as {
+      any?: (signals: AbortSignal[]) => AbortSignal;
+    }
+  ).any;
+  const combinedSignal = signal
+    ? abortSignalAny
+      ? abortSignalAny([controller.signal, signal])
+      : controller.signal
+    : controller.signal;
+
+  let onExternalAbort: (() => void) | null = null;
+  if (signal && !abortSignalAny) {
+    if (signal.aborted) {
+      controller.abort();
+    } else {
+      onExternalAbort = () => controller.abort();
+      signal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+  }
+
+  const cleanupExternal = () => {
+    if (signal && onExternalAbort) {
+      signal.removeEventListener("abort", onExternalAbort);
+    }
+  };
 
   const fallbackToNonStream = async (reason: string): Promise<void> => {
-    if (signal?.aborted) {
+    if (combinedSignal.aborted) {
       return;
     }
     try {
@@ -213,142 +249,120 @@ export async function queryTopicStream(
     }
   };
 
-  const attemptStream = async (): Promise<void> => {
+  const handleMessage = (event: EventSourceMessage) => {
+    if (combinedSignal.aborted || streamCompleted || streamErrored) {
+      return;
+    }
+
+    const data = event.data?.trim();
+    if (!data) {
+      return;
+    }
+
+    if (data === "[DONE]" || event.event === "done") {
+      streamCompleted = true;
+      controller.abort();
+      onDone({});
+      return;
+    }
+
+    let parsed: unknown;
     try {
-      const response = await fetch(`${API_URL}/api/query/stream`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(req),
-        signal,
-      });
+      parsed = JSON.parse(data);
+    } catch (e) {
+      console.warn(
+        "Failed to parse SSE chunk:",
+        data.substring(0, 100),
+        e,
+      );
+      return;
+    }
 
-      if (!response.ok) {
-        throw await buildApiError(response);
-      }
+    const validated = LegacyStreamChunkSchema.safeParse(parsed);
+    if (!validated.success) {
+      console.warn("Skipping invalid SSE chunk:", validated.error);
+      return;
+    }
 
-      // Validate SSE content type
-      const contentType = response.headers.get("content-type");
-      if (!contentType?.includes("text/event-stream")) {
-        return fallbackToNonStream(
-          `Invalid content-type: ${contentType || "unknown"}`,
-        );
-      }
-
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-
-      if (!reader) {
-        return fallbackToNonStream("ReadableStream not supported");
-      }
-
-      let buffer = "";
-      const READ_TIMEOUT_MS = 20000;
-
-      while (true) {
-        let timeoutId: ReturnType<typeof setTimeout> | undefined;
-        const readPromise = reader.read();
-        const timeoutPromise = new Promise<
-          ReadableStreamReadResult<Uint8Array>
-        >((_, reject) => {
-          timeoutId = setTimeout(
-            () => reject(new Error("Stream read timed out")),
-            READ_TIMEOUT_MS,
-          );
-        });
-
-        let readResult: ReadableStreamReadResult<Uint8Array>;
-        try {
-          readResult = await Promise.race([readPromise, timeoutPromise]);
-        } catch (e) {
-          reader.cancel().catch(() => {});
-          throw e;
-        }
-        const { done, value } = readResult;
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const data = line.slice(6).trim();
-            if (data === "[DONE]") {
-              onDone({});
-              return;
-            }
-            let parsed: unknown;
-            try {
-              parsed = JSON.parse(data);
-            } catch (e) {
-              console.warn(
-                "Failed to parse SSE chunk:",
-                data.substring(0, 100),
-                e,
-              );
-              continue;
-            }
-
-            const validated = LegacyStreamChunkSchema.safeParse(parsed);
-            if (!validated.success) {
-              console.warn("Skipping invalid SSE chunk:", validated.error);
-              continue;
-            }
-
-            if (validated.data.chunk) {
-              onChunk(validated.data.chunk);
-            } else if (validated.data.warning) {
-              // Display warning as part of the response
-              onChunk(`\n\n${validated.data.warning}`);
-            } else if (validated.data.error) {
-              onError(new Error(validated.data.error));
-              return;
-            }
-          }
-        }
-      }
-
-      // Flush remaining buffer if stream ended without [DONE]
-      if (buffer.trim()) {
-        console.warn(
-          "Stream ended with incomplete data in buffer:",
-          buffer.substring(0, 100),
-        );
-      }
-    } catch (err) {
-      if (isAbortError(err)) {
-        console.log("Stream aborted by user");
-        return;
-      }
-
-      const error = normalizeError(err) as ApiError;
-      const retryAllowed = error.detail?.retry_allowed !== false;
-      if (!retryAllowed) {
-        onError(error);
-        return;
-      }
-
-      // Retry on network errors if not aborted
-      if (retries < maxRetries && !signal?.aborted) {
-        retries++;
-        const delay =
-          Math.min(8000, baseDelay * 2 ** (retries - 1)) + Math.random() * 250;
-        console.warn(
-          `Stream failed, retry ${retries}/${maxRetries} in ${Math.round(delay)}ms:`,
-          error.message,
-        );
-        await new Promise((r) => setTimeout(r, delay));
-        return attemptStream();
-      }
-
-      await fallbackToNonStream(error.message || "Stream failed");
+    if (validated.data.chunk) {
+      onChunk(validated.data.chunk);
+    } else if (validated.data.warning) {
+      onChunk(`\n\n${validated.data.warning}`);
+    } else if (validated.data.error) {
+      streamErrored = true;
+      controller.abort();
+      onError(new Error(validated.data.error));
     }
   };
 
-  await attemptStream();
+  try {
+    await fetchEventSource(`${API_URL}/api/query/stream`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(req),
+      signal: combinedSignal,
+      openWhenHidden: true,
+      onopen: async (response) => {
+        if (!response.ok) {
+          throw await buildApiError(response);
+        }
+        const contentType = response.headers.get("content-type");
+        if (!contentType?.includes(EventStreamContentType)) {
+          forceFallbackReason = `Invalid content-type: ${contentType || "unknown"}`;
+          throw new Error(forceFallbackReason);
+        }
+      },
+      onmessage: handleMessage,
+      onclose: () => {
+        if (!streamCompleted && !streamErrored && !combinedSignal.aborted) {
+          throw new Error("Stream closed unexpectedly");
+        }
+      },
+      onerror: (err) => {
+        if (isAbortError(err)) {
+          return;
+        }
+        if (forceFallbackReason) {
+          throw err;
+        }
+        const error = normalizeError(err) as ApiError;
+        const retryAllowed = error.detail?.retry_allowed !== false;
+        if (!retryAllowed) {
+          throw error;
+        }
+        if (retries < maxRetries) {
+          retries++;
+          const delay =
+            Math.min(8000, baseDelay * 2 ** (retries - 1)) +
+            Math.random() * 250;
+          console.warn(
+            `Stream failed, retry ${retries}/${maxRetries} in ${Math.round(delay)}ms:`,
+            error.message,
+          );
+          return delay;
+        }
+        throw error;
+      },
+    });
+  } catch (err) {
+    cleanupExternal();
+    if (isAbortError(err)) {
+      return;
+    }
+
+    const error = normalizeError(err) as ApiError;
+    const retryAllowed = error.detail?.retry_allowed !== false;
+    if (!retryAllowed) {
+      onError(error);
+      return;
+    }
+    await fallbackToNonStream(
+      forceFallbackReason || error.message || "Stream failed",
+    );
+    return;
+  } finally {
+    cleanupExternal();
+  }
 }
 
 export async function exportExplanations(req: ExportRequest): Promise<Blob> {
