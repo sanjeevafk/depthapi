@@ -280,6 +280,7 @@ async def technical_stream_explanation(
             model_alias=alias,
         )
         if streamed_chunks == 0:
+            stream_completed = False
             full_response = await technical_mode_handler_fn(
                 topic,
                 build_prompt=build_prompt,
