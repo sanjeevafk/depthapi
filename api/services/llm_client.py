@@ -20,6 +20,17 @@ _client: AsyncOpenAI | None = None
 _client_base_url: str | None = None
 _client_api_key: str | None = None
 _client_lock: asyncio.Lock | None = None
+_groq_client: AsyncOpenAI | None = None
+_groq_client_base_url: str | None = None
+_groq_client_api_key: str | None = None
+
+_GROQ_DIRECT_ALIAS_MAP: dict[str, str] = {
+    "default-fast": "llama-3.1-8b-instant",
+    "learning-detailed": "llama-3.3-70b-versatile",
+    "learning-fallback-simple": "openai/gpt-oss-20b",
+    "learning-fallback-detailed": "openai/gpt-oss-120b",
+    "socratic": "openai/gpt-oss-120b",
+}
 
 
 def _resolve_provider(model_name: str | None) -> str:
@@ -28,6 +39,15 @@ def _resolve_provider(model_name: str | None) -> str:
     if "/" not in model_name:
         return "alias"
     return model_name.split("/", 1)[0]
+
+
+def _should_use_groq_direct(model_name: str | None) -> bool:
+    if not model_name:
+        return False
+    settings = get_settings()
+    if not getattr(settings, "groq_direct_enabled", False):
+        return False
+    return model_name in _GROQ_DIRECT_ALIAS_MAP
 
 
 def _merge_trace_headers(extra_headers: dict[str, str], trace_headers: dict[str, str] | None) -> dict[str, str]:
@@ -115,11 +135,26 @@ def _normalize_base_url(base_url: str) -> str:
     return normalized
 
 
+def _normalize_groq_base_url(base_url: str) -> str:
+    normalized = base_url.strip().rstrip("/")
+    if not normalized:
+        return "https://api.groq.com/openai/v1"
+    return normalized
+
+
 def _resolve_api_key() -> str:
     settings = get_settings()
     api_key = settings.litellm_virtual_key or settings.litellm_master_key
     if not api_key:
         raise LLMUnavailable("LITELLM_VIRTUAL_KEY or LITELLM_MASTER_KEY is required.")
+    return api_key
+
+
+def _resolve_groq_api_key() -> str:
+    settings = get_settings()
+    api_key = settings.groq_api_key
+    if not api_key:
+        raise LLMUnavailable("GROQ_API_KEY is required for direct Groq calls.")
     return api_key
 
 
@@ -148,9 +183,36 @@ async def get_llm_client() -> AsyncOpenAI:
         return _client
 
 
+async def get_groq_client() -> AsyncOpenAI:
+    """Return a singleton AsyncOpenAI client configured for Groq."""
+    global _groq_client, _groq_client_base_url, _groq_client_api_key
+
+    settings = get_settings()
+    base_url = _normalize_groq_base_url(settings.groq_base_url)
+    api_key = _resolve_groq_api_key()
+
+    async with _get_lock():
+        if _groq_client and _groq_client_base_url == base_url and _groq_client_api_key == api_key:
+            return _groq_client
+
+        if _groq_client:
+            await _groq_client.close()
+
+        _groq_client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=settings.litellm_timeout_seconds,
+        )
+        _groq_client_base_url = base_url
+        _groq_client_api_key = api_key
+        return _groq_client
+
+
 async def create_chat_completion(model: str, messages: list[ChatCompletionMessageParam], **kwargs):
-    """Create a chat completion via LiteLLM."""
-    client = await get_llm_client()
+    """Create a chat completion via LiteLLM (or direct Groq for fast routes)."""
+    use_groq_direct = _should_use_groq_direct(model)
+    resolved_model = _GROQ_DIRECT_ALIAS_MAP.get(model, model) if use_groq_direct else model
+    client = await (get_groq_client() if use_groq_direct else get_llm_client())
     request_id = kwargs.pop("request_id", None)
     trace_headers = kwargs.pop("trace_headers", None)
     if request_id:
@@ -167,10 +229,12 @@ async def create_chat_completion(model: str, messages: list[ChatCompletionMessag
             merged_headers.update({str(k): str(v) for k, v in existing_headers.items()})
         kwargs["extra_headers"] = _merge_trace_headers(merged_headers, trace_headers)
     try:
-        with sentry_sdk.start_span(op="llm.call", name=f"litellm.completion.{model}") as span:
+        span_name = f"{'groq' if use_groq_direct else 'litellm'}.completion.{resolved_model}"
+        provider_label = "groq" if use_groq_direct else _resolve_provider(model)
+        with sentry_sdk.start_span(op="llm.call", name=span_name) as span:
             span.set_data("llm.model_alias", model)
-            span.set_data("llm.provider", _resolve_provider(model))
-            response = await client.chat.completions.create(model=model, messages=messages, **kwargs)
+            span.set_data("llm.provider", provider_label)
+            response = await client.chat.completions.create(model=resolved_model, messages=messages, **kwargs)
             usage_obj = getattr(response, "usage", None)
             usage = None
             if usage_obj is not None:
@@ -184,10 +248,10 @@ async def create_chat_completion(model: str, messages: list[ChatCompletionMessag
                 span.set_data("llm.tokens.prompt", int(usage.get("prompt_tokens") or 0))
                 span.set_data("llm.tokens.completion", int(usage.get("completion_tokens") or 0))
                 span.set_data("llm.tokens.total", int(usage.get("total_tokens") or 0))
-            resolved_model = str(getattr(response, "model", "") or "")
-            if resolved_model:
-                span.set_data("llm.model", resolved_model)
-                span.set_data("llm.provider", _resolve_provider(resolved_model))
+            response_model = str(getattr(response, "model", "") or "")
+            if response_model:
+                span.set_data("llm.model", response_model)
+                span.set_data("llm.provider", _resolve_provider(response_model) if not use_groq_direct else "groq")
             return response
     except (AuthenticationError, PermissionDeniedError) as exc:
         sentry_sdk.capture_exception(exc)
@@ -211,7 +275,7 @@ async def create_chat_completion(model: str, messages: list[ChatCompletionMessag
 async def stream_chat_completion(
     model: str, messages: list[ChatCompletionMessageParam], **kwargs
 ) -> AsyncGenerator[str, None]:
-    """Stream chat completion text deltas via LiteLLM."""
+    """Stream chat completion text deltas via LiteLLM (or direct Groq for fast routes)."""
     kwargs.pop("stream", None)
     telemetry_sink = kwargs.pop("telemetry_sink", None)
     request_id = kwargs.pop("request_id", None)
@@ -239,10 +303,12 @@ async def stream_chat_completion(
         merged_stream_options.update(stream_options)
     kwargs["stream_options"] = merged_stream_options
 
-    client = await get_llm_client()
+    use_groq_direct = _should_use_groq_direct(model)
+    resolved_model = _GROQ_DIRECT_ALIAS_MAP.get(model, model) if use_groq_direct else model
+    client = await (get_groq_client() if use_groq_direct else get_llm_client())
     try:
         stream = await client.chat.completions.create(
-            model=model,
+            model=resolved_model,
             messages=messages,
             stream=True,
             **kwargs,
@@ -271,9 +337,10 @@ async def stream_chat_completion(
     estimated_cost_usd: float | None = None
     model_name: str | None = None
 
-    with sentry_sdk.start_span(op="llm.call", name=f"litellm.stream.{model}") as llm_span:
+    span_name = f"{'groq' if use_groq_direct else 'litellm'}.stream.{resolved_model}"
+    with sentry_sdk.start_span(op="llm.call", name=span_name) as llm_span:
         llm_span.set_data("llm.model_alias", model)
-        llm_span.set_data("llm.provider", _resolve_provider(model))
+        llm_span.set_data("llm.provider", "groq" if use_groq_direct else _resolve_provider(model))
         try:
             async for chunk in stream:
                 model_name = getattr(chunk, "model", model_name)
@@ -313,8 +380,11 @@ async def stream_chat_completion(
             sentry_sdk.capture_exception(exc)
             raise
         finally:
-            llm_span.set_data("llm.model", model_name or model)
-            llm_span.set_data("llm.provider", _resolve_provider(model_name or model))
+            llm_span.set_data("llm.model", model_name or resolved_model)
+            llm_span.set_data(
+                "llm.provider",
+                "groq" if use_groq_direct else _resolve_provider(model_name or resolved_model),
+            )
             llm_span.set_data("llm.stream_duration_ms", round((time.perf_counter() - stream_start) * 1000, 2))
             if isinstance(usage_summary, dict):
                 llm_span.set_data("llm.tokens.prompt", usage_summary.get("prompt_tokens"))
@@ -333,11 +403,18 @@ async def stream_chat_completion(
 
 async def close_llm_client() -> None:
     """Close the shared LiteLLM client."""
-    global _client, _client_base_url, _client_api_key
+    global _client, _client_base_url, _client_api_key, _groq_client, _groq_client_base_url, _groq_client_api_key
     async with _get_lock():
         if _client is None:
-            return
-        await _client.close()
-        _client = None
-        _client_base_url = None
-        _client_api_key = None
+            if _groq_client is None:
+                return
+        if _client is not None:
+            await _client.close()
+            _client = None
+            _client_base_url = None
+            _client_api_key = None
+        if _groq_client is not None:
+            await _groq_client.close()
+            _groq_client = None
+            _groq_client_base_url = None
+            _groq_client_api_key = None
