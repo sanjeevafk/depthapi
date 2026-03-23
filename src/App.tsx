@@ -4,6 +4,8 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import ToastHost from "./components/ToastHost";
 import { setMonitoringRoute } from "./lib/monitoring";
 import { useEffect } from "react";
+import { useChatStore } from "./stores/useChatStore";
+import { loadTheme } from "./lib/chatStoreUtils";
 
 const LandingPage = lazy(() => import("./pages/LandingPage"));
 const AppPage = lazy(() => import("./pages/AppPage"));
@@ -20,6 +22,12 @@ function RouteMonitoringBridge(): null {
 }
 
 export default function App(): JSX.Element {
+  const setTheme = useChatStore((state) => state.setTheme);
+
+  useEffect(() => {
+    setTheme(loadTheme());
+  }, [setTheme]);
+
   return (
     <ErrorBoundary>
       <RouteMonitoringBridge />
