@@ -1,57 +1,25 @@
 """LiteLLM-backed inference service."""
 
-import asyncio
-import json
 import re
 import time
-import httpx
-import structlog
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from config import get_settings
-from prompts import (
-    PROMPTS,
-    TECHNICAL_DEPTH_PROMPT,
-    TECHNICAL_STRUCTURED_PROMPT,
-    TECHNICAL_COMPARE_PROMPT,
-    TECHNICAL_BRAINSTORM_PROMPT,
-    _TECHNICAL_DEEPER_LAYER,
-    _TECHNICAL_DIAGRAM_INSTRUCTION,
-)
-from logging_config import logger, anonymize_user_id, log_sampled_success
-from services.search import search_service
-from services.intent import (
-    detect_intent_and_depth,
-    detect_diagram_type,
-    validate_technical_response,
-)
+from prompts import PROMPTS
+from logging_config import anonymize_user_id, log_sampled_success
 from utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE, normalize_mode
-from services.llm_client import close_llm_client, create_chat_completion, stream_chat_completion
-
-_tech_logger = structlog.get_logger(__name__)
-
-TECHNICAL_MODEL_PRIMARY = "technical-primary"
-TECHNICAL_MODEL_FALLBACK = "technical-fallback"
-TECHNICAL_TEMPERATURE = 0.4
-TECHNICAL_MAX_TOKENS = 2048
+from services.llm_client import close_llm_client, stream_chat_completion, create_chat_completion
+from services.model_runner import call_model as _call_model, stream_model
+from services import technical_mode as _technical_mode
+from services.intent import detect_intent_and_depth, detect_diagram_type, validate_technical_response
 
 LEARNING_MODEL_SIMPLE = "default-fast"
 LEARNING_MODEL_DETAILED = "learning-detailed"
 LEARNING_DETAILED_LEVELS = {"eli15", "meme"}
 
-TECHNICAL_LAST_RESORT_RESPONSE = (
-    "## Core Idea\n"
-    "Unable to generate a response at this time. Please retry in a moment.\n\n"
-    "## First Principles Breakdown\n"
-    "The model service may be temporarily unavailable.\n\n"
-    "## Intuition\n"
-    "Retrying often resolves transient issues.\n\n"
-    "## Edge Cases / Limitations\n"
-    "If this persists, check service status or try a different query.\n\n"
-    "## Connections\n"
-    "No connections available - response generation failed."
-)
-
-TECHNICAL_MINIMAL_PROMPT = "Explain the topic with concise technical clarity."
+TECHNICAL_MODEL_PRIMARY = _technical_mode.TECHNICAL_MODEL_PRIMARY
+TECHNICAL_MODEL_FALLBACK = _technical_mode.TECHNICAL_MODEL_FALLBACK
+TECHNICAL_TEMPERATURE = _technical_mode.TECHNICAL_TEMPERATURE
+TECHNICAL_MAX_TOKENS = _technical_mode.TECHNICAL_MAX_TOKENS
+TECHNICAL_LAST_RESORT_RESPONSE = _technical_mode.TECHNICAL_LAST_RESORT_RESPONSE
+TECHNICAL_MINIMAL_PROMPT = _technical_mode.TECHNICAL_MINIMAL_PROMPT
 
 
 def _learning_model_for_level(level: str) -> str:
@@ -66,178 +34,30 @@ def build_technical_prompt(
     depth: str,
     diagram_type: str | None,
 ) -> str:
-    """
-    Assembles the final prompt string from components.
-    No LLM calls. Pure string construction.
-    """
-    diagram_instruction = (
-        _TECHNICAL_DIAGRAM_INSTRUCTION.format(diagram_type=diagram_type)
-        if diagram_type and intent != "compare"
-        else ""
-    )
+    return _technical_mode.build_technical_prompt(topic, intent, depth, diagram_type)
 
-    if intent == "brainstorm":
-        return TECHNICAL_BRAINSTORM_PROMPT.format(
-            topic=topic,
-            diagram_instruction=diagram_instruction,
-        )
 
-    if intent == "compare":
-        return TECHNICAL_COMPARE_PROMPT.format(topic=topic)
-
-    deeper_layer_instruction = _TECHNICAL_DEEPER_LAYER if depth == "deep" else ""
-
-    return TECHNICAL_STRUCTURED_PROMPT.format(
-        topic=topic,
-        deeper_layer_instruction=deeper_layer_instruction,
-        diagram_instruction=diagram_instruction,
+async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **kwargs) -> str:
+    return await _call_model(
+        model,
+        prompt,
+        max_tokens=max_tokens,
+        create_chat_completion_fn=create_chat_completion,
+        log_sampled_success_fn=log_sampled_success,
+        **kwargs,
     )
 
 
-async def technical_mode_handler(
-    topic: str,
-    **kwargs,
-) -> str:
-    """
-    Single entry point for technical mode. Handles:
-    - Intent + depth detection
-    - Diagram type detection
-    - Prompt assembly
-    - Primary model call with one retry
-    - Fallback to secondary model on failure
-    - Output validation with one retry on invalid output
-    - Guaranteed non-empty return (last resort response if all else fails)
-
-    kwargs are passed through to call_model for telemetry/request_id/etc.
-    Never raises. Always returns a non-empty string.
-    """
-    intent = "unknown"
-    depth = "shallow"
-    diagram_type = "generic"
-    try:
-        classification = detect_intent_and_depth(topic)
-        intent = classification["intent"]
-        depth = classification["depth"]
-        diagram_type = detect_diagram_type(topic)
-    except Exception as exc:
-        _tech_logger.warning(
-            "technical_classification_failed",
-            error=str(exc),
-            intent=intent,
-            depth=depth,
-            diagram_type=diagram_type,
-        )
-
-    prompt = build_technical_prompt(topic, intent, depth, diagram_type)
-    if not prompt or not prompt.strip():
-        _tech_logger.warning(
-            "technical_prompt_empty",
-            intent=intent,
-            depth=depth,
-            diagram_type=diagram_type,
-        )
-        prompt = TECHNICAL_MINIMAL_PROMPT
-
-    fallback_triggered = False
-    fallback_reason: str | None = None
-    best_effort_response: str | None = None
-
-    def _ensure_terminal_char(value: str) -> str:
-        trimmed = value.rstrip()
-        if not trimmed:
-            return value
-        if trimmed[-1] in {".", "?", "!", "`"}:
-            return trimmed
-        return f"{trimmed}."
-
-    async def _call(model_alias: str) -> str | None:
-        """Single model call. Returns content string or None on any failure."""
-        try:
-            call_kwargs = dict(kwargs)
-            call_kwargs["temperature"] = TECHNICAL_TEMPERATURE
-            call_kwargs.pop("max_tokens", None)
-            result = await call_model(
-                model_alias,
-                prompt,
-                max_tokens=TECHNICAL_MAX_TOKENS,
-                **call_kwargs,
-            )
-            if not result or not result.strip():
-                _tech_logger.warning(
-                    "technical_model_empty_response",
-                    model=model_alias,
-                    intent=intent,
-                    depth=depth,
-                )
-                return None
-            nonlocal best_effort_response
-            best_effort_response = str(result)
-            return result
-        except Exception as exc:
-            _tech_logger.warning(
-                "technical_model_call_failed",
-                model=model_alias,
-                error=str(exc),
-                intent=intent,
-                depth=depth,
-            )
-            return None
-
-    async def _call_and_validate(model_alias: str) -> str | None:
-        """Call model and validate output. Returns valid content or None."""
-        response = await _call(model_alias)
-        if response is None:
-            return None
-        is_valid, reason = validate_technical_response(response, intent)
-        if not is_valid:
-            _tech_logger.warning(
-                "technical_response_invalid",
-                model=model_alias,
-                validation_failure=reason,
-                intent=intent,
-                depth=depth,
-                response_length=len(response),
-            )
-            return None
-        return response
-
-    response = await _call_and_validate(TECHNICAL_MODEL_PRIMARY)
-
-    if response is None:
-        _tech_logger.info("technical_primary_retry", intent=intent, depth=depth)
-        response = await _call_and_validate(TECHNICAL_MODEL_PRIMARY)
-
-    if response is None:
-        fallback_triggered = True
-        fallback_reason = "primary_exhausted"
-        _tech_logger.info(
-            "technical_fallback_triggered",
-            reason=fallback_reason,
-            intent=intent,
-            depth=depth,
-        )
-        response = await _call_and_validate(TECHNICAL_MODEL_FALLBACK)
-
-    if response is None:
-        fallback_triggered = True
-        if best_effort_response and best_effort_response.strip():
-            fallback_reason = "best_effort_unvalidated"
-            response = _ensure_terminal_char(best_effort_response)
-        else:
-            fallback_reason = "all_models_failed"
-            response = TECHNICAL_LAST_RESORT_RESPONSE
-
-    _tech_logger.info(
-        "technical_mode_complete",
-        intent=intent,
-        depth=depth,
-        diagram_type=diagram_type,
-        fallback_triggered=fallback_triggered,
-        fallback_reason=fallback_reason,
-        response_length=len(response),
+async def technical_mode_handler(topic: str, **kwargs) -> str:
+    return await _technical_mode.technical_mode_handler(
+        topic,
+        build_prompt=build_technical_prompt,
+        call_model=call_model,
+        detect_intent_and_depth_fn=detect_intent_and_depth,
+        detect_diagram_type_fn=detect_diagram_type,
+        validate_response_fn=validate_technical_response,
+        **kwargs,
     )
-
-    return response
 
 
 async def close_client():
@@ -279,110 +99,7 @@ def _enforce_socratic_response_constraints(response: str) -> str:
     return f"{constrained}\n\nShare your answer, and I will guide the next step."
 
 
-def _extract_usage_dict(usage_obj) -> dict[str, int] | None:
-    if usage_obj is None:
-        return None
-    if hasattr(usage_obj, "model_dump"):
-        usage_obj = usage_obj.model_dump()
-    elif hasattr(usage_obj, "dict"):
-        usage_obj = usage_obj.dict()
-    if not isinstance(usage_obj, dict):
-        return None
-
-    prompt_tokens = usage_obj.get("prompt_tokens")
-    completion_tokens = usage_obj.get("completion_tokens")
-    total_tokens = usage_obj.get("total_tokens")
-    try:
-        return {
-            "prompt_tokens": int(prompt_tokens or 0),
-            "completion_tokens": int(completion_tokens or 0),
-            "total_tokens": int(total_tokens or 0),
-        }
-    except (TypeError, ValueError):
-        return None
-
-
-def _extract_estimated_cost(result, usage: dict[str, int] | None) -> float | None:
-    direct_cost = getattr(result, "response_cost", None)
-    if isinstance(direct_cost, (int, float)):
-        return float(direct_cost)
-
-    hidden_params = getattr(result, "_hidden_params", None)
-    if isinstance(hidden_params, dict):
-        hidden_cost = hidden_params.get("response_cost")
-        if isinstance(hidden_cost, (int, float)):
-            return float(hidden_cost)
-
-    if isinstance(usage, dict):
-        usage_cost = usage.get("cost")
-        if isinstance(usage_cost, (int, float)):
-            return float(usage_cost)
-
-    return None
-
-
-@retry(
-    stop=stop_after_attempt(2),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError)),
-    reraise=True
-)
-async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **kwargs) -> str:
-    """Call API with given model and prompt."""
-    task = kwargs.get("task", "general")
-    if model in ["openai/gpt-oss-20b", "gpt-oss-20b", "deep_dive"]:
-        task = "coding"
-            
-    try:
-        alias = model or "default-fast"
-        request_id = kwargs.get("request_id")
-        retry_flag = bool(kwargs.get("regenerate", False))
-        anonymized_user_id = anonymize_user_id(str(kwargs.get("user_id") or "") or None)
-        telemetry_sink = kwargs.get("telemetry_sink") if isinstance(kwargs.get("telemetry_sink"), dict) else None
-        model_start = time.perf_counter()
-        result = await create_chat_completion(
-            model=alias,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=max_tokens,
-            temperature=kwargs.get("temperature", 0.7),
-            request_id=request_id,
-        )
-        model_inference_ms = round((time.perf_counter() - model_start) * 1000, 2)
-        usage = _extract_usage_dict(getattr(result, "usage", None))
-        estimated_cost_usd = _extract_estimated_cost(result, usage)
-        model_name = getattr(result, "model", None)
-        if telemetry_sink is not None:
-            telemetry_sink["token_usage"] = usage
-            telemetry_sink["estimated_cost_usd"] = estimated_cost_usd
-            telemetry_sink["model_inference_ms"] = model_inference_ms
-            telemetry_sink["model_alias"] = alias
-
-        log_sampled_success(
-            "llm_completion_observed",
-            request_id=request_id,
-            user_id_hash=anonymized_user_id,
-            model_alias=alias,
-            model=model_name,
-            latency_ms=model_inference_ms,
-            token_usage=usage,
-            estimated_cost_usd=estimated_cost_usd,
-            retry=retry_flag,
-            sampled=True,
-        )
-        if not result.choices:
-            raise RuntimeError("LLM response missing choices.")
-        return result.choices[0].message.content or ""
-    except Exception as e:
-        logger.error(
-            "inference_failed",
-            error=str(e),
-            model_alias=model or "default-fast",
-            request_id=kwargs.get("request_id"),
-            user_id_hash=anonymize_user_id(str(kwargs.get("user_id") or "") or None),
-            retry=bool(kwargs.get("regenerate", False)),
-            sampled=False,
-        )
-        raise
+ 
 
 
 
@@ -424,112 +141,24 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
     prompt = ""
 
     if mode == TECHNICAL_MODE:
-        intent = "unknown"
-        depth = "shallow"
-        diagram_type = "generic"
-        try:
-            classification = detect_intent_and_depth(topic)
-            intent = classification["intent"]
-            depth = classification["depth"]
-            diagram_type = detect_diagram_type(topic)
-        except Exception as exc:
-            _tech_logger.warning(
-                "technical_stream_classification_failed",
-                error=str(exc),
-                intent=intent,
-                depth=depth,
-                diagram_type=diagram_type,
-            )
-
-        prompt = build_technical_prompt(topic, intent, depth, diagram_type)
-        if not prompt or not prompt.strip():
-            prompt = TECHNICAL_MINIMAL_PROMPT
-
-        alias = model or TECHNICAL_MODEL_PRIMARY
-        stream_telemetry: dict[str, object] = {}
-        stream_start = time.perf_counter()
-        streamed_chunks = 0
-        stream_completed = True
-        partial_failure = False
-
-        try:
-            async for chunk in stream_chat_completion(
-                model=alias,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=TECHNICAL_MAX_TOKENS,
-                temperature=TECHNICAL_TEMPERATURE,
-                request_id=request_id,
-                telemetry_sink=stream_telemetry,
-            ):
-                streamed_chunks += 1
-                yield chunk
-        except Exception as exc:
-            _tech_logger.warning(
-                "technical_stream_failed",
-                error=str(exc),
-                streamed_chunks=streamed_chunks,
-                model_alias=alias,
-            )
-            if streamed_chunks == 0:
-                full_response = await technical_mode_handler(topic, **kwargs)
-                for index in range(0, len(full_response), 400):
-                    yield full_response[index : index + 400]
-            else:
-                stream_completed = False
-                partial_failure = True
-                _tech_logger.warning(
-                    "technical_stream_partial_failure",
-                    error=str(exc),
-                    streamed_chunks=streamed_chunks,
-                    model_alias=alias,
-                    partial_failure=True,
-                )
-
-        stream_duration_ms = round((time.perf_counter() - stream_start) * 1000, 2)
-        model_inference_ms = stream_telemetry.get("model_inference_ms")
-        token_usage = stream_telemetry.get("token_usage")
-        estimated_cost_usd = stream_telemetry.get("estimated_cost_usd")
-        model_name = stream_telemetry.get("model")
-
-        if route_telemetry_sink is not None:
-            route_telemetry_sink["token_usage"] = token_usage
-            route_telemetry_sink["estimated_cost_usd"] = estimated_cost_usd
-            route_telemetry_sink["model_inference_ms"] = model_inference_ms
-            route_telemetry_sink["stream_duration_ms"] = stream_duration_ms
-            route_telemetry_sink["model_alias"] = alias
-            route_telemetry_sink["model"] = model_name
-            route_telemetry_sink["stream_completed"] = stream_completed
-            route_telemetry_sink["partial_failure"] = partial_failure
-
-        if stream_completed:
-            log_sampled_success(
-                "llm_stream_observed",
-                request_id=request_id,
-                user_id_hash=anonymized_user_id,
-                model_alias=alias,
-                model=model_name,
-                latency_ms=model_inference_ms,
-                stream_duration_ms=stream_duration_ms,
-                token_usage=token_usage,
-                estimated_cost_usd=estimated_cost_usd,
-                retry=retry_flag,
-                sampled=True,
-            )
-        else:
-            _tech_logger.warning(
-                "llm_stream_observed_partial_failure",
-                request_id=request_id,
-                user_id_hash=anonymized_user_id,
-                model_alias=alias,
-                model=model_name,
-                latency_ms=model_inference_ms,
-                stream_duration_ms=stream_duration_ms,
-                token_usage=token_usage,
-                estimated_cost_usd=estimated_cost_usd,
-                retry=retry_flag,
-                streamed_chunks=streamed_chunks,
-                partial_failure=True,
-            )
+        passthrough_kwargs = dict(kwargs)
+        passthrough_kwargs.pop("telemetry_sink", None)
+        async for chunk in _technical_mode.technical_stream_explanation(
+            topic,
+            build_prompt=build_technical_prompt,
+            stream_chat_completion=stream_chat_completion,
+            call_model=call_model,
+            technical_mode_handler_fn=technical_mode_handler,
+            request_id=request_id,
+            user_id_hash=anonymized_user_id,
+            retry=retry_flag,
+            telemetry_sink=route_telemetry_sink,
+            detect_intent_and_depth_fn=detect_intent_and_depth,
+            detect_diagram_type_fn=detect_diagram_type,
+            model=model,
+            **passthrough_kwargs,
+        ):
+            yield chunk
         return
 
     if mode == SOCRATIC_MODE:
@@ -563,14 +192,19 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         for index in range(0, len(constrained_response), 400):
             yield constrained_response[index : index + 400]
     else:
-        async for chunk in stream_chat_completion(
+        async for chunk in stream_model(
             model=alias,
             messages=[{"role": "user", "content": prompt}],
             temperature=kwargs.get("temperature", 0.7),
             request_id=request_id,
+            user_id_hash=anonymized_user_id,
+            retry=retry_flag,
             telemetry_sink=stream_telemetry,
+            stream_chat_completion=stream_chat_completion,
+            route_telemetry_sink=route_telemetry_sink,
         ):
             yield chunk
+        return
 
     stream_duration_ms = round((time.perf_counter() - stream_start) * 1000, 2)
     model_inference_ms = stream_telemetry.get("model_inference_ms")

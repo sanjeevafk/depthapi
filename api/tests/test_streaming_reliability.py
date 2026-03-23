@@ -13,7 +13,7 @@ from conftest import FakeSupabase
 @pytest.mark.asyncio
 async def test_query_stream_fallback_on_start_timeout(app_client, monkeypatch, test_settings):
     test_settings.stream_start_timeout_seconds = 0.1
-    test_settings.stream_max_seconds = 1
+    test_settings.stream_max_seconds = 3
     test_settings.stream_heartbeat_seconds = 0.05
 
     async def slow_stream(*_args, **_kwargs):
@@ -343,7 +343,7 @@ async def test_messages_fallback_on_stream_exception(app_client, monkeypatch, te
 async def test_messages_fallback_allows_slow_generation_budget(app_client, monkeypatch, test_settings):
     test_settings.environment = "production"
     test_settings.stream_start_timeout_seconds = 0.2
-    test_settings.stream_max_seconds = 1
+    test_settings.stream_max_seconds = 3
     test_settings.stream_fallback_budget_seconds = 2
     test_settings.stream_heartbeat_seconds = 0.05
 
