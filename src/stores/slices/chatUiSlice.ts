@@ -3,14 +3,10 @@ import type { ChatState } from "../useChatStore";
 import { CHAT_PREMIUM_MODES } from "../../lib/chatModes";
 import {
   applyThemeClass,
-  loadTheme,
   persistTheme,
   defaultIsPro,
   type ThemeMode,
 } from "../../lib/chatStoreUtils";
-
-const initialTheme = loadTheme();
-applyThemeClass(initialTheme);
 
 export type ChatUiSlice = Pick<
   ChatState,
@@ -35,7 +31,7 @@ export const createChatUiSlice: StateCreator<ChatState, [], [], ChatUiSlice> = (
   set,
   get,
 ) => ({
-  theme: initialTheme,
+  theme: "light",
   isSidebarOpen: false,
   isPro: defaultIsPro,
   gatedModes: [...CHAT_PREMIUM_MODES],
