@@ -2,6 +2,7 @@
 
 import os
 from functools import lru_cache
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 
 
@@ -14,9 +15,9 @@ class Settings(BaseSettings):
     litellm_virtual_key: str = ""
     litellm_master_key: str = ""
     litellm_timeout_seconds: int = 60
-    groq_api_key: str = ""
+    groq_api_key: SecretStr = SecretStr("")
     groq_base_url: str = "https://api.groq.com/openai/v1"
-    groq_direct_enabled: bool = True
+    groq_direct_enabled: bool = False
 
     stream_max_seconds: int = 25
     technical_stream_max_seconds: int = 45

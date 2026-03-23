@@ -101,7 +101,7 @@ async def test_health_missing_litellm_config_degrades(app_client, test_settings)
 
 
 @pytest.mark.asyncio
-async def test_query_degraded_when_litellm_missing(app_client, test_settings):
+async def test_query_succeeds_when_litellm_missing_in_learning_mode(app_client, test_settings):
     old_base = test_settings.litellm_base_url
     old_key = test_settings.litellm_virtual_key
     old_master = test_settings.litellm_master_key
@@ -115,9 +115,9 @@ async def test_query_degraded_when_litellm_missing(app_client, test_settings):
             "/api/query",
             json={"topic": "lite llm", "levels": ["eli15"], "mode": "learning"},
         )
-        assert resp.status_code == 503
+        assert resp.status_code == 200
         payload = resp.json()
-        assert payload["error"]["type"] == "service_degraded"
+        assert payload["topic"] == "lite llm"
     finally:
         test_settings.litellm_base_url = old_base
         test_settings.litellm_virtual_key = old_key
