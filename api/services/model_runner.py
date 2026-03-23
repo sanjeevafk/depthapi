@@ -9,7 +9,7 @@ from typing import Any, AsyncGenerator
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from logging_config import logger, anonymize_user_id, log_sampled_success
-from services import llm_client
+from services.llm_client import create_chat_completion
 
 
 def _extract_usage_dict(usage_obj) -> dict[str, int] | None:
@@ -75,7 +75,7 @@ async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **k
         anonymized_user_id = anonymize_user_id(str(kwargs.get("user_id") or "") or None)
         telemetry_sink = kwargs.get("telemetry_sink") if isinstance(kwargs.get("telemetry_sink"), dict) else None
         model_start = time.perf_counter()
-        create_fn = create_chat_completion_fn or llm_client.create_chat_completion
+        create_fn = create_chat_completion_fn or create_chat_completion
         result = await create_fn(
             alias,
             [{"role": "user", "content": prompt}],
@@ -93,6 +93,16 @@ async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **k
             telemetry_sink["model_inference_ms"] = model_inference_ms
             telemetry_sink["model_alias"] = alias
 
+        if not result.choices:
+            raise RuntimeError("LLM response missing choices.")
+
+        first_choice = result.choices[0]
+        message = getattr(first_choice, "message", None)
+        if message is None:
+            raise RuntimeError("LLM response missing message.")
+
+        content = getattr(message, "content", "") or ""
+
         log_fn = log_sampled_success_fn or log_sampled_success
         log_fn(
             "llm_completion_observed",
@@ -106,9 +116,7 @@ async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **k
             retry=retry_flag,
             sampled=True,
         )
-        if not result.choices:
-            raise RuntimeError("LLM response missing choices.")
-        return result.choices[0].message.content or ""
+        return content
     except Exception as e:
         logger.error(
             "inference_failed",

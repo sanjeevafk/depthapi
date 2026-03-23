@@ -355,7 +355,6 @@ async def query_topic_stream(
                 )
             if status == "in_progress":
                 now_ts = int(time.time())
-                started_ts = resolve_started_ts(idempotency_payload, now_ts=now_ts)
                 age_seconds = compute_age_seconds(idempotency_payload, now_ts=now_ts)
                 if age_seconds < idempotency_stale_seconds:
                     retry_after_ms = compute_retry_after_ms(idempotency_stale_seconds, age_seconds)
