@@ -32,6 +32,36 @@ _GROQ_DIRECT_ALIAS_MAP: dict[str, str] = {
     "socratic": "openai/gpt-oss-120b",
 }
 
+_LITELLM_PROVIDER_ALIAS_MAP: dict[str, str] = {
+    "default-fast": "groq/llama-3.1-8b-instant",
+    "learning-detailed": "groq/llama-3.3-70b-versatile",
+    "learning-fallback-simple": "groq/openai/gpt-oss-20b",
+    "learning-fallback-detailed": "groq/openai/gpt-oss-120b",
+    "socratic": "groq/openai/gpt-oss-120b",
+}
+
+
+def _secret_value(value: Any) -> str:
+    if hasattr(value, "get_secret_value"):
+        try:
+            value = value.get_secret_value()
+        except Exception:
+            value = ""
+    return str(value or "").strip()
+
+
+def _is_invalid_model_alias_error(exc: Exception, model_alias: str) -> bool:
+    if model_alias not in _GROQ_DIRECT_ALIAS_MAP:
+        return False
+    if getattr(exc, "status_code", None) != 400:
+        return False
+    message = str(exc).lower()
+    return (
+        "invalid model name" in message
+        or "model_not_found" in message
+        or "model not found" in message
+    )
+
 
 def _resolve_provider(model_name: str | None) -> str:
     if not model_name:
@@ -152,7 +182,7 @@ def _resolve_api_key() -> str:
 
 def _resolve_groq_api_key() -> str:
     settings = get_settings()
-    api_key = settings.groq_api_key
+    api_key = _secret_value(getattr(settings, "groq_api_key", ""))
     if not api_key:
         raise LLMUnavailable("GROQ_API_KEY is required for direct Groq calls.")
     return api_key
@@ -228,6 +258,7 @@ async def create_chat_completion(model: str, messages: list[ChatCompletionMessag
         if isinstance(existing_headers, dict):
             merged_headers.update({str(k): str(v) for k, v in existing_headers.items()})
         kwargs["extra_headers"] = _merge_trace_headers(merged_headers, trace_headers)
+    response = None
     try:
         span_name = f"{'groq' if use_groq_direct else 'litellm'}.completion.{resolved_model}"
         provider_label = "groq" if use_groq_direct else _resolve_provider(model)
@@ -260,6 +291,29 @@ async def create_chat_completion(model: str, messages: list[ChatCompletionMessag
         ) from exc
     except APIStatusError as exc:
         sentry_sdk.capture_exception(exc)
+        if not use_groq_direct and _is_invalid_model_alias_error(exc, model):
+            proxy_fallback_model = _LITELLM_PROVIDER_ALIAS_MAP.get(model)
+            if proxy_fallback_model:
+                try:
+                    response = await client.chat.completions.create(
+                        model=proxy_fallback_model,
+                        messages=messages,
+                        **kwargs,
+                    )
+                    return response
+                except Exception as proxy_fallback_exc:
+                    sentry_sdk.capture_exception(proxy_fallback_exc)
+            fallback_model = _GROQ_DIRECT_ALIAS_MAP.get(model, model)
+            try:
+                groq_client = await get_groq_client()
+                response = await groq_client.chat.completions.create(
+                    model=fallback_model,
+                    messages=messages,
+                    **kwargs,
+                )
+                return response
+            except Exception as fallback_exc:
+                sentry_sdk.capture_exception(fallback_exc)
         if getattr(exc, "status_code", None) in {401, 403}:
             raise LLMInvalidAPIKey(
                 "LiteLLM rejected credentials. Verify LITELLM_VIRTUAL_KEY or LITELLM_MASTER_KEY."
@@ -306,6 +360,7 @@ async def stream_chat_completion(
     use_groq_direct = _should_use_groq_direct(model)
     resolved_model = _GROQ_DIRECT_ALIAS_MAP.get(model, model) if use_groq_direct else model
     client = await (get_groq_client() if use_groq_direct else get_llm_client())
+    stream = None
     try:
         stream = await client.chat.completions.create(
             model=resolved_model,
@@ -320,16 +375,53 @@ async def stream_chat_completion(
         ) from exc
     except APIStatusError as exc:
         sentry_sdk.capture_exception(exc)
-        if getattr(exc, "status_code", None) in {401, 403}:
+        recovered_with_groq = False
+        recovered_with_proxy = False
+        if not use_groq_direct and _is_invalid_model_alias_error(exc, model):
+            proxy_fallback_model = _LITELLM_PROVIDER_ALIAS_MAP.get(model)
+            if proxy_fallback_model:
+                try:
+                    stream = await client.chat.completions.create(
+                        model=proxy_fallback_model,
+                        messages=messages,
+                        stream=True,
+                        **kwargs,
+                    )
+                    resolved_model = proxy_fallback_model
+                    recovered_with_proxy = True
+                except Exception as proxy_fallback_exc:
+                    sentry_sdk.capture_exception(proxy_fallback_exc)
+            fallback_model = _GROQ_DIRECT_ALIAS_MAP.get(model, model)
+            if not recovered_with_proxy:
+                try:
+                    client = await get_groq_client()
+                    stream = await client.chat.completions.create(
+                        model=fallback_model,
+                        messages=messages,
+                        stream=True,
+                        **kwargs,
+                    )
+                    use_groq_direct = True
+                    resolved_model = fallback_model
+                    recovered_with_groq = True
+                except Exception as fallback_exc:
+                    sentry_sdk.capture_exception(fallback_exc)
+        if recovered_with_proxy or recovered_with_groq:
+            pass
+        elif getattr(exc, "status_code", None) in {401, 403}:
             raise LLMInvalidAPIKey(
                 "LiteLLM rejected credentials. Verify LITELLM_VIRTUAL_KEY or LITELLM_MASTER_KEY."
             ) from exc
-        if getattr(exc, "status_code", None) == 400:
+        elif getattr(exc, "status_code", None) == 400:
             raise LLMBadRequest("LiteLLM rejected the request payload.") from exc
-        raise
+        else:
+            raise
     except Exception as exc:
         sentry_sdk.capture_exception(exc)
         raise
+
+    if stream is None:
+        raise LLMBadRequest("LiteLLM rejected the request payload.")
 
     stream_start = time.perf_counter()
     first_token_ms: float | None = None

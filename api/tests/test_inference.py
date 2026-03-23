@@ -193,6 +193,33 @@ async def test_generate_stream_explanation_technical_streams_via_llm_stream(monk
 
 
 @pytest.mark.asyncio
+async def test_generate_stream_explanation_technical_does_not_duplicate_request_id(monkeypatch):
+    async def fake_technical_stream_explanation(*_args, request_id=None, **kwargs):
+        assert request_id == "req-123"
+        assert "request_id" not in kwargs
+        assert kwargs.get("temperature") == 0.7
+        yield "ok"
+
+    monkeypatch.setattr(
+        inference_module._technical_mode,
+        "technical_stream_explanation",
+        fake_technical_stream_explanation,
+    )
+
+    chunks = []
+    async for chunk in inference_module.generate_stream_explanation(
+        "topic",
+        "eli15",
+        mode="technical",
+        request_id="req-123",
+        temperature=0.7,
+    ):
+        chunks.append(chunk)
+
+    assert chunks == ["ok"]
+
+
+@pytest.mark.asyncio
 async def test_technical_mode_handler_returns_best_effort_when_validation_fails(monkeypatch):
     async def fake_call_model(*_args, **_kwargs):
         return "This is useful but does not match strict markdown sections."
