@@ -192,40 +192,39 @@ export async function queryTopicStream(
   let retries = 0;
   const maxRetries = 2;
   const baseDelay = 750;
-  let forceFallbackReason: string | null = null;
-  let streamCompleted = false;
-  let streamErrored = false;
 
-  const controller = new AbortController();
-  const abortSignalAny = (
-    AbortSignal as unknown as {
-      any?: (signals: AbortSignal[]) => AbortSignal;
-    }
-  ).any;
-  const combinedSignal = signal
-    ? abortSignalAny
-      ? abortSignalAny([controller.signal, signal])
-      : controller.signal
-    : controller.signal;
+  const sleep = (ms: number) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
 
-  let onExternalAbort: (() => void) | null = null;
-  if (signal && !abortSignalAny) {
-    if (signal.aborted) {
-      controller.abort();
-    } else {
-      onExternalAbort = () => controller.abort();
-      signal.addEventListener("abort", onExternalAbort, { once: true });
+  const createCombinedSignal = () => {
+    const controller = new AbortController();
+    const abortSignalAny = (
+      AbortSignal as unknown as {
+        any?: (signals: AbortSignal[]) => AbortSignal;
+      }
+    ).any;
+    let combinedSignal = controller.signal;
+    let onExternalAbort: (() => void) | null = null;
+    if (signal) {
+      if (abortSignalAny) {
+        combinedSignal = abortSignalAny([controller.signal, signal]);
+      } else if (signal.aborted) {
+        controller.abort();
+      } else {
+        onExternalAbort = () => controller.abort();
+        signal.addEventListener("abort", onExternalAbort, { once: true });
+      }
     }
-  }
-
-  const cleanupExternal = () => {
-    if (signal && onExternalAbort) {
-      signal.removeEventListener("abort", onExternalAbort);
-    }
+    const cleanupExternal = () => {
+      if (signal && onExternalAbort) {
+        signal.removeEventListener("abort", onExternalAbort);
+      }
+    };
+    return { controller, combinedSignal, cleanupExternal };
   };
 
   const fallbackToNonStream = async (reason: string): Promise<void> => {
-    if (combinedSignal.aborted) {
+    if (signal?.aborted) {
       return;
     }
     try {
@@ -249,119 +248,169 @@ export async function queryTopicStream(
     }
   };
 
-  const handleMessage = (event: EventSourceMessage) => {
-    if (combinedSignal.aborted || streamCompleted || streamErrored) {
+  while (true) {
+    if (signal?.aborted) {
       return;
     }
 
-    const data = event.data?.trim();
-    if (!data) {
-      return;
-    }
+    let forceFallbackReason: string | null = null;
+    let streamCompleted = false;
+    let streamErrored = false;
+    let waitRetryAfterMs: number | null = null;
 
-    if (data === "[DONE]" || event.event === "done") {
-      streamCompleted = true;
-      controller.abort();
-      onDone({});
-      return;
-    }
+    const { controller, combinedSignal, cleanupExternal } =
+      createCombinedSignal();
 
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(data);
-    } catch (e) {
-      console.warn(
-        "Failed to parse SSE chunk:",
-        data.substring(0, 100),
-        e,
-      );
-      return;
-    }
+    const handleMessage = (event: EventSourceMessage) => {
+      if (combinedSignal.aborted || streamCompleted || streamErrored) {
+        return;
+      }
 
-    const validated = LegacyStreamChunkSchema.safeParse(parsed);
-    if (!validated.success) {
-      console.warn("Skipping invalid SSE chunk:", validated.error);
-      return;
-    }
+      const data = event.data?.trim();
+      if (!data) {
+        return;
+      }
 
-    if (validated.data.chunk) {
-      onChunk(validated.data.chunk);
-    } else if (validated.data.warning) {
-      onChunk(`\n\n${validated.data.warning}`);
-    } else if (validated.data.error) {
-      streamErrored = true;
-      controller.abort();
-      onError(new Error(validated.data.error));
-    }
-  };
+      if (data === "[DONE]" || event.event === "done") {
+        streamCompleted = true;
+        controller.abort();
+        onDone({});
+        return;
+      }
 
-  try {
-    await fetchEventSource(`${API_URL}/api/query/stream`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(req),
-      signal: combinedSignal,
-      openWhenHidden: true,
-      onopen: async (response) => {
-        if (!response.ok) {
-          throw await buildApiError(response);
-        }
-        const contentType = response.headers.get("content-type");
-        if (!contentType?.includes(EventStreamContentType)) {
-          forceFallbackReason = `Invalid content-type: ${contentType || "unknown"}`;
-          throw new Error(forceFallbackReason);
-        }
-      },
-      onmessage: handleMessage,
-      onclose: () => {
-        if (!streamCompleted && !streamErrored && !combinedSignal.aborted) {
-          throw new Error("Stream closed unexpectedly");
-        }
-      },
-      onerror: (err) => {
-        if (isAbortError(err)) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(data);
+      } catch (e) {
+        console.warn(
+          "Failed to parse SSE chunk:",
+          data.substring(0, 100),
+          e,
+        );
+        return;
+      }
+
+      if (parsed && typeof parsed === "object") {
+        const payload = parsed as { status?: string; retry_after_ms?: number };
+        if (
+          (payload.status === "waiting" ||
+            payload.status === "in_progress") &&
+          typeof payload.retry_after_ms === "number"
+        ) {
+          waitRetryAfterMs = Math.max(250, Math.round(payload.retry_after_ms));
+          controller.abort();
           return;
         }
-        if (forceFallbackReason) {
-          throw err;
-        }
+      }
+
+      const validated = LegacyStreamChunkSchema.safeParse(parsed);
+      if (!validated.success) {
+        console.warn("Skipping invalid SSE chunk:", validated.error);
+        return;
+      }
+
+      if (validated.data.chunk) {
+        onChunk(validated.data.chunk);
+      } else if (validated.data.warning) {
+        onChunk(`\n\n${validated.data.warning}`);
+      } else if (validated.data.error) {
+        streamErrored = true;
+        controller.abort();
+        onError(new Error(validated.data.error));
+      }
+    };
+
+    try {
+      await fetchEventSource(`${API_URL}/api/query/stream`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(req),
+        signal: combinedSignal,
+        openWhenHidden: true,
+        onopen: async (response) => {
+          if (response.status === 202) {
+            const body = await response.json().catch(() => null);
+            const retryAfter =
+              body && typeof body.retry_after_ms === "number"
+                ? body.retry_after_ms
+                : 1000;
+            waitRetryAfterMs = Math.max(250, Math.round(retryAfter));
+            controller.abort();
+            return;
+          }
+          if (!response.ok) {
+            throw await buildApiError(response);
+          }
+          const contentType = response.headers.get("content-type");
+          if (!contentType?.includes(EventStreamContentType)) {
+            forceFallbackReason = `Invalid content-type: ${contentType || "unknown"}`;
+            throw new Error(forceFallbackReason);
+          }
+        },
+        onmessage: handleMessage,
+        onclose: () => {
+          if (
+            !streamCompleted &&
+            !streamErrored &&
+            !combinedSignal.aborted &&
+            waitRetryAfterMs === null
+          ) {
+            throw new Error("Stream closed unexpectedly");
+          }
+        },
+        onerror: (err) => {
+          if (isAbortError(err) || waitRetryAfterMs !== null) {
+            return;
+          }
+          if (forceFallbackReason) {
+            throw err;
+          }
+          const error = normalizeError(err) as ApiError;
+          const retryAllowed = error.detail?.retry_allowed !== false;
+          if (!retryAllowed) {
+            throw error;
+          }
+          if (retries < maxRetries) {
+            retries++;
+            const delay =
+              Math.min(8000, baseDelay * 2 ** (retries - 1)) +
+              Math.random() * 250;
+            console.warn(
+              `Stream failed, retry ${retries}/${maxRetries} in ${Math.round(delay)}ms:`,
+              error.message,
+            );
+            return delay;
+          }
+          throw error;
+        },
+      });
+    } catch (err) {
+      cleanupExternal();
+      if (isAbortError(err)) {
+        // fall through to retry loop handling if needed
+      } else {
         const error = normalizeError(err) as ApiError;
         const retryAllowed = error.detail?.retry_allowed !== false;
         if (!retryAllowed) {
-          throw error;
+          onError(error);
+          return;
         }
-        if (retries < maxRetries) {
-          retries++;
-          const delay =
-            Math.min(8000, baseDelay * 2 ** (retries - 1)) +
-            Math.random() * 250;
-          console.warn(
-            `Stream failed, retry ${retries}/${maxRetries} in ${Math.round(delay)}ms:`,
-            error.message,
+        if (waitRetryAfterMs === null) {
+          await fallbackToNonStream(
+            forceFallbackReason || error.message || "Stream failed",
           );
-          return delay;
+          return;
         }
-        throw error;
-      },
-    });
-  } catch (err) {
-    cleanupExternal();
-    if (isAbortError(err)) {
-      return;
+      }
+    } finally {
+      cleanupExternal();
     }
 
-    const error = normalizeError(err) as ApiError;
-    const retryAllowed = error.detail?.retry_allowed !== false;
-    if (!retryAllowed) {
-      onError(error);
-      return;
+    if (waitRetryAfterMs !== null && !signal?.aborted) {
+      await sleep(waitRetryAfterMs);
+      continue;
     }
-    await fallbackToNonStream(
-      forceFallbackReason || error.message || "Stream failed",
-    );
-    return;
-  } finally {
-    cleanupExternal();
+    break;
   }
 }
 
