@@ -40,21 +40,25 @@ const createAbortError = (): Error => {
   return error;
 };
 
-const waitFor = (ms: number, signal: AbortSignal): Promise<void> =>
-  new Promise((resolve, reject) => {
-    const timeout = window.setTimeout(() => {
+const waitFor = (ms: number, signal: AbortSignal): Promise<void> => {
+  if (signal.aborted) {
+    return Promise.reject(createAbortError());
+  }
+  return new Promise((resolve, reject) => {
+    const timeout = globalThis.setTimeout(() => {
       signal.removeEventListener("abort", onAbort);
       resolve();
     }, ms);
 
     const onAbort = () => {
-      window.clearTimeout(timeout);
+      globalThis.clearTimeout(timeout);
       signal.removeEventListener("abort", onAbort);
       reject(createAbortError());
     };
 
     signal.addEventListener("abort", onAbort, { once: true });
   });
+};
 
 const getSupabaseSession = async () => {
   if (!supabaseConfigured) return null;
