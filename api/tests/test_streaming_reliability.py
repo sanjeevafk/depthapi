@@ -75,7 +75,7 @@ async def test_query_stream_fallback_on_stream_exception(app_client, monkeypatch
 async def test_query_stream_fallback_allows_slow_generation_budget(app_client, monkeypatch, test_settings):
     test_settings.environment = "production"
     test_settings.stream_start_timeout_seconds = 0.2
-    test_settings.stream_max_seconds = 1
+    test_settings.stream_max_seconds = 3
     test_settings.stream_fallback_budget_seconds = 2
     test_settings.stream_heartbeat_seconds = 0.05
 
@@ -102,6 +102,30 @@ async def test_query_stream_fallback_allows_slow_generation_budget(app_client, m
     assert "slow fallback response" in text
     assert "event: done" in text
     assert "event: error" not in text
+
+
+@pytest.mark.asyncio
+async def test_query_stream_duplicate_in_progress_returns_wait(app_client, monkeypatch, test_settings):
+    started_at = int(time.time())
+
+    async def fake_cache_get(_key):
+        return {"status": "in_progress", "started_at": started_at}
+
+    monkeypatch.setattr(query_module, "cache_get", fake_cache_get)
+    monkeypatch.setattr(query_module, "get_settings", lambda: test_settings)
+
+    payload = {
+        "topic": "duplicate",
+        "levels": ["eli5"],
+        "mode": "learning",
+        "message_id": "f9d454fb-29ac-4be8-9c25-0a64d9fb0b3a",
+    }
+
+    resp = await app_client.post("/api/query/stream", json=payload)
+    assert resp.status_code == 200
+    text = resp.text.replace(" ", "")
+    assert "event:status" in text
+    assert "\"status\":\"waiting\"" in text
 
 
 @pytest.mark.asyncio
