@@ -133,6 +133,61 @@ async def test_save_to_history_logs_error_on_fetch_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_save_to_history_scopes_topic_lookup_by_mode(monkeypatch):
+    user = SimpleNamespace(id="user-mode", email="mode@example.com", user_metadata={})
+
+    async def fake_ensure_user_exists(_user):
+        return None
+
+    class FakeHistoryTable:
+        def __init__(self):
+            self.phase = "idle"
+            self.eq_calls: list[tuple[str, str, str]] = []
+            self.insert_payload = None
+
+        def select(self, _fields):
+            self.phase = "select"
+            return self
+
+        def eq(self, column, value):
+            self.eq_calls.append((self.phase, str(column), str(value)))
+            return self
+
+        def insert(self, payload):
+            self.phase = "insert"
+            self.insert_payload = payload
+            return self
+
+        def update(self, _payload):
+            self.phase = "update"
+            return self
+
+        def execute(self):
+            if self.phase == "select":
+                return SimpleNamespace(data=[])
+            return SimpleNamespace(data=[{"id": "row-1"}])
+
+    class FakeSupabase:
+        def __init__(self):
+            self.history = FakeHistoryTable()
+
+        def table(self, name):
+            assert name == "history"
+            return self.history
+
+    fake_supabase = FakeSupabase()
+
+    monkeypatch.setattr(query_module, "ensure_user_exists", fake_ensure_user_exists)
+    monkeypatch.setattr(query_module, "get_supabase_admin", lambda: fake_supabase)
+
+    await query_module.save_to_history(user, "same-topic", ["eli5"], "socratic")
+
+    assert ("select", "mode", "socratic") in fake_supabase.history.eq_calls
+    assert fake_supabase.history.insert_payload is not None
+    assert fake_supabase.history.insert_payload["mode"] == "socratic"
+
+
+@pytest.mark.asyncio
 async def test_query_invalid_topic(app_client):
     resp = await app_client.post(
         "/api/query",

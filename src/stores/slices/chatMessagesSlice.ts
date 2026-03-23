@@ -84,6 +84,10 @@ export const createChatMessagesSlice: StateCreator<
   },
 
   setMode: (mode: ChatMode) => {
+    if (Object.keys(get().streamControllers).length > 0) {
+      get().abortAllStreams();
+    }
+
     const convStore = useConversationStore.getState();
     const { currentConversationId, conversations, depthLevel } = convStore;
     const conversation = conversations.find((c) => c.id === currentConversationId);

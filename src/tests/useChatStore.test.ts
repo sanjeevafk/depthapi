@@ -169,6 +169,35 @@ describe("useChatStore streaming", () => {
     const assistant = findAssistantMessage();
     expect(assistant?.error).toBe("Canceled");
     expect(assistant?.isStreaming).toBe(false);
+    expect(assistant?.syncStatus).not.toBe("synced");
+  });
+
+  it("retries fallback streams when backend reports in-progress status", async () => {
+    vi.useFakeTimers();
+
+    const waitingSse = [
+      'id: 1\nevent: status\ndata: {"status":"waiting","retry_after_ms":10}\n\n',
+      "id: 2\nevent: done\ndata: [DONE]\n\n",
+    ];
+    const successSse = [
+      'id: 1\nevent: chunk\ndata: {"chunk":"Recovered"}\n\n',
+      "id: 2\nevent: done\ndata: [DONE]\n\n",
+    ];
+
+    const fetchMock = vi
+      .fn<(...args: FetchArgs) => Promise<Response>>()
+      .mockResolvedValueOnce(makeSseResponse(waitingSse))
+      .mockResolvedValueOnce(makeSseResponse(successSse));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const sendPromise = useChatStore.getState().sendMessage("Retry after wait");
+    await vi.advanceTimersByTimeAsync(500);
+    await sendPromise;
+
+    const assistant = findAssistantMessage();
+    expect(assistant?.content).toBe("Recovered");
+    expect(assistant?.syncStatus).toBe("synced");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("retries failed sync with stored payload", async () => {
