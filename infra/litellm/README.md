@@ -18,15 +18,6 @@ Set these for the proxy service:
 - For Render deployment: Set as environment variables in the Render dashboard under "Environment"
 - Rotate the `LITELLM_MASTER_KEY` periodically and after any suspected exposure
 
-## Render Deployment
-
-`render.yaml` is a Docker service blueprint that runs:
-
-```
-litellm --config /app/infra/litellm/config.yaml --port $PORT
-```
-
-Ensure your Docker build copies this repository into `/app` so the config path resolves.
 
 ## Local Run
 
