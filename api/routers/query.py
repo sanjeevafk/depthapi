@@ -477,6 +477,7 @@ async def save_to_history(user, topic: str, levels: list[str], mode: str) -> Non
     """
     user_id_hash = anonymize_user_id(str(getattr(user, "id", "") or ""))
     topic_hash = anonymize_text(topic)
+    normalized_mode = normalize_mode(mode)
 
     try:
         await ensure_user_exists(user)
@@ -499,14 +500,13 @@ async def save_to_history(user, topic: str, levels: list[str], mode: str) -> Non
         )
         return
 
-    normalized_mode = normalize_mode(mode)
-
     try:
         existing = await asyncio.to_thread(
             lambda: supabase.table("history")
             .select("id, levels")
             .eq("user_id", user.id)
             .eq("topic", topic)
+            .eq("mode", normalized_mode)
             .execute()
         )
     except Exception as exc:

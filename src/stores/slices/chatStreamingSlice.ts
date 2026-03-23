@@ -471,10 +471,7 @@ export const createChatStreamingSlice: StateCreator<
     const originalTemp =
       typeof target?.metadata?.temperature === "number" ? target.metadata.temperature : 0.7;
     const nextTemperature = Math.min(originalTemp + 0.1, 1.0);
-    const originalClientId =
-      typeof userMessage.metadata?.client_id === "string"
-        ? userMessage.metadata.client_id
-        : makeClientId();
+    const regeneratedClientId = makeClientId();
 
     set({ regeneratingMessageId: messageId });
     try {
@@ -483,7 +480,7 @@ export const createChatStreamingSlice: StateCreator<
         promptMode: nextPromptMode,
         isRegeneration: true,
         temperature: nextTemperature,
-        clientMessageId: originalClientId,
+        clientMessageId: regeneratedClientId,
         assistantClientId: makeClientId(),
         skipUserMessage: true,
         replaceMessageId: messageId,

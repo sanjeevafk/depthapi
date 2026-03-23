@@ -105,6 +105,48 @@ describe("useChatStore", () => {
     expect(state.streamControllers).toEqual({});
   });
 
+  it("aborts active streams when switching modes", () => {
+    const controller = new AbortController();
+
+    useConversationStore.setState({
+      currentConversationId: "local-conv-1",
+      currentMode: "learning",
+      currentPromptMode: "eli12",
+      depthLevel: "eli12",
+      workspace: "learn",
+      conversations: [
+        {
+          id: "local-conv-1",
+          title: "Thread",
+          mode: "learning",
+          settings: { mode: "learning", prompt_mode: "eli12" },
+          created_at: "2026-01-01T00:00:00.000Z",
+          updated_at: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    useMessageStore.setState({
+      messageIds: ["assistant-1"],
+      messagesById: {
+        "assistant-1": {
+          id: "assistant-1",
+          role: "assistant",
+          content: "streaming",
+          created_at: "2026-01-01T00:00:00.000Z",
+          clientGeneratedId: "assistant-client-1",
+          isStreaming: true,
+        },
+      },
+    });
+    useChatStore.setState({ streamControllers: { "assistant-client-1": controller } });
+
+    useChatStore.getState().setMode("socratic");
+
+    expect(controller.signal.aborted).toBe(true);
+    expect(useChatStore.getState().streamControllers).toEqual({});
+    expect(useChatStore.getState().currentMode).toBe("socratic");
+  });
+
   it("deletes active conversation and switches to newest remaining conversation", async () => {
     useConversationStore.setState({
       conversations: [
@@ -224,6 +266,10 @@ describe("useChatStore", () => {
     const requestedText = payload.content ?? payload.topic;
     expect(requestedText).toBe("Explain gravity simply");
     expect(payload.mode).toBe("learning");
+    const outboundMessageId =
+      payload.client_generated_id ?? payload.message_id;
+    expect(typeof outboundMessageId).toBe("string");
+    expect(outboundMessageId).not.toBe("user-client-1");
     const promptMode = payload.prompt_mode ?? payload.promptMode;
     if (promptMode) {
       expect(promptMode).toBe("eli12");
