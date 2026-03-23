@@ -271,6 +271,7 @@ def build_query_stream_response(
                         timeout=fallback_timeout,
                     )
                 except Exception as exc:
+                    is_timeout = isinstance(exc, asyncio.TimeoutError)
                     logger.error(
                         "streaming_fallback_failed",
                         request_id=request_id,
@@ -281,7 +282,8 @@ def build_query_stream_response(
                         retry=bool(req.regenerate),
                         sampled=False,
                     )
-                    yield emit("error", {"error": "Streaming timed out. Please retry."})
+                    error_msg = "Streaming timed out. Please retry." if is_timeout else "An error occurred. Please retry."
+                    yield emit("error", {"error": error_msg})
                     yield emit("done", "[DONE]")
                     return
 
@@ -293,13 +295,12 @@ def build_query_stream_response(
                     await cache_set(cache_key_value, {"text": full_content})
                 if auth_data:
                     await persist_history(auth_data["user"], topic, [level], mode)
-                return
-
             if timed_out:
                 cutoff_message = "\n\n[Response truncated to stay within serverless limits. Retry to continue.]"
-                full_content += cutoff_message
                 yield emit("chunk", {"chunk": cutoff_message})
 
+            if full_content.strip():
+                await cache_set(cache_key_value, {"text": full_content})
             if full_content.strip():
                 await cache_set(cache_key_value, {"text": full_content})
             if auth_data:
