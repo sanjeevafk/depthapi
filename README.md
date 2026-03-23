@@ -78,7 +78,7 @@ Fallbacks are configured in LiteLLM router settings:
 
 | Method | Path | Description | Auth? | Rate-limited? |
 |--------|------|-------------|-------|---------------|
-| GET | `/api/health` | Dependency status (`ok|degraded|down`) | No | No |
+| GET | `/api/health` | Dependency status | No | No |
 | GET | `/api/pinned` | Curated & trending topics | No | Light |
 | POST | `/api/query` | Main query endpoint — returns layered output | Optional | Yes |
 | POST | `/api/export` | Convert result to file (txt/md) | No | Yes |
