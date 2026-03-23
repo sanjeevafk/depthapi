@@ -44,7 +44,8 @@ const loadPendingSyncs = (): PendingSyncEntry[] => {
         typeof item === "object" &&
         item !== null &&
         typeof item.id === "string" &&
-        typeof item.content === "string",
+        typeof item.content === "string" &&
+        typeof item.mode === "string",
     );
   } catch {
     return [];
