@@ -142,7 +142,11 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
 
     if mode == TECHNICAL_MODE:
         passthrough_kwargs = dict(kwargs)
+        # technical_stream_explanation receives request_id/model/telemetry_sink
+        # explicitly below, so remove duplicates from passthrough kwargs.
         passthrough_kwargs.pop("telemetry_sink", None)
+        passthrough_kwargs.pop("request_id", None)
+        passthrough_kwargs.pop("model", None)
         async for chunk in _technical_mode.technical_stream_explanation(
             topic,
             build_prompt=build_technical_prompt,

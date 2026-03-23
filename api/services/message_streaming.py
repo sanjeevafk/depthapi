@@ -21,6 +21,11 @@ from services.streaming_orchestrator import (
 from utils import TECHNICAL_MODE, SOCRATIC_MODE
 
 
+def _error_text(exc: Exception) -> str:
+    text = str(exc).strip()
+    return text or type(exc).__name__
+
+
 def build_message_replay_response(
     *,
     content: str,
@@ -297,7 +302,7 @@ def build_message_stream_response(
                 except Exception as exc:
                     logger.error(
                         "messages_fallback_failed",
-                        error=str(exc),
+                        error=_error_text(exc),
                         request_id=request_id,
                         user_id_hash=user_id_hash,
                         conversation_id=conversation_id,
@@ -365,7 +370,7 @@ def build_message_stream_response(
             stream_failed = True
             logger.error(
                 "messages_stream_failed",
-                error=str(exc),
+                error=_error_text(exc),
                 request_id=request_id,
                 user_id_hash=user_id_hash,
                 conversation_id=conversation_id,
@@ -426,7 +431,7 @@ def build_message_stream_response(
                 except Exception as fallback_exc:
                     logger.error(
                         "messages_exception_fallback_failed",
-                        error=str(fallback_exc),
+                        error=_error_text(fallback_exc),
                         request_id=request_id,
                         user_id_hash=user_id_hash,
                         conversation_id=conversation_id,

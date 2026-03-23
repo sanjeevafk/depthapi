@@ -18,6 +18,11 @@ from services.streaming_orchestrator import (
 )
 
 
+def _error_text(exc: Exception) -> str:
+    text = str(exc).strip()
+    return text or type(exc).__name__
+
+
 def build_query_stream_replay_response(
     *,
     topic: str,
@@ -271,7 +276,7 @@ def build_query_stream_response(
                         request_id=request_id,
                         user_id_hash=user_id_hash,
                         topic_hash=topic_hash,
-                        error=str(exc),
+                        error=_error_text(exc),
                         mode=mode,
                         retry=bool(req.regenerate),
                         sampled=False,
@@ -307,7 +312,7 @@ def build_query_stream_response(
                 request_id=request_id,
                 user_id_hash=user_id_hash,
                 topic_hash=topic_hash,
-                error=str(exc),
+                error=_error_text(exc),
                 mode=mode,
                 retry=bool(req.regenerate),
                 sampled=False,
@@ -358,8 +363,8 @@ def build_query_stream_response(
                         request_id=request_id,
                         user_id_hash=user_id_hash,
                         topic_hash=topic_hash,
-                        error=str(fallback_exc),
-                        original_error=str(exc),
+                        error=_error_text(fallback_exc),
+                        original_error=_error_text(exc),
                         mode=mode,
                         retry=bool(req.regenerate),
                         sampled=False,
