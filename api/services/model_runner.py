@@ -64,9 +64,7 @@ async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **k
     """Call API with given model and prompt."""
     create_chat_completion_fn = kwargs.pop("create_chat_completion_fn", None)
     log_sampled_success_fn = kwargs.pop("log_sampled_success_fn", None)
-    task = kwargs.get("task", "general")
-    if model in ["openai/gpt-oss-20b", "gpt-oss-20b", "deep_dive"]:
-        task = "coding"
+
 
     try:
         alias = model or "default-fast"

@@ -7,12 +7,21 @@ import time
 from typing import Any
 
 
+def _validate_no_null_bytes(field_name: str, value: str) -> None:
+    if "\x00" in value:
+        raise ValueError(f"{field_name} must not contain null bytes")
+
+
 def query_stream_idempotency_key(scope: str, message_id: str) -> str:
+    _validate_no_null_bytes("scope", scope)
+    _validate_no_null_bytes("message_id", message_id)
     digest = hashlib.sha256(f"{scope}\x00{message_id}".encode("utf-8")).hexdigest()
     return f"knowbear:query_stream:idempotency:{digest}"
 
 
 def message_idempotency_key(user_id: str, message_id: str) -> str:
+    _validate_no_null_bytes("user_id", user_id)
+    _validate_no_null_bytes("message_id", message_id)
     digest = hashlib.sha256(f"{user_id}\x00{message_id}".encode("utf-8")).hexdigest()
     return f"knowbear:idempotency:{digest}"
 
