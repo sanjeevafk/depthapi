@@ -127,6 +127,36 @@ def _build_stream_replay_response(
     )
 
 
+def _build_stream_wait_response(
+    *,
+    retry_after_ms: int,
+    message_id: str,
+    mode: str,
+    level: str,
+    topic: str,
+) -> StreamingResponse:
+    async def wait_generator():
+        builder = SseEventBuilder()
+        yield builder.emit_json(
+            "status",
+            {
+                "status": "waiting",
+                "retry_after_ms": retry_after_ms,
+                "message_id": message_id,
+                "mode": mode,
+                "level": level,
+                "topic": topic,
+            },
+        )
+        yield builder.emit("done", "[DONE]")
+
+    return StreamingResponse(
+        wait_generator(),
+        media_type="text/event-stream",
+        headers=SSE_RESPONSE_HEADERS,
+    )
+
+
 async def _stream_chunks(stream: AsyncIterable[str] | Iterable[str]) -> AsyncIterator[str]:
     if isinstance(stream, AsyncIterable):
         async for chunk in stream:
@@ -374,6 +404,7 @@ async def query_topic_stream(
 
     idempotency_key: str | None = None
     idempotency_claimed = False
+    idempotency_started_at: int | None = None
     if message_id:
         scope = user_id_raw or (request.client.host if request.client else "anonymous")
         idempotency_key = _query_stream_idempotency_key(str(scope), message_id)
@@ -394,7 +425,26 @@ async def query_topic_stream(
                 started_ts = int(started_at) if isinstance(started_at, (int, float)) else now_ts
                 age_seconds = max(now_ts - started_ts, 0)
                 if age_seconds < idempotency_stale_seconds:
-                    raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
+                    retry_after_ms = max(
+                        250,
+                        int((idempotency_stale_seconds - age_seconds) * 1000),
+                    )
+                    logger.info(
+                        "query_stream_duplicate_in_progress",
+                        request_id=request_id,
+                        user_id_hash=user_id_hash,
+                        mode=mode,
+                        level=level,
+                        retry_after_ms=retry_after_ms,
+                        duplicate_in_progress=True,
+                    )
+                    return _build_stream_wait_response(
+                        retry_after_ms=retry_after_ms,
+                        message_id=message_id or "",
+                        mode=mode,
+                        level=level,
+                        topic=topic,
+                    )
                 reclaimed = await cache_set(
                     idempotency_key,
                     {
@@ -410,9 +460,12 @@ async def query_topic_stream(
                 idempotency_claimed = True
 
     if idempotency_key:
+        idempotency_started_at = int(time.time())
         idempotency_record = {
             "status": "in_progress",
-            "started_at": int(time.time()),
+            "started_at": idempotency_started_at,
+            "last_update_ts": idempotency_started_at,
+            "response_chars": 0,
             "message_id": message_id,
             "mode": mode,
             "level": level,
@@ -456,8 +509,64 @@ async def query_topic_stream(
         timed_out = False
         start_timeout = False
         fallback_used = False
+        fallback_timeout_cap_seconds: float | None = None
+        fallback_skipped_remaining_time = False
         telemetry_sink: dict[str, Any] = {}
         model_alias: str | None = None
+        last_progress_update = start_time
+
+        async def update_idempotency_progress() -> None:
+            nonlocal last_progress_update
+            if not idempotency_key or not message_id:
+                return
+            now = time.perf_counter()
+            if now - last_progress_update < 2.0:
+                return
+            last_progress_update = now
+            now_ts = int(time.time())
+            await cache_set(
+                idempotency_key,
+                {
+                    "status": "in_progress",
+                    "started_at": idempotency_started_at or now_ts,
+                    "last_update_ts": now_ts,
+                    "response_chars": len(full_content),
+                    "message_id": message_id,
+                    "mode": mode,
+                    "level": level,
+                },
+                ttl=idempotency_ttl_seconds,
+            )
+
+        def compute_fallback_timeout() -> float | None:
+            nonlocal fallback_timeout_cap_seconds, fallback_skipped_remaining_time
+            elapsed = time.perf_counter() - start_time
+            remaining = max(float(stream_max_seconds) - elapsed, 0.0)
+            if remaining <= 0.5:
+                fallback_skipped_remaining_time = True
+                logger.warning(
+                    "streaming_fallback_skipped_remaining_time",
+                    request_id=request_id,
+                    user_id_hash=user_id_hash,
+                    mode=mode,
+                    level=level,
+                    remaining_seconds=round(remaining, 2),
+                    fallback_skipped_remaining_time=True,
+                )
+                return None
+            fallback_timeout_cap_seconds = min(
+                fallback_timeout_seconds,
+                max(0.5, remaining - 0.5),
+            )
+            logger.info(
+                "streaming_fallback_timeout_capped",
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+                mode=mode,
+                level=level,
+                fallback_timeout_cap_seconds=round(fallback_timeout_cap_seconds, 2),
+            )
+            return fallback_timeout_cap_seconds
 
         def record_chunk():
             nonlocal first_token_ms, last_chunk_time, total_chunk_interval_ms, chunk_count
@@ -545,11 +654,17 @@ async def query_topic_stream(
 
                 full_content += chunk
                 record_chunk()
+                await update_idempotency_progress()
                 yield emit("chunk", {"chunk": chunk})
 
             no_chunks = chunk_count == 0 and not full_content.strip()
             if (start_timeout or timed_out or no_chunks) and not full_content.strip():
                 fallback_used = True
+                fallback_timeout = compute_fallback_timeout()
+                if fallback_timeout is None:
+                    yield emit("error", {"error": "Streaming timed out. Please retry."})
+                    yield emit("done", "[DONE]")
+                    return
                 try:
                     fallback_content = await asyncio.wait_for(
                         generate_explanation(
@@ -562,7 +677,7 @@ async def query_topic_stream(
                             user_id=user_id_raw,
                             telemetry_sink=telemetry_sink,
                         ),
-                        timeout=fallback_timeout_seconds,
+                        timeout=fallback_timeout,
                     )
                 except Exception as exc:
                     logger.error(
@@ -613,6 +728,11 @@ async def query_topic_stream(
             )
             if not full_content.strip():
                 fallback_used = True
+                fallback_timeout = compute_fallback_timeout()
+                if fallback_timeout is None:
+                    yield emit("error", {"error": "Streaming timed out. Please retry."})
+                    yield emit("done", "[DONE]")
+                    return
                 try:
                     fallback_content = await asyncio.wait_for(
                         generate_explanation(
@@ -625,7 +745,7 @@ async def query_topic_stream(
                             user_id=user_id_raw,
                             telemetry_sink=telemetry_sink,
                         ),
-                        timeout=fallback_timeout_seconds,
+                        timeout=fallback_timeout,
                     )
                     full_content = str(fallback_content)
                     for index in range(0, len(full_content), chunk_size):
@@ -662,6 +782,7 @@ async def query_topic_stream(
             yield emit("done", "[DONE]")
         finally:
             if idempotency_key and message_id:
+                now_ts = int(time.time())
                 if full_content.strip():
                     await cache_set(
                         idempotency_key,
@@ -671,6 +792,8 @@ async def query_topic_stream(
                             "message_id": message_id,
                             "mode": mode,
                             "level": level,
+                            "last_update_ts": now_ts,
+                            "response_chars": len(full_content),
                         },
                         ttl=idempotency_ttl_seconds,
                     )
@@ -682,6 +805,8 @@ async def query_topic_stream(
                             "message_id": message_id,
                             "mode": mode,
                             "level": level,
+                            "last_update_ts": now_ts,
+                            "response_chars": len(full_content),
                         },
                         ttl=idempotency_ttl_seconds,
                     )
@@ -716,6 +841,10 @@ async def query_topic_stream(
                 content_chars=len(full_content),
                 timed_out=timed_out,
                 fallback_used=fallback_used,
+                fallback_timeout_cap_seconds=round(fallback_timeout_cap_seconds, 2)
+                if fallback_timeout_cap_seconds is not None
+                else None,
+                fallback_skipped_remaining_time=fallback_skipped_remaining_time,
                 stream_max_seconds=stream_max_seconds,
                 sampled=True,
             )
