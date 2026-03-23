@@ -145,10 +145,6 @@ async def query_topic(
     request_started = time.perf_counter()
     request_id = str(getattr(request.state, "request_id", "") or "")
     topic_hash = anonymize_text(req.topic)
-    config_state = get_litellm_config_state()
-    if not bool(config_state.get("chat_enabled", False)):
-        raise LLMUnavailable("Chat is disabled because LiteLLM is not configured correctly.")
-
     try:
         topic = sanitize_topic(req.topic)
     except ValueError as exc:
@@ -157,6 +153,10 @@ async def query_topic(
     mode = normalize_mode(req.mode)
     if mode not in SUPPORTED_CHAT_MODES:
         mode = DEFAULT_CHAT_MODE
+    if mode == TECHNICAL_MODE:
+        config_state = get_litellm_config_state()
+        if not bool(config_state.get("chat_enabled", False)):
+            raise LLMUnavailable("Chat is disabled because LiteLLM is not configured correctly.")
 
     is_verified_pro = bool(auth_data and await check_is_pro(auth_data["user"].id))
     req.premium = is_verified_pro
@@ -290,10 +290,6 @@ async def query_topic_stream(
     request_received = time.perf_counter()
     request_id = str(getattr(request.state, "request_id", "") or "")
     topic_hash = anonymize_text(req.topic)
-    config_state = get_litellm_config_state()
-    if not bool(config_state.get("chat_enabled", False)):
-        raise LLMUnavailable("Chat is disabled because LiteLLM is not configured correctly.")
-
     try:
         topic = sanitize_topic(req.topic)
     except ValueError as exc:
@@ -302,6 +298,10 @@ async def query_topic_stream(
     mode = normalize_mode(req.mode)
     if mode not in SUPPORTED_CHAT_MODES:
         mode = DEFAULT_CHAT_MODE
+    if mode == TECHNICAL_MODE:
+        config_state = get_litellm_config_state()
+        if not bool(config_state.get("chat_enabled", False)):
+            raise LLMUnavailable("Chat is disabled because LiteLLM is not configured correctly.")
 
     is_verified_pro = bool(auth_data and await check_is_pro(auth_data["user"].id))
     req.premium = is_verified_pro
@@ -369,7 +369,7 @@ async def query_topic_stream(
         fallback_budget_seconds = max(fallback_budget_seconds, 4.0)
         fallback_timeout_seconds = max(fallback_budget_seconds, 4.0)
     else:
-        cap = 8.0 if is_prod else 15.0
+        cap = 25.0 if is_prod else 60.0
         stream_start_timeout_seconds = min(max(raw_start_timeout, 0.1), cap)
 
     idempotency_key: str | None = None
@@ -486,6 +486,7 @@ async def query_topic_stream(
                     pass
 
         try:
+            yield emit("status", {"status": "Gathering context..."})
             yield emit(
                 "meta",
                 {"topic": topic, "level": level, "mode": mode, "message_id": message_id},
