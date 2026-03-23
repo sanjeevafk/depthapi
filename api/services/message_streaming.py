@@ -534,7 +534,7 @@ def build_message_stream_response(
             if assistant_message_id:
                 try:
                     await asyncio.to_thread(
-                        supabase.table("messages").update({"content": full_content}).eq("id", assistant_message_id).execute
+                        lambda: supabase.table("messages").update({"content": full_content}).eq("id", assistant_message_id).execute()
                     )
                 except Exception as exc:
                     logger.error(

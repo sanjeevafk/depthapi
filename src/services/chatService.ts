@@ -24,6 +24,38 @@ interface SendChatParams {
   onDone: () => void;
 }
 
+class StreamWaitError extends Error {
+  retryAfterMs: number;
+
+  constructor(retryAfterMs: number) {
+    super("Request already in progress");
+    this.name = "StreamWaitError";
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+const createAbortError = (): Error => {
+  const error = new Error("Aborted");
+  (error as Error & { name: string }).name = "AbortError";
+  return error;
+};
+
+const waitFor = (ms: number, signal: AbortSignal): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+
+    const onAbort = () => {
+      window.clearTimeout(timeout);
+      signal.removeEventListener("abort", onAbort);
+      reject(createAbortError());
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+
 const getSupabaseSession = async () => {
   if (!supabaseConfigured) return null;
   const { data } = await supabase.auth.getSession();
@@ -140,6 +172,14 @@ async function streamSSE(
 
       if (done || doneReceived) break;
     }
+
+    if (signal.aborted && !doneReceived) {
+      throw createAbortError();
+    }
+
+    if (!doneReceived) {
+      throw new Error("Stream closed unexpectedly");
+    }
   } finally {
     signal.removeEventListener("abort", abortHandler);
     reader.cancel().catch(() => {});
@@ -153,34 +193,67 @@ export async function sendChat(params: SendChatParams): Promise<void> {
 
     const fallbackToQueryStream = async () => {
       const fallbackLevel = toQueryLevel(params.promptMode);
-      const fallbackResponse = await fetch(`${API_URL}/api/query/stream`, {
-        method: "POST",
-        headers,
-        signal: params.signal,
-        body: JSON.stringify({
-          topic: params.content,
-          levels: [fallbackLevel],
-          mode: params.mode,
-          premium: params.isPro,
-          regenerate: Boolean(params.isRegeneration),
-          bypass_cache: Boolean(params.isRegeneration),
-          temperature: params.temperature,
-          message_id: params.clientMessageId,
-        }),
-      });
+      const maxWaitRetries = 4;
 
-      if (!fallbackResponse.ok) {
-        throw await buildHttpError(fallbackResponse);
+      for (let attempt = 0; attempt <= maxWaitRetries; attempt++) {
+        const fallbackResponse = await fetch(`${API_URL}/api/query/stream`, {
+          method: "POST",
+          headers,
+          signal: params.signal,
+          body: JSON.stringify({
+            topic: params.content,
+            levels: [fallbackLevel],
+            mode: params.mode,
+            premium: params.isPro,
+            regenerate: Boolean(params.isRegeneration),
+            bypass_cache: Boolean(params.isRegeneration),
+            temperature: params.temperature,
+            message_id: params.clientMessageId,
+          }),
+        });
+
+        if (!fallbackResponse.ok) {
+          throw await buildHttpError(fallbackResponse);
+        }
+
+        try {
+          await streamSSE(fallbackResponse, params.signal, (payload) => {
+            if (payload && typeof payload === "object") {
+              const statusPayload = payload as {
+                status?: string;
+                retry_after_ms?: number;
+              };
+              if (
+                (statusPayload.status === "waiting" ||
+                  statusPayload.status === "in_progress") &&
+                typeof statusPayload.retry_after_ms === "number"
+              ) {
+                throw new StreamWaitError(
+                  Math.max(250, Math.round(statusPayload.retry_after_ms)),
+                );
+              }
+            }
+
+            handlePayload(
+              payload,
+              "chunk",
+              params.onChunk,
+              params.onServerMessageId,
+            );
+          });
+          return;
+        } catch (error) {
+          if (!(error instanceof StreamWaitError)) {
+            throw error;
+          }
+          if (attempt >= maxWaitRetries) {
+            throw new Error(
+              "The previous request is still processing. Please retry in a moment.",
+            );
+          }
+          await waitFor(error.retryAfterMs, params.signal);
+        }
       }
-
-      await streamSSE(fallbackResponse, params.signal, (payload) =>
-        handlePayload(
-          payload,
-          "chunk",
-          params.onChunk,
-          params.onServerMessageId,
-        ),
-      );
     };
 
     const shouldUseMessagesEndpoint =

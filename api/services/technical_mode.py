@@ -94,8 +94,8 @@ async def technical_mode_handler(
 
     try:
         classification = intent_detector(topic)
-        intent = classification["intent"]
-        depth = classification["depth"]
+        intent = classification.get("intent", "unknown")
+        depth = classification.get("depth", "shallow")
         diagram_type = diagram_detector(topic)
     except Exception as exc:
         _tech_logger.warning(
@@ -238,8 +238,8 @@ async def technical_stream_explanation(
     diagram_detector = detect_diagram_type_fn or detect_diagram_type
     try:
         classification = intent_detector(topic)
-        intent = classification["intent"]
-        depth = classification["depth"]
+        intent = classification.get("intent", "unknown")
+        depth = classification.get("depth", "shallow")
         diagram_type = diagram_detector(topic)
     except Exception as exc:
         _tech_logger.warning(
@@ -282,6 +282,8 @@ async def technical_stream_explanation(
         if streamed_chunks == 0:
             full_response = await technical_mode_handler_fn(
                 topic,
+                build_prompt=build_prompt,
+                call_model=call_model,
                 request_id=request_id,
                 **kwargs,
             )
