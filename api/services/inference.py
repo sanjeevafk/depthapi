@@ -797,7 +797,10 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
     stream_telemetry: dict[str, object] = {}
     stream_start = time.perf_counter()
     if mode == SOCRATIC_MODE:
-        socratic_chunks: list[str] = []
+        socratic_raw_chunks: list[str] = []
+        pending = ""
+        seen_signatures: set[str] = set()
+        emitted_questions = 0
         async for chunk in stream_chat_completion(
             model=alias,
             messages=[{"role": "user", "content": prompt}],
@@ -805,10 +808,39 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             request_id=request_id,
             telemetry_sink=stream_telemetry,
         ):
-            socratic_chunks.append(chunk)
-        constrained_response = _enforce_socratic_response_constraints("".join(socratic_chunks))
-        for index in range(0, len(constrained_response), 400):
-            yield constrained_response[index : index + 400]
+            text_chunk = str(chunk or "")
+            socratic_raw_chunks.append(text_chunk)
+            if emitted_questions >= 3:
+                continue
+
+            pending += text_chunk
+            matches = list(re.finditer(r"[^?]*\?", pending))
+            if not matches:
+                continue
+
+            consumed = 0
+            for match in matches:
+                if emitted_questions >= 3:
+                    break
+                candidate = match.group(0).strip()
+                consumed = match.end()
+                if not candidate:
+                    continue
+                signature = _normalize_question_signature(candidate)
+                if not signature or signature in seen_signatures:
+                    continue
+                seen_signatures.add(signature)
+                prefix = "" if emitted_questions == 0 else "\n"
+                yield f"{prefix}{candidate}"
+                emitted_questions += 1
+            pending = pending[consumed:]
+
+        if emitted_questions > 0:
+            yield "\n\nShare your answer, and I will guide the next step."
+        else:
+            constrained_response = _enforce_socratic_response_constraints("".join(socratic_raw_chunks))
+            for index in range(0, len(constrained_response), 400):
+                yield constrained_response[index : index + 400]
     else:
         async for chunk in stream_chat_completion(
             model=alias,
