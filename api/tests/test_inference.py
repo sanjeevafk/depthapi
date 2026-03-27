@@ -118,6 +118,29 @@ async def test_generate_stream_explanation_socratic_dedupes_and_caps_questions(m
 
 
 @pytest.mark.asyncio
+async def test_generate_stream_explanation_socratic_streams_questions_progressively(monkeypatch):
+    async def fake_stream(*_args, **_kwargs):
+        yield "What is entropy? "
+        yield "How does entropy change in this process? "
+        yield "How does entropy change in this process? "
+
+    monkeypatch.setattr(inference_module, "stream_chat_completion", fake_stream)
+
+    streamed = []
+    async for chunk in inference_module.generate_stream_explanation(
+        "entropy",
+        "eli15",
+        mode="socratic",
+    ):
+        streamed.append(chunk)
+
+    assert streamed[0] == "What is entropy?"
+    assert any("How does entropy change in this process?" in chunk for chunk in streamed)
+    assert sum("How does entropy change in this process?" in chunk for chunk in streamed) == 1
+    assert streamed[-1] == "\n\nShare your answer, and I will guide the next step."
+
+
+@pytest.mark.asyncio
 async def test_technical_mode_handler_uses_safe_defaults_when_classification_fails(monkeypatch):
     captured = {}
 
