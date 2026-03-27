@@ -497,6 +497,7 @@ async def query_topic_stream(
         telemetry_sink: dict[str, Any] = {}
         model_alias: str | None = None
         done_emitted = False
+        pending_chunk_task: asyncio.Task[str] | None = None
 
         def record_chunk():
             nonlocal first_token_ms, last_chunk_time, total_chunk_interval_ms, chunk_count
@@ -540,6 +541,17 @@ async def query_topic_stream(
                 except Exception:
                     pass
 
+        async def cancel_pending_chunk_task() -> None:
+            nonlocal pending_chunk_task
+            if pending_chunk_task is None:
+                return
+            pending_chunk_task.cancel()
+            try:
+                await pending_chunk_task
+            except BaseException:
+                pass
+            pending_chunk_task = None
+
         try:
             yield emit(
                 "meta",
@@ -577,6 +589,7 @@ async def query_topic_stream(
                 elapsed = time.perf_counter() - start_time
                 if elapsed >= stream_max_seconds:
                     timed_out = True
+                    await cancel_pending_chunk_task()
                     await close_stream(stream)
                     break
 
@@ -585,19 +598,25 @@ async def query_topic_stream(
                     timeout = min(timeout, max(0.0, start_deadline - time.perf_counter()))
                     if timeout <= 0:
                         start_timeout = True
+                        await cancel_pending_chunk_task()
                         await close_stream(stream)
                         break
 
                 try:
-                    chunk = await asyncio.wait_for(stream_iter.__anext__(), timeout=timeout)
+                    if pending_chunk_task is None:
+                        pending_chunk_task = asyncio.create_task(stream_iter.__anext__())
+                    chunk = await asyncio.wait_for(asyncio.shield(pending_chunk_task), timeout=timeout)
+                    pending_chunk_task = None
                 except asyncio.TimeoutError:
                     yield emit("heartbeat", {"ts": time.time()})
                     if chunk_count == 0 and time.perf_counter() >= start_deadline:
                         start_timeout = True
+                        await cancel_pending_chunk_task()
                         await close_stream(stream)
                         break
                     continue
                 except StopAsyncIteration:
+                    pending_chunk_task = None
                     break
 
                 full_content += chunk
@@ -732,6 +751,7 @@ async def query_topic_stream(
             if done_event:
                 yield done_event
         finally:
+            await cancel_pending_chunk_task()
             if idempotency_key and message_id:
                 if full_content.strip():
                     await cache_set(

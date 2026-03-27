@@ -473,6 +473,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         start_timeout = False
         telemetry_sink: dict[str, Any] = {}
         stream_failed = False
+        pending_chunk_task: asyncio.Task[str] | None = None
 
         capture_telemetry_event(
             "stream_start",
@@ -517,6 +518,17 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     )
                 except Exception:
                     pass
+
+        async def cancel_pending_chunk_task() -> None:
+            nonlocal pending_chunk_task
+            if pending_chunk_task is None:
+                return
+            pending_chunk_task.cancel()
+            try:
+                await pending_chunk_task
+            except BaseException:
+                pass
+            pending_chunk_task = None
 
         try:
             meta_payload = {
@@ -578,12 +590,14 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 if await request.is_disconnected():
                     aborted = True
                     abort_reason = "client_disconnect"
+                    await cancel_pending_chunk_task()
                     await close_stream(stream)
                     break
 
                 elapsed = time.perf_counter() - start_time
                 if elapsed >= stream_max_seconds:
                     timed_out = True
+                    await cancel_pending_chunk_task()
                     await close_stream(stream)
                     break
 
@@ -592,19 +606,25 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     timeout = min(timeout, max(0.0, start_deadline - time.perf_counter()))
                     if timeout <= 0:
                         start_timeout = True
+                        await cancel_pending_chunk_task()
                         await close_stream(stream)
                         break
 
                 try:
-                    chunk = await asyncio.wait_for(anext(stream_iter), timeout=timeout)
+                    if pending_chunk_task is None:
+                        pending_chunk_task = asyncio.create_task(anext(stream_iter))
+                    chunk = await asyncio.wait_for(asyncio.shield(pending_chunk_task), timeout=timeout)
+                    pending_chunk_task = None
                 except asyncio.TimeoutError:
                     yield emit("heartbeat", {"ts": datetime.now(timezone.utc).isoformat()})
                     if chunk_count == 0 and time.perf_counter() >= start_deadline:
                         start_timeout = True
+                        await cancel_pending_chunk_task()
                         await close_stream(stream)
                         break
                     continue
                 except StopAsyncIteration:
+                    pending_chunk_task = None
                     break
 
 
@@ -820,6 +840,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             yield emit("error", {"error": "Streaming failed"})
             yield emit("done", "[DONE]")
         finally:
+            await cancel_pending_chunk_task()
             total_ms = (time.perf_counter() - start_time) * 1000
             avg_chunk_interval_ms = None
             if chunk_count > 1:
