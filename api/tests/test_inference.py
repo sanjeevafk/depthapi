@@ -215,6 +215,33 @@ async def test_technical_mode_handler_returns_best_effort_when_validation_fails(
 
 
 @pytest.mark.asyncio
+async def test_technical_mode_handler_accepts_structured_response_without_terminal_punctuation(monkeypatch):
+    response = (
+        "## Core Idea\nA reliable overview of retrieval behavior across providers\n\n"
+        "## First Principles Breakdown\nRequests are routed by intent and depth with bounded fallback strategy\n\n"
+        "## Intuition\nTreat the system as layered safety checks around model selection and output quality\n\n"
+        "## Edge Cases / Limitations\nProvider key drift, timeout windows, and partial stream failures require guarded fallback\n\n"
+        "## Connections\nThis links request controls, routing state, and response validation across the stack"
+    )
+
+    async def fake_call_model(*_args, **_kwargs):
+        return response
+
+    monkeypatch.setattr(inference_module, "call_model", fake_call_model)
+    monkeypatch.setattr(
+        inference_module,
+        "detect_intent_and_depth",
+        lambda _topic: {"intent": "explain", "depth": "medium"},
+    )
+    monkeypatch.setattr(inference_module, "detect_diagram_type", lambda _topic: None)
+    monkeypatch.setattr(inference_module, "build_technical_prompt", lambda *_args, **_kwargs: "prompt")
+
+    result = await inference_module.technical_mode_handler("topic")
+    assert result == response
+    assert not result.endswith(".")
+
+
+@pytest.mark.asyncio
 async def test_generate_stream_explanation_technical_partial_stream_failure_is_graceful(monkeypatch):
     async def partial_then_fail(*_args, **_kwargs):
         yield "partial"
@@ -243,7 +270,8 @@ async def test_generate_stream_explanation_technical_partial_stream_failure_is_g
     ):
         chunks.append(chunk)
 
-    assert chunks == ["partial"]
+    assert chunks[0] == "partial"
+    assert any("service interruption" in chunk for chunk in chunks[1:])
     assert telemetry_sink.get("stream_completed") is False
     assert telemetry_sink.get("partial_failure") is True
 
