@@ -1,9 +1,10 @@
-"""LiteLLM-backed inference service."""
+"""Native multi-provider inference service."""
 
 import asyncio
 import json
 import re
 import time
+from typing import TypedDict
 import httpx
 import structlog
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -52,6 +53,236 @@ TECHNICAL_LAST_RESORT_RESPONSE = (
 )
 
 TECHNICAL_MINIMAL_PROMPT = "Explain the topic with concise technical clarity."
+
+MODEL_PROFILES: dict[str, dict[str, float]] = {
+    LEARNING_MODEL_SIMPLE: {
+        "complexity": 0.45,
+        "reasoning": 0.45,
+        "explanation": 0.60,
+        "latency_priority": 0.95,
+    },
+    LEARNING_MODEL_DETAILED: {
+        "complexity": 0.70,
+        "reasoning": 0.78,
+        "explanation": 0.72,
+        "latency_priority": 0.70,
+    },
+    TECHNICAL_MODEL_PRIMARY: {
+        "complexity": 0.95,
+        "reasoning": 0.95,
+        "explanation": 0.88,
+        "latency_priority": 0.40,
+    },
+    TECHNICAL_MODEL_FALLBACK: {
+        "complexity": 0.60,
+        "reasoning": 0.62,
+        "explanation": 0.65,
+        "latency_priority": 0.80,
+    },
+}
+
+COST_PENALTY: dict[str, float] = {
+    LEARNING_MODEL_SIMPLE: 0.08,
+    LEARNING_MODEL_DETAILED: 0.16,
+    TECHNICAL_MODEL_PRIMARY: 0.24,
+    TECHNICAL_MODEL_FALLBACK: 0.12,
+}
+
+LATENCY_KEYWORDS = (
+    r"\bquick\b",
+    r"\bbrief\b",
+    r"\bsummary\b",
+    r"\btldr\b",
+    r"\bshort\b",
+    r"\bfast\b",
+)
+COMPLEXITY_KEYWORDS = (
+    r"\boptimi[sz]e\b",
+    r"\bdistributed\b",
+    r"\bconcurrency\b",
+    r"\btrade[ -]?offs?\b",
+    r"\barchitecture\b",
+    r"\bscal\w+\b",
+    r"\bproof\b",
+    r"\bderive\b",
+)
+REASONING_KEYWORDS = (
+    r"\bwhy\b",
+    r"\bcompare\b",
+    r"\bversus\b",
+    r"\bshould\b",
+    r"\bpros?\b",
+    r"\bcons?\b",
+    r"\bdecision\b",
+)
+EXPLANATION_KEYWORDS = (
+    r"\bexplain\b",
+    r"\bhow\b",
+    r"\bwalk me through\b",
+    r"\bintuition\b",
+    r"\bexample\b",
+)
+
+
+class IntentFeatures(TypedDict):
+    complexity: float
+    reasoning: float
+    explanation: float
+    latency_priority: float
+
+
+def _clamp_feature(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def _count_keyword_hits(text: str, patterns: tuple[str, ...]) -> int:
+    return sum(1 for pattern in patterns if re.search(pattern, text))
+
+
+def extract_features(
+    query: str,
+    *,
+    mode: str,
+    level: str,
+    intent: str | None = None,
+    depth: str | None = None,
+) -> IntentFeatures:
+    """
+    Build routing features from deterministic intent/depth + keyword signals.
+    """
+    lowered = (query or "").lower().strip()
+    resolved_intent = intent
+    resolved_depth = depth
+    if not resolved_intent or not resolved_depth:
+        try:
+            classification = detect_intent_and_depth(query)
+            resolved_intent = resolved_intent or classification.get("intent", "explain")
+            resolved_depth = resolved_depth or classification.get("depth", "medium")
+        except Exception:
+            resolved_intent = resolved_intent or "explain"
+            resolved_depth = resolved_depth or "medium"
+
+    complexity = 0.35
+    reasoning = 0.30
+    explanation = 0.45
+    latency_priority = 0.50
+
+    if resolved_depth == "deep":
+        complexity += 0.40
+        reasoning += 0.25
+        latency_priority -= 0.25
+    elif resolved_depth == "shallow":
+        complexity -= 0.10
+        latency_priority += 0.30
+        explanation += 0.08
+
+    if resolved_intent == "compare":
+        reasoning += 0.35
+        complexity += 0.10
+    elif resolved_intent == "brainstorm":
+        reasoning += 0.28
+        complexity += 0.16
+    else:
+        explanation += 0.22
+
+    complexity += 0.08 * _count_keyword_hits(lowered, COMPLEXITY_KEYWORDS)
+    reasoning += 0.07 * _count_keyword_hits(lowered, REASONING_KEYWORDS)
+    explanation += 0.06 * _count_keyword_hits(lowered, EXPLANATION_KEYWORDS)
+    latency_priority += 0.09 * _count_keyword_hits(lowered, LATENCY_KEYWORDS)
+
+    if level in LEARNING_DETAILED_LEVELS:
+        explanation += 0.08
+        complexity += 0.06
+        latency_priority -= 0.10
+
+    if mode == TECHNICAL_MODE:
+        complexity += 0.15
+        reasoning += 0.12
+        latency_priority -= 0.10
+    elif mode == SOCRATIC_MODE:
+        explanation += 0.06
+
+    return {
+        "complexity": _clamp_feature(complexity),
+        "reasoning": _clamp_feature(reasoning),
+        "explanation": _clamp_feature(explanation),
+        "latency_priority": _clamp_feature(latency_priority),
+    }
+
+
+def score_model(features: IntentFeatures, model_alias: str, *, mode: str) -> float:
+    """
+    Weighted model scoring with explicit cost offsets.
+    """
+    profile = MODEL_PROFILES.get(model_alias, MODEL_PROFILES[LEARNING_MODEL_SIMPLE])
+    score = 0.0
+    for feature_name, value in features.items():
+        score += value * profile.get(feature_name, 0.0)
+    score -= COST_PENALTY.get(model_alias, 0.0)
+
+    # Mode-specific tie-breakers to keep behavior intentional.
+    if mode == TECHNICAL_MODE and model_alias == TECHNICAL_MODEL_PRIMARY:
+        score += 0.15
+    if mode == LEARNING_MODE and model_alias == LEARNING_MODEL_SIMPLE:
+        score += 0.06
+
+    return score
+
+
+def route_model_aliases(
+    query: str,
+    *,
+    mode: str,
+    level: str,
+    intent: str | None = None,
+    depth: str | None = None,
+) -> list[str]:
+    """
+    Rank model aliases using weighted feature scores.
+    """
+    if mode == SOCRATIC_MODE:
+        return ["socratic"]
+
+    features = extract_features(
+        query,
+        mode=mode,
+        level=level,
+        intent=intent,
+        depth=depth,
+    )
+    candidates = [LEARNING_MODEL_SIMPLE, LEARNING_MODEL_DETAILED, TECHNICAL_MODEL_PRIMARY]
+    if mode == TECHNICAL_MODE:
+        candidates.append(TECHNICAL_MODEL_FALLBACK)
+
+    ranked = sorted(
+        candidates,
+        key=lambda alias: score_model(features, alias, mode=mode),
+        reverse=True,
+    )
+    # Keep deterministic ordering for equal scores.
+    deduped: list[str] = []
+    for alias in ranked:
+        if alias not in deduped:
+            deduped.append(alias)
+    return deduped
+
+
+def _technical_route(
+    topic: str,
+    *,
+    intent: str,
+    depth: str,
+) -> tuple[str, str]:
+    ranked = route_model_aliases(
+        topic,
+        mode=TECHNICAL_MODE,
+        level="technical",
+        intent=intent,
+        depth=depth,
+    )
+    primary = ranked[0] if ranked else TECHNICAL_MODEL_PRIMARY
+    fallback = next((alias for alias in ranked if alias != primary), TECHNICAL_MODEL_FALLBACK)
+    return primary, fallback
 
 
 def _learning_model_for_level(level: str) -> str:
@@ -141,6 +372,7 @@ async def technical_mode_handler(
     fallback_triggered = False
     fallback_reason: str | None = None
     best_effort_response: str | None = None
+    primary_alias, fallback_alias = _technical_route(topic, intent=intent, depth=depth)
 
     def _ensure_terminal_char(value: str) -> str:
         trimmed = value.rstrip()
@@ -201,11 +433,11 @@ async def technical_mode_handler(
             return None
         return response
 
-    response = await _call_and_validate(TECHNICAL_MODEL_PRIMARY)
+    response = await _call_and_validate(primary_alias)
 
     if response is None:
         _tech_logger.info("technical_primary_retry", intent=intent, depth=depth)
-        response = await _call_and_validate(TECHNICAL_MODEL_PRIMARY)
+        response = await _call_and_validate(primary_alias)
 
     if response is None:
         fallback_triggered = True
@@ -216,7 +448,7 @@ async def technical_mode_handler(
             intent=intent,
             depth=depth,
         )
-        response = await _call_and_validate(TECHNICAL_MODEL_FALLBACK)
+        response = await _call_and_validate(fallback_alias)
 
     if response is None:
         fallback_triggered = True
@@ -403,7 +635,8 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
             topic=topic,
             conversation_context=kwargs.get("conversation_context", "No prior context."),
         )
-        response = await call_model(model or "socratic", prompt, **kwargs)
+        routed_alias = model or route_model_aliases(topic, mode=mode, level=level)[0]
+        response = await call_model(routed_alias, prompt, **kwargs)
         return _enforce_socratic_response_constraints(response)
 
     template = PROMPTS.get(level)
@@ -412,7 +645,8 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
         
     prompt = template.format(topic=topic)
         
-    model_alias = model or _learning_model_for_level(level)
+    routed_aliases = route_model_aliases(topic, mode=mode, level=level)
+    model_alias = model or (routed_aliases[0] if routed_aliases else _learning_model_for_level(level))
     return await call_model(model_alias, prompt, **kwargs)
 async def generate_stream_explanation(topic: str, level: str, model: str | None = None, **kwargs):
     """Stream explanation for topic at given level."""
@@ -445,7 +679,8 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         if not prompt or not prompt.strip():
             prompt = TECHNICAL_MINIMAL_PROMPT
 
-        alias = model or TECHNICAL_MODEL_PRIMARY
+        primary_alias, _fallback_alias = _technical_route(topic, intent=intent, depth=depth)
+        alias = model or primary_alias
         stream_telemetry: dict[str, object] = {}
         stream_start = time.perf_counter()
         streamed_chunks = 0
@@ -546,7 +781,13 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             raise ValueError(f"Unknown level: {level}")
         prompt = template.format(topic=topic)
     
-    alias = model or ("socratic" if mode == SOCRATIC_MODE else _learning_model_for_level(level))
+    if model:
+        alias = model
+    else:
+        ranked_aliases = route_model_aliases(topic, mode=mode, level=level)
+        alias = ranked_aliases[0] if ranked_aliases else (
+            "socratic" if mode == SOCRATIC_MODE else _learning_model_for_level(level)
+        )
     stream_telemetry: dict[str, object] = {}
     stream_start = time.perf_counter()
     if mode == SOCRATIC_MODE:
