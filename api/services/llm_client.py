@@ -10,6 +10,7 @@ import time
 
 import sentry_sdk
 
+from pydantic import SecretStr
 from openai import (
     AsyncOpenAI,
     APIConnectionError,
@@ -87,38 +88,40 @@ class ProviderStateManager:
     def _redis_key(self, provider: ProviderName) -> str:
         return f"knowbear:provider_state:{provider}"
 
+    async def _read_state_unlocked(self, provider: ProviderName) -> dict[str, int]:
+        state = dict(self._memory_state.get(provider, {"failures": 0, "blocked_until": 0}))
+
+        try:
+            redis = await get_redis()
+            raw = await redis.get(self._redis_key(provider))
+            if raw is not None:
+                if isinstance(raw, (bytes, bytearray)):
+                    payload = raw.decode("utf-8")
+                else:
+                    payload = str(raw)
+                loaded = json.loads(payload)
+                if isinstance(loaded, dict):
+                    state = {
+                        "failures": int(loaded.get("failures", 0) or 0),
+                        "blocked_until": int(loaded.get("blocked_until", 0) or 0),
+                    }
+                    self._memory_state[provider] = dict(state)
+        except Exception:
+            # Redis may be unavailable; keep local memory state.
+            pass
+
+        return state
+
     async def _read_state(self, provider: ProviderName) -> dict[str, int]:
         async with self._lock:
-            state = dict(self._memory_state.get(provider, {"failures": 0, "blocked_until": 0}))
+            return await self._read_state_unlocked(provider)
 
-            try:
-                redis = await get_redis()
-                raw = await redis.get(self._redis_key(provider))
-                if raw is not None:
-                    if isinstance(raw, (bytes, bytearray)):
-                        payload = raw.decode("utf-8")
-                    else:
-                        payload = str(raw)
-                    loaded = json.loads(payload)
-                    if isinstance(loaded, dict):
-                        state = {
-                            "failures": int(loaded.get("failures", 0) or 0),
-                            "blocked_until": int(loaded.get("blocked_until", 0) or 0),
-                        }
-                        self._memory_state[provider] = dict(state)
-            except Exception:
-                # Redis may be unavailable; keep local memory state.
-                pass
-
-            return state
-
-    async def _write_state(self, provider: ProviderName, state: dict[str, int]) -> None:
+    async def _write_state_unlocked(self, provider: ProviderName, state: dict[str, int]) -> None:
         normalized = {
             "failures": int(state.get("failures", 0) or 0),
             "blocked_until": int(state.get("blocked_until", 0) or 0),
         }
-        async with self._lock:
-            self._memory_state[provider] = dict(normalized)
+        self._memory_state[provider] = dict(normalized)
 
         try:
             redis = await get_redis()
@@ -126,20 +129,26 @@ class ProviderStateManager:
         except Exception:
             pass
 
+    async def _write_state(self, provider: ProviderName, state: dict[str, int]) -> None:
+        async with self._lock:
+            await self._write_state_unlocked(provider, state)
+
     async def should_attempt(self, provider: ProviderName) -> bool:
         state = await self._read_state(provider)
         return int(state.get("blocked_until", 0) or 0) <= int(time.time())
 
     async def mark_success(self, provider: ProviderName) -> None:
-        await self._write_state(provider, {"failures": 0, "blocked_until": 0})
+        async with self._lock:
+            await self._write_state_unlocked(provider, {"failures": 0, "blocked_until": 0})
 
     async def mark_failure(self, provider: ProviderName) -> None:
-        state = await self._read_state(provider)
-        failures = int(state.get("failures", 0) or 0) + 1
-        blocked_until = int(state.get("blocked_until", 0) or 0)
-        if failures >= self.failure_threshold:
-            blocked_until = int(time.time()) + self.cooldown_seconds
-        await self._write_state(provider, {"failures": failures, "blocked_until": blocked_until})
+        async with self._lock:
+            state = await self._read_state_unlocked(provider)
+            failures = int(state.get("failures", 0) or 0) + 1
+            blocked_until = int(state.get("blocked_until", 0) or 0)
+            if failures >= self.failure_threshold:
+                blocked_until = int(time.time()) + self.cooldown_seconds
+            await self._write_state_unlocked(provider, {"failures": failures, "blocked_until": blocked_until})
 
 
 _clients: dict[ProviderName, AsyncOpenAI] = {}
@@ -190,6 +199,8 @@ def _provider_api_key(provider: ProviderName) -> str:
         "openrouter": "openrouter_api_key",
     }
     value = getattr(settings, lookup[provider], "")
+    if isinstance(value, SecretStr):
+        return value.get_secret_value().strip()
     if not isinstance(value, str):
         return ""
     return value.strip()

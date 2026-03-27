@@ -2,7 +2,7 @@
 
 import os
 from functools import lru_cache
-from pydantic import field_validator
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -11,10 +11,10 @@ class Settings(BaseSettings):
 
     environment: str = "development"
     log_user_hash_salt: str = ""
-    groq_api_key: str = ""
-    cerebras_api_key: str = ""
-    gemini_api_key: str = ""
-    openrouter_api_key: str = ""
+    groq_api_key: SecretStr = SecretStr("")
+    cerebras_api_key: SecretStr = SecretStr("")
+    gemini_api_key: SecretStr = SecretStr("")
+    openrouter_api_key: SecretStr = SecretStr("")
     llm_timeout_seconds: int = 60
     litellm_base_url: str = ""
     litellm_virtual_key: str = ""
@@ -81,12 +81,14 @@ class Settings(BaseSettings):
 
     @field_validator("groq_api_key", "cerebras_api_key", "gemini_api_key", "openrouter_api_key", mode="before")
     @classmethod
-    def _normalize_provider_key(cls, value: object) -> str:
+    def _normalize_provider_key(cls, value: object) -> SecretStr:
         if value is None:
-            return ""
+            return SecretStr("")
+        if isinstance(value, SecretStr):
+            return SecretStr(value.get_secret_value().strip())
         if not isinstance(value, str):
             raise TypeError("Provider API keys must be strings.")
-        return value.strip()
+        return SecretStr(value.strip())
 
     @field_validator("llm_timeout_seconds")
     @classmethod

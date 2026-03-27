@@ -1,4 +1,5 @@
 import importlib
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -52,3 +53,40 @@ async def test_create_chat_completion_cascades_through_primary_providers(monkeyp
 
     assert response.choices[0].message.content == "ok"
     assert attempts == ["groq", "cerebras", "gemini"]
+
+
+@pytest.mark.asyncio
+async def test_provider_state_mark_failure_is_atomic(monkeypatch):
+    importlib.reload(llm_client_module)
+
+    class FakeRedis:
+        def __init__(self):
+            self.store = {}
+
+        async def get(self, key):
+            await asyncio.sleep(0.001)
+            return self.store.get(key)
+
+        async def setex(self, key, _ttl, value):
+            await asyncio.sleep(0.001)
+            self.store[key] = value
+            return True
+
+    fake_redis = FakeRedis()
+
+    async def fake_get_redis():
+        return fake_redis
+
+    monkeypatch.setattr(llm_client_module, "get_redis", fake_get_redis)
+
+    manager = llm_client_module.ProviderStateManager(
+        failure_threshold=999,
+        cooldown_seconds=30,
+        state_ttl_seconds=300,
+    )
+
+    await asyncio.gather(*(manager.mark_failure("groq") for _ in range(25)))
+    state = await manager._read_state("groq")
+
+    assert state["failures"] == 25
+    assert state["blocked_until"] == 0

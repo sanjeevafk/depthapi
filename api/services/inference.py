@@ -569,9 +569,6 @@ def is_transient_http_error(exc: BaseException) -> bool:
 )
 async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **kwargs) -> str:
     """Call API with given model and prompt."""
-    task = kwargs.get("task", "general")
-    if model in ["openai/gpt-oss-20b", "gpt-oss-20b", "deep_dive"]:
-        task = "coding"
             
     try:
         alias = model or "default-fast"
@@ -727,7 +724,8 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
                     model_alias=alias,
                     partial_failure=True,
                 )
-
+                # Signal incomplete response to client
+                yield "\n\n---\n*Response incomplete due to a service interruption.*"
         stream_duration_ms = round((time.perf_counter() - stream_start) * 1000, 2)
         model_inference_ms = stream_telemetry.get("model_inference_ms")
         token_usage = stream_telemetry.get("token_usage")
