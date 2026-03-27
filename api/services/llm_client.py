@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, AsyncGenerator, Literal
+from typing import Any, AsyncGenerator, Literal, cast
 import asyncio
 import json
 import time
@@ -91,27 +91,26 @@ class ProviderStateManager:
         async with self._lock:
             state = dict(self._memory_state.get(provider, {"failures": 0, "blocked_until": 0}))
 
-        try:
-            redis = await get_redis()
-            raw = await redis.get(self._redis_key(provider))
-            if raw is not None:
-                if isinstance(raw, (bytes, bytearray)):
-                    payload = raw.decode("utf-8")
-                else:
-                    payload = str(raw)
-                loaded = json.loads(payload)
-                if isinstance(loaded, dict):
-                    state = {
-                        "failures": int(loaded.get("failures", 0) or 0),
-                        "blocked_until": int(loaded.get("blocked_until", 0) or 0),
-                    }
-                    async with self._lock:
+            try:
+                redis = await get_redis()
+                raw = await redis.get(self._redis_key(provider))
+                if raw is not None:
+                    if isinstance(raw, (bytes, bytearray)):
+                        payload = raw.decode("utf-8")
+                    else:
+                        payload = str(raw)
+                    loaded = json.loads(payload)
+                    if isinstance(loaded, dict):
+                        state = {
+                            "failures": int(loaded.get("failures", 0) or 0),
+                            "blocked_until": int(loaded.get("blocked_until", 0) or 0),
+                        }
                         self._memory_state[provider] = dict(state)
-        except Exception:
-            # Redis may be unavailable; keep local memory state.
-            pass
+            except Exception:
+                # Redis may be unavailable; keep local memory state.
+                pass
 
-        return state
+            return state
 
     async def _write_state(self, provider: ProviderName, state: dict[str, int]) -> None:
         normalized = {
@@ -145,14 +144,11 @@ class ProviderStateManager:
 
 _clients: dict[ProviderName, AsyncOpenAI] = {}
 _client_signatures: dict[ProviderName, str] = {}
-_client_lock: asyncio.Lock | None = None
+_client_lock = asyncio.Lock()
 _provider_state_manager = ProviderStateManager()
 
 
 def _get_lock() -> asyncio.Lock:
-    global _client_lock
-    if _client_lock is None:
-        _client_lock = asyncio.Lock()
     return _client_lock
 
 
@@ -276,9 +272,9 @@ def _extract_usage_dict(usage_obj: object) -> dict[str, int] | None:
     if usage_obj is None:
         return None
     if hasattr(usage_obj, "model_dump"):
-        usage_obj = usage_obj.model_dump()
+        usage_obj = cast(Any, usage_obj).model_dump()
     elif hasattr(usage_obj, "dict"):
-        usage_obj = usage_obj.dict()
+        usage_obj = cast(Any, usage_obj).dict()
     if not isinstance(usage_obj, dict):
         return None
 
