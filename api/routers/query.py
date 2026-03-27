@@ -16,7 +16,7 @@ from config import get_settings
 from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from services.cache import cache_get, cache_set, cache_set_if_absent
 from services.inference import generate_explanation, generate_stream_explanation
-from services.llm_client import get_litellm_config_state
+from services.llm_client import get_provider_config_state
 from services.llm_errors import LLMError, LLMUnavailable
 from services.rate_limit import enforce_request_controls, estimate_tokens_for_text
 from services.streaming import SseEventBuilder, SSE_RESPONSE_HEADERS
@@ -146,9 +146,9 @@ async def query_topic(
     request_started = time.perf_counter()
     request_id = str(getattr(request.state, "request_id", "") or "")
     topic_hash = anonymize_text(req.topic)
-    config_state = get_litellm_config_state()
+    config_state = get_provider_config_state()
     if not bool(config_state.get("chat_enabled", False)):
-        raise LLMUnavailable("Chat is disabled because LiteLLM is not configured correctly.")
+        raise LLMUnavailable("Chat is disabled because provider routing is not configured correctly.")
 
     try:
         topic = sanitize_topic(req.topic)
@@ -291,9 +291,9 @@ async def query_topic_stream(
     request_received = time.perf_counter()
     request_id = str(getattr(request.state, "request_id", "") or "")
     topic_hash = anonymize_text(req.topic)
-    config_state = get_litellm_config_state()
+    config_state = get_provider_config_state()
     if not bool(config_state.get("chat_enabled", False)):
-        raise LLMUnavailable("Chat is disabled because LiteLLM is not configured correctly.")
+        raise LLMUnavailable("Chat is disabled because provider routing is not configured correctly.")
 
     try:
         topic = sanitize_topic(req.topic)
