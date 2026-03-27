@@ -1,0 +1,134 @@
+name: Deploy to Vercel
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Deployment target environment"
+        required: true
+        default: "preview"
+        type: choice
+        options:
+          - preview
+          - production
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: vercel-deploy-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
+
+      - name: Validate required Vercel secrets
+        run: |
+          missing=0
+          for name in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
+            if [ -z "${!name}" ]; then
+              echo "Missing required secret: $name"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Resolve deploy target
+        id: target
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            target="production"
+          else
+            target="${{ github.event.inputs.target }}"
+          fi
+
+          if [ "$target" = "production" ]; then
+            echo "pull_env=production" >> "$GITHUB_OUTPUT"
+            echo "prod_flag=--prod" >> "$GITHUB_OUTPUT"
+          else
+            echo "pull_env=preview" >> "$GITHUB_OUTPUT"
+            echo "prod_flag=" >> "$GITHUB_OUTPUT"
+          fi
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+          echo "Deploy target resolved to: $target"
+
+      - name: Pull Vercel environment config
+        run: vercel pull --yes --environment=${{ steps.target.outputs.pull_env }} --token="$VERCEL_TOKEN"
+
+      - name: Build with Vercel
+        run: vercel build --token="$VERCEL_TOKEN"
+
+      - name: Deploy prebuilt artifacts
+        id: deploy
+        run: |
+          set -euo pipefail
+          output="$(vercel deploy --prebuilt ${{ steps.target.outputs.prod_flag }} --token="$VERCEL_TOKEN" 2>&1)"
+          echo "$output"
+          url="$(echo "$output" | grep -Eo 'https://[a-zA-Z0-9.-]+\.vercel\.app' | tail -n 1)"
+          if [ -z "$url" ]; then
+            echo "Failed to determine deployment URL from Vercel output."
+            exit 1
+          fi
+          echo "deployment_url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployed URL: $url"
+
+      - name: Health gate (/api/health)
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment_url }}
+        run: |
+          set -euo pipefail
+          health_url="${DEPLOYMENT_URL%/}/api/health"
+          echo "Checking health endpoint: $health_url"
+
+          attempts=15
+          delay=4
+          success=0
+
+          for attempt in $(seq 1 "$attempts"); do
+            status_code="$(curl -sS -o /tmp/health.json -w "%{http_code}" --max-time 20 "$health_url" || true)"
+            if [ "$status_code" = "200" ]; then
+              success=1
+              break
+            fi
+            echo "Health check attempt $attempt/$attempts failed (HTTP $status_code). Retrying in ${delay}s..."
+            sleep "$delay"
+          done
+
+          if [ "$success" -ne 1 ]; then
+            echo "Health endpoint did not return HTTP 200 after retries."
+            exit 1
+          fi
+
+          overall_status="$(python3 -c 'import json; print(str(json.load(open("/tmp/health.json", "r", encoding="utf-8")).get("status", "")).lower())')"
+
+          echo "Health status payload:"
+          cat /tmp/health.json
+          echo
+
+          if [ "$overall_status" = "degraded" ] || [ "$overall_status" = "down" ]; then
+            echo "Health gate failed: /api/health status is '$overall_status'."
+            exit 1
+          fi
+
+          echo "Health gate passed for $DEPLOYMENT_URL"

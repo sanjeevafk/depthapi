@@ -150,6 +150,20 @@ Primary app-level MoE aliases are defined in `api/services/inference.py` and map
 | Testing | pytest, vitest, Playwright |
 | License | Apache License 2.0 |
 
+## Vercel Deployment Automation
+
+GitHub Actions workflow: `.github/workflows/vercel-deploy.yml`
+
+- Push to `main` deploys to **production**.
+- Manual run (`workflow_dispatch`) supports **preview** or **production**.
+- Deployment is blocked unless `/api/health` returns HTTP `200` and overall status is not `degraded`/`down`.
+
+Required GitHub repository secrets:
+
+- `VERCEL_TOKEN`
+- `VERCEL_ORG_ID`
+- `VERCEL_PROJECT_ID`
+
 ## Local Development
 
 Prerequisites:
