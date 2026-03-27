@@ -1,6 +1,7 @@
 import asyncio
 import threading
 import time
+from functools import lru_cache
 from fastapi import HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from config import get_settings
@@ -27,6 +28,7 @@ def invalidate_pro_cache(user_id: str) -> None:
     with _PRO_STATE_CACHE_LOCK:
         _PRO_STATE_CACHE.pop(user_id, None)
 
+@lru_cache(maxsize=1)
 def get_supabase() -> Client | None:
     settings = get_settings()
     if not settings.supabase_url or not settings.supabase_anon_key:
@@ -34,6 +36,7 @@ def get_supabase() -> Client | None:
         return None
     return create_client(settings.supabase_url, settings.supabase_anon_key)
 
+@lru_cache(maxsize=1)
 def get_supabase_admin() -> Client | None:
     settings = get_settings()
     if not settings.supabase_url or not settings.supabase_service_role_key:
