@@ -44,6 +44,7 @@ LEARNING_DETAILED_LEVELS = {"eli15", "meme"}
 LEARN_GEMINI_FLASH_ALIAS = "learn-gemini-flash"
 LEARN_GROQ_FAST_ALIAS = "learn-groq-llama8b"
 LEARN_OPENROUTER_FALLBACK_ALIAS = "learn-openrouter-free"
+TECH_GEMINI_FLASH_ALIAS = "technical-gemini-flash"
 TECH_OPENROUTER_ALIAS = "technical-openrouter-free"
 TECH_GROQ_FAST_ALIAS = "technical-groq-llama8b"
 TECH_GEMINI_PRO_ALIAS = "technical-gemini-pro"
@@ -51,6 +52,7 @@ TECH_CEREBRAS_GLM_ALIAS = "technical-cerebras-glm"
 SOCRATIC_OPENROUTER_ALIAS = "socratic-openrouter-free"
 SOCRATIC_CEREBRAS_ALIAS = "socratic-cerebras-glm"
 SOCRATIC_GEMINI_ALIAS = "socratic-gemini-pro"
+SOCRATIC_GROQ_ALIAS = "socratic-groq-llama8b"
 
 TECHNICAL_LAST_RESORT_RESPONSE = (
     "## Core Idea\n"
@@ -304,6 +306,54 @@ def _looks_reasoning_query(query: str) -> bool:
     return any(marker in lowered for marker in ("why", "how", "prove", "reason", "derive"))
 
 
+def is_low_quality(response: str) -> bool:
+    text = (response or "").strip()
+    return (
+        len(text.split()) < 40
+        or text.count("\n") < 2
+        or "not sure" in text.lower()
+    )
+
+
+def _is_cerebras_alias(alias: str) -> bool:
+    return "cerebras" in (alias or "").lower()
+
+
+def _effective_alias_chain(aliases: list[str], *, complexity: float) -> list[str]:
+    chain: list[str] = []
+    for alias in aliases:
+        if _is_cerebras_alias(alias) and complexity < 0.8:
+            continue
+        if alias not in chain:
+            chain.append(alias)
+    return chain
+
+
+async def _call_with_quality_escalation(
+    aliases: list[str],
+    prompt: str,
+    *,
+    complexity: float,
+    max_tokens: int = 1024,
+    **kwargs,
+) -> str:
+    chain = _effective_alias_chain(aliases, complexity=complexity)
+    if not chain:
+        raise RuntimeError("No eligible model aliases available for quality routing.")
+
+    primary_alias = chain[0]
+    primary_response = await call_model(primary_alias, prompt, max_tokens=max_tokens, **kwargs)
+    if not is_low_quality(primary_response):
+        return primary_response
+
+    if len(chain) < 2:
+        return primary_response
+
+    retry_alias = chain[1]
+    retry_response = await call_model(retry_alias, prompt, max_tokens=max_tokens, **kwargs)
+    return retry_response or primary_response
+
+
 def route_model_aliases(
     query: str,
     *,
@@ -344,29 +394,23 @@ def route_model_aliases(
     elif mode == TECHNICAL_MODE:
         if is_math and complexity >= 0.6:
             aliases = [TECH_GEMINI_PRO_ALIAS]
-            if is_pro:
+            if is_pro and complexity >= 0.8:
                 aliases.append(TECH_CEREBRAS_GLM_ALIAS)
             aliases.extend([TECH_GROQ_FAST_ALIAS, TECH_OPENROUTER_ALIAS])
         elif is_math and complexity < 0.4:
-            aliases = [TECH_GROQ_FAST_ALIAS, TECH_GEMINI_PRO_ALIAS, TECH_OPENROUTER_ALIAS]
+            aliases = [TECH_GEMINI_FLASH_ALIAS, TECH_GROQ_FAST_ALIAS, TECH_OPENROUTER_ALIAS]
         elif is_programming or search_api_used:
-            aliases = [TECH_OPENROUTER_ALIAS, TECH_GROQ_FAST_ALIAS]
-            if search_api_used and complexity >= 0.6:
-                aliases.append(TECH_GEMINI_PRO_ALIAS)
-            if is_pro and complexity >= 0.6:
+            aliases = [TECH_GEMINI_PRO_ALIAS, TECH_GROQ_FAST_ALIAS, TECH_OPENROUTER_ALIAS]
+            if is_pro and complexity >= 0.8:
                 aliases.append(TECH_CEREBRAS_GLM_ALIAS)
         else:
-            aliases = [TECH_GEMINI_PRO_ALIAS, TECH_OPENROUTER_ALIAS, TECH_GROQ_FAST_ALIAS]
+            aliases = [TECH_GEMINI_PRO_ALIAS, TECH_GROQ_FAST_ALIAS, TECH_OPENROUTER_ALIAS]
             if is_pro and complexity >= 0.8:
                 aliases.insert(1, TECH_CEREBRAS_GLM_ALIAS)
     else:
+        aliases = [SOCRATIC_GEMINI_ALIAS, SOCRATIC_GROQ_ALIAS, SOCRATIC_OPENROUTER_ALIAS]
         if is_reasoning and complexity >= 0.8 and is_pro:
-            aliases = [SOCRATIC_CEREBRAS_ALIAS, SOCRATIC_OPENROUTER_ALIAS, SOCRATIC_GEMINI_ALIAS]
-        elif is_reasoning and complexity >= 0.5:
-            aliases = [SOCRATIC_OPENROUTER_ALIAS, SOCRATIC_GEMINI_ALIAS]
-        else:
-            aliases = [SOCRATIC_GEMINI_ALIAS, SOCRATIC_OPENROUTER_ALIAS]
-        aliases.append(TECH_GROQ_FAST_ALIAS)
+            aliases.insert(0, SOCRATIC_CEREBRAS_ALIAS)
 
     deduped: list[str] = []
     for alias in aliases:
@@ -492,13 +536,30 @@ async def technical_mode_handler(
     fallback_reason: str | None = None
     best_effort_response: str | None = None
     is_pro = bool(kwargs.get("is_pro", False))
-    primary_alias, fallback_alias = _technical_route(
-        topic,
-        intent=intent,
-        depth=depth,
-        is_pro=is_pro,
-        search_api_used=bool(search_context),
+    technical_complexity = float(
+        extract_features(
+            topic,
+            mode=TECHNICAL_MODE,
+            level="technical",
+            intent=intent,
+            depth=depth,
+        ).get("complexity", 0.0)
+        or 0.0
     )
+    ranked_aliases = _effective_alias_chain(
+        route_model_aliases(
+            topic,
+            mode=TECHNICAL_MODE,
+            level="technical",
+            intent=intent,
+            depth=depth,
+            is_pro=is_pro,
+            search_api_used=bool(search_context),
+        ),
+        complexity=technical_complexity,
+    )
+    primary_alias = ranked_aliases[0] if ranked_aliases else TECHNICAL_MODEL_PRIMARY
+    fallback_alias = next((alias for alias in ranked_aliases if alias != primary_alias), TECHNICAL_MODEL_FALLBACK)
 
     def _ensure_terminal_char(value: str) -> str:
         trimmed = value.rstrip()
@@ -559,11 +620,13 @@ async def technical_mode_handler(
             return None
         return response
 
+    response_alias = primary_alias
     response = await _call_and_validate(primary_alias)
 
     if response is None:
         _tech_logger.info("technical_primary_retry", intent=intent, depth=depth)
         response = await _call_and_validate(primary_alias)
+        response_alias = primary_alias
 
     if response is None:
         fallback_triggered = True
@@ -575,6 +638,21 @@ async def technical_mode_handler(
             depth=depth,
         )
         response = await _call_and_validate(fallback_alias)
+        response_alias = fallback_alias
+
+    if response is not None and is_low_quality(response):
+        quality_retry_alias: str | None = None
+        if response_alias in ranked_aliases:
+            current_index = ranked_aliases.index(response_alias)
+            if current_index + 1 < len(ranked_aliases):
+                quality_retry_alias = ranked_aliases[current_index + 1]
+        if quality_retry_alias is not None:
+            quality_retry_response = await _call_and_validate(quality_retry_alias)
+            if quality_retry_response:
+                response = quality_retry_response
+                fallback_triggered = True
+                fallback_reason = "quality_escalation"
+                response_alias = quality_retry_alias
 
     if response is None:
         fallback_triggered = True
@@ -817,14 +895,27 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
             conversation_context=kwargs.get("conversation_context", "No prior context."),
         )
         prompt = _append_search_context(prompt, search_context)
-        routed_alias = model or route_model_aliases(
+        routed_aliases = route_model_aliases(
             topic,
             mode=mode,
             level=level,
             is_pro=bool(kwargs.get("is_pro", False)),
             search_api_used=bool(search_context),
-        )[0]
-        response = await call_model(routed_alias, prompt, **kwargs)
+        )
+        socratic_complexity = float(
+            extract_features(
+                topic,
+                mode=mode,
+                level=level,
+            ).get("complexity", 0.0)
+            or 0.0
+        )
+        response = await _call_with_quality_escalation(
+            [model] if model else routed_aliases,
+            prompt,
+            complexity=socratic_complexity,
+            **kwargs,
+        )
         return _enforce_socratic_response_constraints(response)
 
     template = PROMPTS.get(level)
@@ -842,8 +933,20 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
         is_pro=bool(kwargs.get("is_pro", False)),
         search_api_used=bool(search_context),
     )
-    model_alias = model or (routed_aliases[0] if routed_aliases else _learning_model_for_level(level))
-    return await call_model(model_alias, prompt, **kwargs)
+    learning_complexity = float(
+        extract_features(
+            topic,
+            mode=mode,
+            level=level,
+        ).get("complexity", 0.0)
+        or 0.0
+    )
+    return await _call_with_quality_escalation(
+        [model] if model else routed_aliases,
+        prompt,
+        complexity=learning_complexity,
+        **kwargs,
+    )
 async def generate_stream_explanation(topic: str, level: str, model: str | None = None, **kwargs):
     """Stream explanation for topic at given level."""
     mode = normalize_mode(kwargs.get("mode", LEARNING_MODE))

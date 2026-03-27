@@ -22,13 +22,13 @@ async def test_generate_explanation_learning_injects_search_context(monkeypatch)
 
     async def fake_call_model(_model, prompt, **_kwargs):
         captured["prompt"] = prompt
-        return "ok"
+        return "This is a detailed explanation.\nIt includes context and examples.\nIt remains clear for learners."
 
     monkeypatch.setattr(inference_module.search_service, "get_search_context", fake_search_context)
     monkeypatch.setattr(inference_module, "call_model", fake_call_model)
 
     result = await inference_module.generate_explanation("dns caching", "eli5", mode="learning")
-    assert result == "ok"
+    assert "detailed explanation" in result
     assert "External web context" in captured["prompt"]
     assert "search context for learning" in captured["prompt"]
 
@@ -90,13 +90,17 @@ async def test_generate_explanation_search_failure_is_fail_soft(monkeypatch):
 
     async def fake_call_model(_model, _prompt, **_kwargs):
         calls["count"] += 1
-        return "ok without search"
+        return (
+            "This answer remains useful without external search and still teaches core concepts clearly.\n"
+            "It explains what changed in the request path, why the fallback remains safe, and how learners should interpret results.\n"
+            "It also provides practical framing and enough detail to be considered complete for an instructional response."
+        )
 
     monkeypatch.setattr(inference_module.search_service, "get_search_context", broken_search)
     monkeypatch.setattr(inference_module, "call_model", fake_call_model)
 
     result = await inference_module.generate_explanation("tcp", "eli10", mode="learning")
-    assert result == "ok without search"
+    assert "without external search" in result
     assert calls["count"] == 1
 
 
@@ -444,11 +448,7 @@ def test_weighted_routing_prefers_technical_model_for_complex_queries():
         mode="technical",
         level="eli15",
     )
-    assert ranked[0] in {
-        "technical-gemini-pro",
-        "technical-openrouter-free",
-        "technical-cerebras-glm",
-    }
+    assert ranked[0] == "technical-gemini-pro"
 
 
 def test_weighted_routing_prefers_fast_model_for_latency_queries():
@@ -515,6 +515,32 @@ async def test_call_model_retries_on_openai_retryable_status(monkeypatch):
     result = await inference_module.call_model("default-fast", "hello", max_tokens=16)
     assert result == "ok"
     assert attempts["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_learning_quality_retry_uses_next_alias_once(monkeypatch):
+    calls: list[str] = []
+
+    async def fake_search_context(_topic: str):
+        return ""
+
+    async def fake_call_model(model_alias, _prompt, **_kwargs):
+        calls.append(model_alias)
+        if len(calls) == 1:
+            return "not sure"
+        return "Detailed response.\nWith useful structure.\nWith actionable clarity."
+
+    monkeypatch.setattr(inference_module.search_service, "get_search_context", fake_search_context)
+    monkeypatch.setattr(inference_module, "call_model", fake_call_model)
+
+    result = await inference_module.generate_explanation(
+        "explain dns",
+        "eli10",
+        mode="learning",
+    )
+
+    assert "Detailed response." in result
+    assert len(calls) == 2
 
 
 @pytest.mark.asyncio
