@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { RefreshCcw, X } from "lucide-react";
 import { useChatStore } from "../../stores/useChatStore";
+import { useMessageStore } from "../../stores/useMessageStore";
 
 export default function RegenerationModal(): JSX.Element | null {
   const isOpen = useChatStore((state) => state.regenerationModalOpen);
@@ -8,8 +9,8 @@ export default function RegenerationModal(): JSX.Element | null {
   const regeneratingMessageId = useChatStore(
     (state) => state.regeneratingMessageId,
   );
-  const messageIds = useChatStore((state) => state.messageIds);
-  const messagesById = useChatStore((state) => state.messagesById);
+  const messageIds = useMessageStore((state) => state.messageIds);
+  const messagesById = useMessageStore((state) => state.messagesById);
   const regenerateMessage = useChatStore((state) => state.regenerateMessage);
   const closeRegenerationModal = useChatStore(
     (state) => state.closeRegenerationModal,
