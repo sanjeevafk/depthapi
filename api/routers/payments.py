@@ -53,8 +53,9 @@ class PaymentWebhookResult(BaseModel):
 
 def verify_dodo_signature(payload: bytes, signature: str, secret: str) -> bool:
     """Verify webhook signature with HMAC SHA-256."""
+    normalized_signature = signature.strip()
     expected_signature = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(signature, expected_signature)
+    return hmac.compare_digest(normalized_signature, expected_signature)
 
 
 def _extract_user_id(data: dict[str, Any]) -> Optional[str]:

@@ -102,6 +102,67 @@ async def test_webhook_success_flow(app_client, monkeypatch, test_settings, fake
 
 
 @pytest.mark.asyncio
+async def test_webhook_accepts_whitespace_padded_signature(app_client, monkeypatch, test_settings, fake_supabase):
+    test_settings.dodo_webhook_secret = "secret"
+    monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
+    monkeypatch.setattr(payments_module, "create_client", lambda *_args, **_kwargs: fake_supabase)
+    monkeypatch.setattr(payments_module, "invalidate_pro_cache", lambda user_id: None)
+
+    payload = {
+        "id": "evt-whitespace-signature-1",
+        "event": "payment.succeeded",
+        "data": {
+            "payment_id": "pay-whitespace-1",
+            "metadata": {"user_id": "user-123", "plan": "pro"},
+        },
+    }
+    signature = _sign_payload(payload, test_settings.dodo_webhook_secret)
+    padded_signature = f"  {signature}  "
+
+    resp = await app_client.post(
+        "/api/payments/webhook/dodo",
+        data=json.dumps(payload),
+        headers={"x-dodo-signature": padded_signature, "content-type": "application/json"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["duplicate"] is False
+    assert body["state"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_webhook_rejects_invalid_whitespace_padded_signature(
+    app_client,
+    monkeypatch,
+    test_settings,
+    fake_supabase,
+):
+    test_settings.dodo_webhook_secret = "secret"
+    monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
+    monkeypatch.setattr(payments_module, "create_client", lambda *_args, **_kwargs: fake_supabase)
+
+    payload = {
+        "id": "evt-invalid-signature-1",
+        "event": "payment.succeeded",
+        "data": {
+            "payment_id": "pay-invalid-signature-1",
+            "metadata": {"user_id": "user-123", "plan": "pro"},
+        },
+    }
+    bad_signature = f"  {'0' * 64}  "
+
+    resp = await app_client.post(
+        "/api/payments/webhook/dodo",
+        data=json.dumps(payload),
+        headers={"x-dodo-signature": bad_signature, "content-type": "application/json"},
+    )
+
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "Invalid signature"
+
+
+@pytest.mark.asyncio
 async def test_webhook_duplicate_event_is_idempotent(app_client, monkeypatch, test_settings, fake_supabase):
     test_settings.dodo_webhook_secret = "secret"
     monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
