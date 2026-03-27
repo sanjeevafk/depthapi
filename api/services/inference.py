@@ -41,6 +41,17 @@ LEARNING_MODEL_SIMPLE = "default-fast"
 LEARNING_MODEL_DETAILED = "learning-detailed"
 LEARNING_DETAILED_LEVELS = {"eli15", "meme"}
 
+LEARN_GEMINI_FLASH_ALIAS = "learn-gemini-flash"
+LEARN_GROQ_FAST_ALIAS = "learn-groq-llama8b"
+LEARN_OPENROUTER_FALLBACK_ALIAS = "learn-openrouter-free"
+TECH_OPENROUTER_ALIAS = "technical-openrouter-free"
+TECH_GROQ_FAST_ALIAS = "technical-groq-llama8b"
+TECH_GEMINI_PRO_ALIAS = "technical-gemini-pro"
+TECH_CEREBRAS_GLM_ALIAS = "technical-cerebras-glm"
+SOCRATIC_OPENROUTER_ALIAS = "socratic-openrouter-free"
+SOCRATIC_CEREBRAS_ALIAS = "socratic-cerebras-glm"
+SOCRATIC_GEMINI_ALIAS = "socratic-gemini-pro"
+
 TECHNICAL_LAST_RESORT_RESPONSE = (
     "## Core Idea\n"
     "Unable to generate a response at this time. Please retry in a moment.\n\n"
@@ -234,6 +245,65 @@ def score_model(features: IntentFeatures, model_alias: str, *, mode: str) -> flo
     return score
 
 
+def _token_count(query: str) -> int:
+    return len((query or "").strip().split())
+
+
+def _looks_simple_explanation(query: str) -> bool:
+    lowered = (query or "").lower()
+    return any(marker in lowered for marker in ("what is", "explain", "define"))
+
+
+def _looks_freshness_query(query: str) -> bool:
+    lowered = (query or "").lower()
+    markers = ("latest", "today", "current", "recent", "news", "update")
+    return any(marker in lowered for marker in markers)
+
+
+def _looks_programming_query(query: str) -> bool:
+    lowered = (query or "").lower()
+    markers = (
+        "api",
+        "pagination",
+        "endpoint",
+        "database",
+        "sql",
+        "python",
+        "javascript",
+        "typescript",
+        "bug",
+        "algorithm",
+        "function",
+        "react",
+        "fastapi",
+        "code",
+    )
+    return any(marker in lowered for marker in markers)
+
+
+def _looks_math_query(query: str) -> bool:
+    lowered = (query or "").lower()
+    markers = (
+        "math",
+        "equation",
+        "solve",
+        "integral",
+        "derivative",
+        "calculus",
+        "algebra",
+        "proof",
+        "theorem",
+        "matrix",
+        "probability",
+    )
+    return any(marker in lowered for marker in markers)
+
+
+def _looks_reasoning_query(query: str) -> bool:
+    lowered = (query or "").lower()
+    return any(marker in lowered for marker in ("why", "how", "prove", "reason", "derive"))
+
+
 def route_model_aliases(
     query: str,
     *,
@@ -241,13 +311,9 @@ def route_model_aliases(
     level: str,
     intent: str | None = None,
     depth: str | None = None,
+    is_pro: bool = False,
+    search_api_used: bool = False,
 ) -> list[str]:
-    """
-    Rank model aliases using weighted feature scores.
-    """
-    if mode == SOCRATIC_MODE:
-        return ["socratic"]
-
     features = extract_features(
         query,
         mode=mode,
@@ -255,18 +321,55 @@ def route_model_aliases(
         intent=intent,
         depth=depth,
     )
-    candidates = [LEARNING_MODEL_SIMPLE, LEARNING_MODEL_DETAILED, TECHNICAL_MODEL_PRIMARY]
-    if mode == TECHNICAL_MODE:
-        candidates.append(TECHNICAL_MODEL_FALLBACK)
+    complexity = float(features.get("complexity", 0.0) or 0.0)
+    latency_priority = float(features.get("latency_priority", 0.0) or 0.0)
+    query_tokens = _token_count(query)
+    is_simple_explain = _looks_simple_explanation(query)
+    is_freshness = _looks_freshness_query(query)
+    is_programming = _looks_programming_query(query)
+    is_math = _looks_math_query(query)
+    is_reasoning = _looks_reasoning_query(query)
 
-    ranked = sorted(
-        candidates,
-        key=lambda alias: score_model(features, alias, mode=mode),
-        reverse=True,
-    )
-    # Keep deterministic ordering for equal scores.
+    aliases: list[str]
+
+    if mode == LEARNING_MODE:
+        if is_freshness:
+            aliases = [LEARN_GEMINI_FLASH_ALIAS, LEARN_GROQ_FAST_ALIAS, LEARN_OPENROUTER_FALLBACK_ALIAS]
+        elif query_tokens < 8 or latency_priority >= 0.8 or complexity < 0.3:
+            aliases = [LEARN_GROQ_FAST_ALIAS, LEARN_GEMINI_FLASH_ALIAS, LEARN_OPENROUTER_FALLBACK_ALIAS]
+        elif is_simple_explain and complexity < 0.5:
+            aliases = [LEARN_GEMINI_FLASH_ALIAS, LEARN_GROQ_FAST_ALIAS, LEARN_OPENROUTER_FALLBACK_ALIAS]
+        else:
+            aliases = [LEARN_GEMINI_FLASH_ALIAS, LEARN_GROQ_FAST_ALIAS, LEARN_OPENROUTER_FALLBACK_ALIAS]
+    elif mode == TECHNICAL_MODE:
+        if is_math and complexity >= 0.6:
+            aliases = [TECH_GEMINI_PRO_ALIAS]
+            if is_pro:
+                aliases.append(TECH_CEREBRAS_GLM_ALIAS)
+            aliases.extend([TECH_GROQ_FAST_ALIAS, TECH_OPENROUTER_ALIAS])
+        elif is_math and complexity < 0.4:
+            aliases = [TECH_GROQ_FAST_ALIAS, TECH_GEMINI_PRO_ALIAS, TECH_OPENROUTER_ALIAS]
+        elif is_programming or search_api_used:
+            aliases = [TECH_OPENROUTER_ALIAS, TECH_GROQ_FAST_ALIAS]
+            if search_api_used and complexity >= 0.6:
+                aliases.append(TECH_GEMINI_PRO_ALIAS)
+            if is_pro and complexity >= 0.6:
+                aliases.append(TECH_CEREBRAS_GLM_ALIAS)
+        else:
+            aliases = [TECH_GEMINI_PRO_ALIAS, TECH_OPENROUTER_ALIAS, TECH_GROQ_FAST_ALIAS]
+            if is_pro and complexity >= 0.8:
+                aliases.insert(1, TECH_CEREBRAS_GLM_ALIAS)
+    else:
+        if is_reasoning and complexity >= 0.8 and is_pro:
+            aliases = [SOCRATIC_CEREBRAS_ALIAS, SOCRATIC_OPENROUTER_ALIAS, SOCRATIC_GEMINI_ALIAS]
+        elif is_reasoning and complexity >= 0.5:
+            aliases = [SOCRATIC_OPENROUTER_ALIAS, SOCRATIC_GEMINI_ALIAS]
+        else:
+            aliases = [SOCRATIC_GEMINI_ALIAS, SOCRATIC_OPENROUTER_ALIAS]
+        aliases.append(TECH_GROQ_FAST_ALIAS)
+
     deduped: list[str] = []
-    for alias in ranked:
+    for alias in aliases:
         if alias not in deduped:
             deduped.append(alias)
     return deduped
@@ -277,6 +380,8 @@ def _technical_route(
     *,
     intent: str,
     depth: str,
+    is_pro: bool = False,
+    search_api_used: bool = False,
 ) -> tuple[str, str]:
     ranked = route_model_aliases(
         topic,
@@ -284,6 +389,8 @@ def _technical_route(
         level="technical",
         intent=intent,
         depth=depth,
+        is_pro=is_pro,
+        search_api_used=search_api_used,
     )
     primary = ranked[0] if ranked else TECHNICAL_MODEL_PRIMARY
     fallback = next((alias for alias in ranked if alias != primary), TECHNICAL_MODEL_FALLBACK)
@@ -292,8 +399,8 @@ def _technical_route(
 
 def _learning_model_for_level(level: str) -> str:
     if level in LEARNING_DETAILED_LEVELS:
-        return LEARNING_MODEL_DETAILED
-    return LEARNING_MODEL_SIMPLE
+        return LEARN_GEMINI_FLASH_ALIAS
+    return LEARN_GEMINI_FLASH_ALIAS
 
 
 def build_technical_prompt(
@@ -384,7 +491,14 @@ async def technical_mode_handler(
     fallback_triggered = False
     fallback_reason: str | None = None
     best_effort_response: str | None = None
-    primary_alias, fallback_alias = _technical_route(topic, intent=intent, depth=depth)
+    is_pro = bool(kwargs.get("is_pro", False))
+    primary_alias, fallback_alias = _technical_route(
+        topic,
+        intent=intent,
+        depth=depth,
+        is_pro=is_pro,
+        search_api_used=bool(search_context),
+    )
 
     def _ensure_terminal_char(value: str) -> str:
         trimmed = value.rstrip()
@@ -703,7 +817,13 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
             conversation_context=kwargs.get("conversation_context", "No prior context."),
         )
         prompt = _append_search_context(prompt, search_context)
-        routed_alias = model or route_model_aliases(topic, mode=mode, level=level)[0]
+        routed_alias = model or route_model_aliases(
+            topic,
+            mode=mode,
+            level=level,
+            is_pro=bool(kwargs.get("is_pro", False)),
+            search_api_used=bool(search_context),
+        )[0]
         response = await call_model(routed_alias, prompt, **kwargs)
         return _enforce_socratic_response_constraints(response)
 
@@ -715,7 +835,13 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
     prompt = template.format(topic=topic)
     prompt = _append_search_context(prompt, search_context)
         
-    routed_aliases = route_model_aliases(topic, mode=mode, level=level)
+    routed_aliases = route_model_aliases(
+        topic,
+        mode=mode,
+        level=level,
+        is_pro=bool(kwargs.get("is_pro", False)),
+        search_api_used=bool(search_context),
+    )
     model_alias = model or (routed_aliases[0] if routed_aliases else _learning_model_for_level(level))
     return await call_model(model_alias, prompt, **kwargs)
 async def generate_stream_explanation(topic: str, level: str, model: str | None = None, **kwargs):
@@ -751,7 +877,13 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             prompt = TECHNICAL_MINIMAL_PROMPT
         prompt = _append_search_context(prompt, search_context)
 
-        primary_alias, _fallback_alias = _technical_route(topic, intent=intent, depth=depth)
+        primary_alias, _fallback_alias = _technical_route(
+            topic,
+            intent=intent,
+            depth=depth,
+            is_pro=bool(kwargs.get("is_pro", False)),
+            search_api_used=bool(search_context),
+        )
         alias = model or primary_alias
         stream_telemetry: dict[str, object] = {}
         stream_start = time.perf_counter()
@@ -861,7 +993,13 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
     if model:
         alias = model
     else:
-        ranked_aliases = route_model_aliases(topic, mode=mode, level=level)
+        ranked_aliases = route_model_aliases(
+            topic,
+            mode=mode,
+            level=level,
+            is_pro=bool(kwargs.get("is_pro", False)),
+            search_api_used=bool(search_context),
+        )
         alias = ranked_aliases[0] if ranked_aliases else (
             "socratic" if mode == SOCRATIC_MODE else _learning_model_for_level(level)
         )

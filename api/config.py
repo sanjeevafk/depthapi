@@ -11,7 +11,6 @@ class Settings(BaseSettings):
 
     environment: str = "development"
     log_user_hash_salt: str = ""
-    openai_api_key: SecretStr = SecretStr("")
     groq_api_key: SecretStr = SecretStr("")
     cerebras_api_key: SecretStr = SecretStr("")
     gemini_api_key: SecretStr = SecretStr("")
@@ -56,6 +55,7 @@ class Settings(BaseSettings):
     tavily_api_key: str = ""
     serper_api_key: str = ""
     exa_api_key: str = ""
+    cerebras_daily_token_budget: int = 100000
 
     sentry_dsn: str = ""
     sentry_enabled: bool = True
@@ -77,7 +77,6 @@ class Settings(BaseSettings):
         extra = "ignore"
 
     @field_validator(
-        "openai_api_key",
         "groq_api_key",
         "cerebras_api_key",
         "gemini_api_key",

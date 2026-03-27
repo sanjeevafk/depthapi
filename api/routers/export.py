@@ -44,7 +44,10 @@ async def export_explanations(req: ExportRequest, auth_data: dict = Depends(veri
     missing_levels = list(target_levels - current_levels)
 
     if missing_levels:
-        tasks = {lvl: generate_explanation(req.topic, lvl, mode=req.mode) for lvl in missing_levels}
+        tasks = {
+            lvl: generate_explanation(req.topic, lvl, mode=req.mode, is_pro=is_verified_pro)
+            for lvl in missing_levels
+        }
         results = await asyncio.gather(*tasks.values(), return_exceptions=True)
         
         for lvl, result in zip(tasks.keys(), results):

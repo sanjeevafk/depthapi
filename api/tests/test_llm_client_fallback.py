@@ -31,7 +31,7 @@ async def test_create_chat_completion_cascades_through_primary_providers(monkeyp
 
         async def create(self, **kwargs):
             attempts.append(self.provider)
-            if self.provider in {"openai", "groq", "cerebras"}:
+            if self.provider in {"groq", "cerebras"}:
                 raise RuntimeError(f"{self.provider} unavailable")
             return SimpleNamespace(
                 model=kwargs.get("model", "gemini-2.5-flash"),
@@ -45,6 +45,14 @@ async def test_create_chat_completion_cascades_through_primary_providers(monkeyp
     monkeypatch.setattr(llm_client_module, "_provider_state_manager", DummyProviderState())
     monkeypatch.setattr(llm_client_module, "_get_provider_client", fake_get_provider_client)
     monkeypatch.setattr(llm_client_module, "_is_retryable_error", lambda exc: isinstance(exc, RuntimeError))
+    async def fake_provider_within_runtime_limits(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr(llm_client_module, "_provider_within_runtime_limits", fake_provider_within_runtime_limits)
+    async def fake_increment_provider_usage(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(llm_client_module, "_increment_provider_usage", fake_increment_provider_usage)
 
     response = await llm_client_module.create_chat_completion(
         model="default-fast",
@@ -52,7 +60,7 @@ async def test_create_chat_completion_cascades_through_primary_providers(monkeyp
     )
 
     assert response.choices[0].message.content == "ok"
-    assert attempts == ["openai", "groq", "cerebras", "gemini"]
+    assert attempts == ["groq", "cerebras", "gemini"]
 
 
 @pytest.mark.asyncio

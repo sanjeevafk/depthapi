@@ -547,6 +547,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 regenerate=req.regenerate,
                 request_id=request_id,
                 user_id=user_id,
+                is_pro=is_pro,
                 telemetry_sink=telemetry_sink,
             )
             stream_iter = stream.__aiter__()
@@ -617,6 +618,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                             regenerate=req.regenerate,
                             request_id=request_id,
                             user_id=user_id,
+                            is_pro=is_pro,
                             telemetry_sink=telemetry_sink,
                         ),
                         timeout=fallback_timeout_seconds,
@@ -712,6 +714,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                             regenerate=req.regenerate,
                             request_id=request_id,
                             user_id=user_id,
+                            is_pro=is_pro,
                             telemetry_sink=telemetry_sink,
                         ),
                         timeout=fallback_timeout_seconds,

@@ -26,47 +26,100 @@ from services.cache import get_redis
 from services.llm_errors import LLMBadRequest, LLMInvalidAPIKey, LLMUnavailable
 
 
-ProviderName = Literal["openai", "groq", "cerebras", "gemini", "openrouter"]
+ProviderName = Literal["groq", "cerebras", "gemini", "openrouter"]
 
-PROVIDER_PRIORITY: tuple[ProviderName, ...] = ("openai", "groq", "cerebras", "gemini")
+PROVIDER_PRIORITY: tuple[ProviderName, ...] = ("groq", "cerebras", "gemini")
 PROVIDER_BASE_URLS: dict[ProviderName, str] = {
-    "openai": "https://api.openai.com/v1",
     "groq": "https://api.groq.com/openai/v1",
     "cerebras": "https://api.cerebras.ai/v1",
     "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
     "openrouter": "https://openrouter.ai/api/v1",
 }
 RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
+OPENROUTER_DAILY_REQUEST_LIMIT = 45
+CEREBRAS_MIN_TOKENS_REMAINING = 10000
+CEREBRAS_DAILY_TOKEN_BUDGET_DEFAULT = 100000
 
 # Semantic alias -> provider-specific model IDs in fallback order.
 MODEL_FALLBACK_MAP: dict[str, dict[ProviderName, str]] = {
     "default-fast": {
-        "openai": "gpt-4.1-mini",
         "groq": "llama-3.1-8b-instant",
-        "cerebras": "llama3.1-8b",
+        "cerebras": "zai-glm-4.7",
         "gemini": "gemini-2.5-flash",
+        "openrouter": "openrouter/free",
     },
     "learning-detailed": {
-        "openai": "gpt-4.1",
-        "groq": "llama-3.3-70b-versatile",
-        "cerebras": "llama-3.3-70b",
         "gemini": "gemini-2.5-pro",
+        "groq": "llama-3.3-70b-versatile",
+        "openrouter": "openrouter/free",
     },
     "technical-primary": {
-        "openai": "gpt-4.1",
-        "groq": "llama-3.3-70b-versatile",
-        "cerebras": "llama-3.3-70b",
         "gemini": "gemini-2.5-pro",
+        "cerebras": "zai-glm-4.7",
+        "groq": "llama-3.3-70b-versatile",
+        "openrouter": "openrouter/free",
     },
     "technical-fallback": {
-        "openai": "gpt-4.1-mini",
         "groq": "llama-3.1-8b-instant",
-        "cerebras": "llama3.1-8b",
         "gemini": "gemini-2.5-flash",
+        "openrouter": "openrouter/free",
+    },
+    "learn-gemini-flash": {
+        "gemini": "gemini-2.5-flash",
+        "groq": "llama-3.1-8b-instant",
+        "openrouter": "openrouter/free",
+    },
+    "learn-groq-llama8b": {
+        "groq": "llama-3.1-8b-instant",
+        "gemini": "gemini-2.5-flash",
+        "openrouter": "openrouter/free",
+    },
+    "learn-openrouter-free": {
+        "openrouter": "openrouter/free",
+        "gemini": "gemini-2.5-flash",
+        "groq": "llama-3.1-8b-instant",
+    },
+    "technical-openrouter-free": {
+        "openrouter": "openrouter/free",
+        "groq": "llama-3.1-8b-instant",
+        "gemini": "gemini-2.5-pro",
+    },
+    "technical-groq-llama8b": {
+        "groq": "llama-3.1-8b-instant",
+        "gemini": "gemini-2.5-pro",
+        "openrouter": "openrouter/free",
+    },
+    "technical-gemini-pro": {
+        "gemini": "gemini-2.5-pro",
+        "cerebras": "zai-glm-4.7",
+        "groq": "llama-3.1-8b-instant",
+    },
+    "technical-cerebras-glm": {
+        "cerebras": "zai-glm-4.7",
+        "gemini": "gemini-2.5-pro",
+        "groq": "llama-3.1-8b-instant",
+    },
+    "socratic-openrouter-free": {
+        "openrouter": "openrouter/free",
+        "gemini": "gemini-2.5-pro",
+        "groq": "llama-3.1-8b-instant",
+    },
+    "socratic-cerebras-glm": {
+        "cerebras": "zai-glm-4.7",
+        "gemini": "gemini-2.5-pro",
+        "openrouter": "openrouter/free",
+    },
+    "socratic-gemini-pro": {
+        "gemini": "gemini-2.5-pro",
+        "openrouter": "openrouter/free",
+        "groq": "llama-3.1-8b-instant",
+    },
+    "socratic": {
+        "openrouter": "openrouter/free",
+        "gemini": "gemini-2.5-pro",
+        "groq": "llama-3.1-8b-instant",
     },
 }
-SOCRATIC_OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct"
-SOCRATIC_OPENAI_MODEL = "gpt-4.1"
 
 
 @dataclass(frozen=True)
@@ -247,7 +300,6 @@ def _get_timeout_seconds() -> float:
 def _provider_api_key(provider: ProviderName) -> str:
     settings = get_settings()
     lookup = {
-        "openai": "openai_api_key",
         "groq": "groq_api_key",
         "cerebras": "cerebras_api_key",
         "gemini": "gemini_api_key",
@@ -307,17 +359,11 @@ def _build_candidate_chain(model_alias: str | None) -> list[ProviderTarget]:
         if provider_name in PROVIDER_BASE_URLS and raw_model:
             return [ProviderTarget(provider=provider_name, model=raw_model)]
 
-    if alias == "socratic":
-        return [
-            ProviderTarget(provider="openai", model=SOCRATIC_OPENAI_MODEL),
-            ProviderTarget(provider="openrouter", model=SOCRATIC_OPENROUTER_MODEL),
-        ]
-
     model_map = MODEL_FALLBACK_MAP.get(alias) or MODEL_FALLBACK_MAP["default-fast"]
     return [
-        ProviderTarget(provider=provider, model=model_map[provider])
-        for provider in PROVIDER_PRIORITY
-        if provider in model_map
+        ProviderTarget(provider=provider, model=model_name)
+        for provider, model_name in model_map.items()
+        if provider in PROVIDER_BASE_URLS
     ]
 
 
@@ -371,6 +417,72 @@ def _extract_estimated_cost(obj: object) -> float | None:
     return None
 
 
+def _day_bucket() -> str:
+    return time.strftime("%Y%m%d", time.gmtime())
+
+
+def _provider_requests_key(provider: ProviderName) -> str:
+    return f"knowbear:provider_usage:{provider}:requests:{_day_bucket()}"
+
+
+def _provider_tokens_key(provider: ProviderName) -> str:
+    return f"knowbear:provider_usage:{provider}:tokens:{_day_bucket()}"
+
+
+async def _increment_provider_usage(provider: ProviderName, usage: dict[str, int] | None) -> None:
+    try:
+        redis = await get_redis()
+        request_key = _provider_requests_key(provider)
+        requests_total = int(await redis.incrby(request_key, 1))
+        if requests_total <= 1:
+            await redis.expire(request_key, 86400)
+
+        total_tokens = int((usage or {}).get("total_tokens") or 0)
+        if total_tokens > 0:
+            token_key = _provider_tokens_key(provider)
+            token_total = int(await redis.incrby(token_key, total_tokens))
+            if token_total <= total_tokens:
+                await redis.expire(token_key, 86400)
+    except Exception:
+        # Never block inference on usage accounting.
+        return
+
+
+async def _provider_within_runtime_limits(provider: ProviderName) -> bool:
+    try:
+        redis = await get_redis()
+        if provider == "openrouter":
+            req_count = int(await redis.get(_provider_requests_key("openrouter")) or 0)
+            if req_count >= OPENROUTER_DAILY_REQUEST_LIMIT:
+                logger.warning(
+                    "provider_runtime_limit_reached",
+                    provider=provider,
+                    limit_type="daily_requests",
+                    request_count=req_count,
+                    limit=OPENROUTER_DAILY_REQUEST_LIMIT,
+                )
+                return False
+
+        if provider == "cerebras":
+            settings = get_settings()
+            budget = max(int(getattr(settings, "cerebras_daily_token_budget", CEREBRAS_DAILY_TOKEN_BUDGET_DEFAULT)), 0)
+            used_tokens = int(await redis.get(_provider_tokens_key("cerebras")) or 0)
+            remaining = max(budget - used_tokens, 0)
+            if remaining < CEREBRAS_MIN_TOKENS_REMAINING:
+                logger.warning(
+                    "provider_runtime_limit_reached",
+                    provider=provider,
+                    limit_type="remaining_tokens",
+                    remaining_tokens=remaining,
+                    min_required=CEREBRAS_MIN_TOKENS_REMAINING,
+                )
+                return False
+    except Exception:
+        # Fail open when runtime limits cannot be read.
+        return True
+    return True
+
+
 def get_provider_config_state() -> dict[str, object]:
     """Return provider config validation state without exposing secrets."""
     configured = {provider: bool(_provider_api_key(provider)) for provider in PROVIDER_BASE_URLS}
@@ -383,7 +495,7 @@ def get_provider_config_state() -> dict[str, object]:
             {
                 "code": "missing_provider_keys",
                 "severity": "error",
-                "message": "No AI provider API keys are configured. Set OPENAI_API_KEY at minimum.",
+                "message": "No AI provider API keys are configured.",
             }
         )
 
@@ -452,6 +564,8 @@ async def create_chat_completion(model: str, messages: list[ChatCompletionMessag
         if not await _provider_state_manager.should_attempt(provider):
             logger.warning("provider_temporarily_blocked", provider=provider, model_alias=alias)
             continue
+        if not await _provider_within_runtime_limits(provider):
+            continue
 
         try:
             client = await _get_provider_client(provider)
@@ -478,6 +592,7 @@ async def create_chat_completion(model: str, messages: list[ChatCompletionMessag
                 if resolved_model:
                     span.set_data("llm.model", resolved_model)
                 await _provider_state_manager.mark_success(provider)
+                await _increment_provider_usage(provider, usage)
                 return response
         except Exception as exc:
             await _provider_state_manager.mark_failure(provider)
@@ -548,6 +663,8 @@ async def stream_chat_completion(
         if not await _provider_state_manager.should_attempt(provider):
             logger.warning("provider_temporarily_blocked", provider=provider, model_alias=alias)
             continue
+        if not await _provider_within_runtime_limits(provider):
+            continue
 
         try:
             client = await _get_provider_client(provider)
@@ -606,6 +723,7 @@ async def stream_chat_completion(
                         yield content
 
                 await _provider_state_manager.mark_success(provider)
+                await _increment_provider_usage(provider, usage_summary)
                 return
             except Exception as exc:
                 await _provider_state_manager.mark_failure(provider)

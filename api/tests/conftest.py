@@ -137,7 +137,6 @@ class FakeSupabase:
 def test_settings():
     return SimpleNamespace(
         environment="development",
-        openai_api_key="sk-openai-test",
         groq_api_key="gsk-test",
         cerebras_api_key="cs-test",
         gemini_api_key="gm-test",
@@ -171,6 +170,7 @@ def test_settings():
         tavily_api_key="",
         serper_api_key="",
         exa_api_key="",
+        cerebras_daily_token_budget=100000,
         dodo_api_key="",
         dodo_webhook_secret="",
         dodo_webhook_endpoint="",

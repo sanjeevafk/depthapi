@@ -51,14 +51,12 @@ async def test_health_redis_failure_in_prod(app_client, monkeypatch, test_settin
 @pytest.mark.asyncio
 async def test_health_missing_provider_config_degrades(app_client, test_settings):
     old_keys = (
-        test_settings.openai_api_key,
         test_settings.groq_api_key,
         test_settings.cerebras_api_key,
         test_settings.gemini_api_key,
         test_settings.openrouter_api_key,
     )
 
-    test_settings.openai_api_key = ""
     test_settings.groq_api_key = ""
     test_settings.cerebras_api_key = ""
     test_settings.gemini_api_key = ""
@@ -73,7 +71,6 @@ async def test_health_missing_provider_config_degrades(app_client, test_settings
         assert data.get("chat_enabled") is False
     finally:
         (
-            test_settings.openai_api_key,
             test_settings.groq_api_key,
             test_settings.cerebras_api_key,
             test_settings.gemini_api_key,
@@ -84,14 +81,12 @@ async def test_health_missing_provider_config_degrades(app_client, test_settings
 @pytest.mark.asyncio
 async def test_query_degraded_when_provider_keys_missing(app_client, test_settings):
     old_keys = (
-        test_settings.openai_api_key,
         test_settings.groq_api_key,
         test_settings.cerebras_api_key,
         test_settings.gemini_api_key,
         test_settings.openrouter_api_key,
     )
 
-    test_settings.openai_api_key = ""
     test_settings.groq_api_key = ""
     test_settings.cerebras_api_key = ""
     test_settings.gemini_api_key = ""
@@ -107,7 +102,6 @@ async def test_query_degraded_when_provider_keys_missing(app_client, test_settin
         assert payload["error"]["type"] == "service_degraded"
     finally:
         (
-            test_settings.openai_api_key,
             test_settings.groq_api_key,
             test_settings.cerebras_api_key,
             test_settings.gemini_api_key,

@@ -41,7 +41,7 @@ async def test_inference_logs_structured_observability_fields(monkeypatch):
         def __init__(self):
             self.choices = [DummyChoice("hello")]
             self.usage = DummyUsage()
-            self.model = "openai/gpt-4o-mini"
+            self.model = "groq/llama-3.1-8b-instant"
             self.response_cost = 0.0012
 
     async def fake_create_chat_completion(*_args, **_kwargs):
@@ -85,7 +85,7 @@ async def test_inference_logs_structured_observability_fields(monkeypatch):
 async def test_native_llm_client_receives_request_id_and_stream_telemetry(monkeypatch):
     class Chunk:
         def __init__(self, content: str | None):
-            self.model = "openai/gpt-4o-mini"
+            self.model = "groq/llama-3.1-8b-instant"
             self.usage = {
                 "prompt_tokens": 5,
                 "completion_tokens": 3,
