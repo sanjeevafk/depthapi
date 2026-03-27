@@ -1,6 +1,7 @@
 import inspect
 import pytest
 from unittest.mock import MagicMock, patch
+from collections import OrderedDict
 from types import SimpleNamespace
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
@@ -11,11 +12,17 @@ from auth import verify_token, verify_token_optional
 
 @pytest.fixture(autouse=True)
 def clear_supabase_client_caches():
-    auth_module.get_supabase.cache_clear()
-    auth_module.get_supabase_admin.cache_clear()
+    if hasattr(auth_module.get_supabase, "cache_clear"):
+        auth_module.get_supabase.cache_clear()
+    if hasattr(auth_module.get_supabase_admin, "cache_clear"):
+        auth_module.get_supabase_admin.cache_clear()
+    auth_module._PRO_STATE_CACHE.clear()
     yield
-    auth_module.get_supabase.cache_clear()
-    auth_module.get_supabase_admin.cache_clear()
+    if hasattr(auth_module.get_supabase, "cache_clear"):
+        auth_module.get_supabase.cache_clear()
+    if hasattr(auth_module.get_supabase_admin, "cache_clear"):
+        auth_module.get_supabase_admin.cache_clear()
+    auth_module._PRO_STATE_CACHE.clear()
 
 
 @pytest.mark.asyncio
@@ -121,3 +128,62 @@ def test_get_supabase_admin_reuses_cached_client(monkeypatch):
 
     assert first is second
     assert len(created) == 1
+
+
+@pytest.mark.asyncio
+async def test_check_is_pro_cache_is_bounded_with_many_users(monkeypatch):
+    class FakeSupabaseQuery:
+        def __init__(self, owner):
+            self.owner = owner
+            self.user_id = ""
+
+        def select(self, *_args, **_kwargs):
+            return self
+
+        def eq(self, key, value):
+            if key == "id":
+                self.user_id = str(value)
+            return self
+
+        def single(self):
+            return self
+
+        def execute(self):
+            self.owner.calls += 1
+            return SimpleNamespace(data={"is_pro": False})
+
+    class FakeSupabase:
+        def __init__(self):
+            self.calls = 0
+
+        def table(self, _name):
+            return FakeSupabaseQuery(self)
+
+    async def fake_to_thread(func, /, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    fake_supabase = FakeSupabase()
+    monkeypatch.setattr(auth_module, "get_supabase_admin", lambda: fake_supabase)
+    monkeypatch.setattr(auth_module.asyncio, "to_thread", fake_to_thread)
+    monkeypatch.setattr(
+        auth_module,
+        "get_settings",
+        lambda: SimpleNamespace(
+            pro_state_cache_ttl_seconds=30,
+            pro_state_cache_max_entries=5,
+        ),
+    )
+    auth_module._PRO_STATE_CACHE = OrderedDict()
+
+    for idx in range(20):
+        await auth_module.check_is_pro(f"user-{idx}", force_refresh=False)
+
+    assert len(auth_module._PRO_STATE_CACHE) == 5
+    assert list(auth_module._PRO_STATE_CACHE.keys()) == [
+        "user-15",
+        "user-16",
+        "user-17",
+        "user-18",
+        "user-19",
+    ]
+    assert fake_supabase.calls == 20
