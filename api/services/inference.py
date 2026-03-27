@@ -805,55 +805,89 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         pending = ""
         seen_signatures: set[str] = set()
         emitted_questions = 0
-        async for chunk in stream_chat_completion(
-            model=alias,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=kwargs.get("temperature", 0.7),
-            request_id=request_id,
-            telemetry_sink=stream_telemetry,
-        ):
-            text_chunk = str(chunk or "")
-            socratic_raw_chunks.append(text_chunk)
-            if emitted_questions >= 3:
-                continue
-
-            pending += text_chunk
-            matches = list(re.finditer(r"[^?]*\?", pending))
-            if not matches:
-                continue
-
-            consumed = 0
-            for match in matches:
+        socratic_error: Exception | None = None
+        try:
+            async for chunk in stream_chat_completion(
+                model=alias,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=kwargs.get("temperature", 0.7),
+                request_id=request_id,
+                telemetry_sink=stream_telemetry,
+            ):
+                text_chunk = str(chunk or "")
+                socratic_raw_chunks.append(text_chunk)
                 if emitted_questions >= 3:
-                    break
-                candidate = match.group(0).strip()
-                consumed = match.end()
-                if not candidate:
                     continue
-                signature = _normalize_question_signature(candidate)
-                if not signature or signature in seen_signatures:
+
+                pending += text_chunk
+                matches = list(re.finditer(r"[^?]*\?", pending))
+                if not matches:
                     continue
-                seen_signatures.add(signature)
-                prefix = "" if emitted_questions == 0 else "\n"
-                yield f"{prefix}{candidate}"
-                emitted_questions += 1
-            pending = pending[consumed:]
+
+                consumed = 0
+                for match in matches:
+                    if emitted_questions >= 3:
+                        break
+                    candidate = match.group(0).strip()
+                    consumed = match.end()
+                    if not candidate:
+                        continue
+                    signature = _normalize_question_signature(candidate)
+                    if not signature or signature in seen_signatures:
+                        continue
+                    seen_signatures.add(signature)
+                    prefix = "" if emitted_questions == 0 else "\n"
+                    yield f"{prefix}{candidate}"
+                    emitted_questions += 1
+                pending = pending[consumed:]
+        except Exception as exc:
+            socratic_error = exc
+            stream_telemetry["stream_error"] = str(exc)
+            stream_telemetry["stream_error_type"] = type(exc).__name__
+            stream_telemetry["request_id"] = request_id
+            _tech_logger.warning(
+                "socratic_stream_failed",
+                request_id=request_id,
+                model_alias=alias,
+                error=str(exc),
+            )
 
         if emitted_questions > 0:
             yield "\n\nShare your answer, and I will guide the next step."
         else:
             constrained_response = _enforce_socratic_response_constraints("".join(socratic_raw_chunks))
-            for index in range(0, len(constrained_response), 400):
-                yield constrained_response[index : index + 400]
+            fallback_response = constrained_response.strip()
+            if socratic_error is not None and not fallback_response:
+                fallback_response = "I hit a temporary issue while streaming. Please try again."
+            for index in range(0, len(fallback_response), 400):
+                yield fallback_response[index : index + 400]
     else:
-        async for chunk in stream_chat_completion(
-            model=alias,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=kwargs.get("temperature", 0.7),
-            request_id=request_id,
-            telemetry_sink=stream_telemetry,
-        ):
-            yield chunk
+        streamed_chunks = 0
+        try:
+            async for chunk in stream_chat_completion(
+                model=alias,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=kwargs.get("temperature", 0.7),
+                request_id=request_id,
+                telemetry_sink=stream_telemetry,
+            ):
+                streamed_chunks += 1
+                yield chunk
+        except Exception as exc:
+            stream_telemetry["stream_error"] = str(exc)
+            stream_telemetry["stream_error_type"] = type(exc).__name__
+            stream_telemetry["request_id"] = request_id
+            _tech_logger.warning(
+                "learning_stream_failed",
+                request_id=request_id,
+                model_alias=alias,
+                streamed_chunks=streamed_chunks,
+                error=str(exc),
+            )
+            if streamed_chunks == 0:
+                yield "Unable to stream a response right now. Please try again."
+            else:
+                yield "\n\n---\n*Response incomplete due to a service interruption.*"
 
     stream_duration_ms = round((time.perf_counter() - stream_start) * 1000, 2)
     model_inference_ms = stream_telemetry.get("model_inference_ms")
@@ -868,6 +902,10 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         route_telemetry_sink["stream_duration_ms"] = stream_duration_ms
         route_telemetry_sink["model_alias"] = alias
         route_telemetry_sink["model"] = model_name
+        if "stream_error" in stream_telemetry:
+            route_telemetry_sink["stream_error"] = stream_telemetry.get("stream_error")
+            route_telemetry_sink["stream_error_type"] = stream_telemetry.get("stream_error_type")
+            route_telemetry_sink["request_id"] = stream_telemetry.get("request_id")
 
     log_sampled_success(
         "llm_stream_observed",

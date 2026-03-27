@@ -154,12 +154,13 @@ def _looks_truncated(stripped: str) -> bool:
     if not stripped:
         return True
 
+    if stripped.endswith("..."):
+        return True
+
     terminal_char = stripped[-1]
     if terminal_char in VALID_TERMINAL_CHARS:
         return False
     if terminal_char in TRUNCATED_TERMINAL_CHARS:
-        return True
-    if stripped.endswith("..."):
         return True
 
     match = re.search(r"([A-Za-z']+)\s*$", stripped)

@@ -262,6 +262,51 @@ async def test_query_stream_idempotency_replay_with_message_id(app_client, monke
 
 
 @pytest.mark.asyncio
+async def test_query_stream_stale_in_progress_does_not_clobber_completed_record(app_client, monkeypatch, test_settings):
+    key_reads: dict[str, int] = {}
+    cache_set_calls: list[tuple[str, dict, int | None]] = []
+
+    async def fail_stream(*_args, **_kwargs):
+        raise AssertionError("stream should not execute when replay is returned")
+        yield ""  # pragma: no cover
+
+    async def fake_cache_get(key):
+        k = str(key)
+        key_reads[k] = key_reads.get(k, 0) + 1
+        if key_reads[k] == 1:
+            return None
+        if key_reads[k] == 2:
+            return {"status": "in_progress", "started_at": 0}
+        return {"status": "completed", "response": "already done"}
+
+    async def fake_cache_set(key, value, ttl=None):
+        cache_set_calls.append((str(key), dict(value), ttl))
+        return True
+
+    async def fake_cache_set_if_absent(_key, _value, _ttl):
+        return False
+
+    monkeypatch.setattr(query_module, "generate_stream_explanation", fail_stream)
+    monkeypatch.setattr(query_module, "cache_get", fake_cache_get)
+    monkeypatch.setattr(query_module, "cache_set", fake_cache_set)
+    monkeypatch.setattr(query_module, "cache_set_if_absent", fake_cache_set_if_absent)
+    monkeypatch.setattr(query_module, "get_settings", lambda: test_settings)
+
+    payload = {
+        "topic": "race",
+        "levels": ["eli5"],
+        "mode": "learning",
+        "message_id": "3e964baa-386f-4d2f-9cc4-3f0dc0855e61",
+    }
+
+    resp = await app_client.post("/api/query/stream", json=payload)
+    assert resp.status_code == 200
+    assert "\"replay\":true" in resp.text.replace(" ", "")
+    assert "already done" in resp.text
+    assert cache_set_calls == []
+
+
+@pytest.mark.asyncio
 async def test_messages_fallback_on_stream_exception(app_client, monkeypatch, test_settings):
     test_settings.stream_start_timeout_seconds = 0.1
     test_settings.stream_max_seconds = 2

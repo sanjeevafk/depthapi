@@ -143,6 +143,56 @@ async def test_generate_stream_explanation_socratic_streams_questions_progressiv
 
 
 @pytest.mark.asyncio
+async def test_generate_stream_explanation_socratic_stream_failure_falls_back(monkeypatch):
+    async def crashing_stream(*_args, **_kwargs):
+        raise RuntimeError("stream broke")
+        yield ""  # pragma: no cover
+
+    monkeypatch.setattr(inference_module, "stream_chat_completion", crashing_stream)
+
+    telemetry_sink: dict[str, object] = {}
+    chunks = []
+    async for chunk in inference_module.generate_stream_explanation(
+        "entropy",
+        "eli15",
+        mode="socratic",
+        telemetry_sink=telemetry_sink,
+        request_id="req-socratic-fail",
+    ):
+        chunks.append(chunk)
+
+    combined = "".join(chunks)
+    assert "temporary issue while streaming" in combined
+    assert telemetry_sink.get("stream_error_type") == "RuntimeError"
+    assert telemetry_sink.get("request_id") == "req-socratic-fail"
+
+
+@pytest.mark.asyncio
+async def test_generate_stream_explanation_learning_stream_failure_is_graceful(monkeypatch):
+    async def crashing_stream(*_args, **_kwargs):
+        raise RuntimeError("stream broke")
+        yield ""  # pragma: no cover
+
+    monkeypatch.setattr(inference_module, "stream_chat_completion", crashing_stream)
+
+    telemetry_sink: dict[str, object] = {}
+    chunks = []
+    async for chunk in inference_module.generate_stream_explanation(
+        "dns",
+        "eli5",
+        mode="learning",
+        telemetry_sink=telemetry_sink,
+        request_id="req-learning-fail",
+    ):
+        chunks.append(chunk)
+
+    combined = "".join(chunks)
+    assert "Unable to stream a response right now" in combined
+    assert telemetry_sink.get("stream_error_type") == "RuntimeError"
+    assert telemetry_sink.get("request_id") == "req-learning-fail"
+
+
+@pytest.mark.asyncio
 async def test_technical_mode_handler_uses_safe_defaults_when_classification_fails(monkeypatch):
     captured = {}
 
