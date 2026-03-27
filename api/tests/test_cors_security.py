@@ -1,0 +1,91 @@
+import httpx
+import pytest
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+import auth as auth_module
+import main as main_app
+import routers.query as query_module
+
+
+@pytest.mark.asyncio
+async def test_missing_allowed_origins_uses_strict_defaults():
+    origins = main_app.resolve_allowed_origins(None)
+
+    assert origins == list(main_app.DEFAULT_ALLOWED_ORIGINS)
+    assert "*" not in origins
+
+
+@pytest.mark.asyncio
+async def test_wildcard_origin_is_sanitized_with_warning(monkeypatch):
+    warnings = []
+
+    def fake_warning(event, **kwargs):
+        warnings.append((event, kwargs))
+
+    monkeypatch.setattr(main_app.logger, "warning", fake_warning)
+
+    origins = main_app.resolve_allowed_origins("*, https://knowbear.vercel.app")
+
+    assert origins == ["https://knowbear.vercel.app"]
+    assert warnings
+    assert warnings[0][0] == "cors_wildcard_origin_sanitized"
+
+
+@pytest.mark.asyncio
+async def test_credentialed_cors_blocks_arbitrary_origin_by_default():
+    app = FastAPI()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=main_app.resolve_allowed_origins(None),
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["content-type", "authorization", "x-request-id"],
+    )
+
+    @app.get("/health")
+    async def health():
+        return {"status": "ok"}
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        blocked = await client.get("/health", headers={"Origin": "https://evil.example"})
+        allowed = await client.get(
+            "/health",
+            headers={"Origin": main_app.DEFAULT_ALLOWED_ORIGINS[0]},
+        )
+
+    assert blocked.headers.get("access-control-allow-origin") is None
+    assert allowed.headers.get("access-control-allow-origin") == main_app.DEFAULT_ALLOWED_ORIGINS[0]
+    assert allowed.headers.get("access-control-allow-credentials") == "true"
+
+
+@pytest.mark.asyncio
+async def test_health_and_query_still_work_with_cors_patch(app_client, monkeypatch):
+    async def fake_cache_get(_key):
+        return None
+
+    async def fake_cache_set(_key, _value):
+        return True
+
+    async def fake_generate_explanation(*_args, **_kwargs):
+        return "ok"
+
+    async def fake_auth():
+        return None
+
+    monkeypatch.setattr(query_module, "cache_get", fake_cache_get)
+    monkeypatch.setattr(query_module, "cache_set", fake_cache_set)
+    monkeypatch.setattr(query_module, "generate_explanation", fake_generate_explanation)
+    app_client.app.dependency_overrides[auth_module.verify_token_optional] = fake_auth
+
+    health_resp = await app_client.get("/api/health")
+    assert health_resp.status_code == 200
+
+    query_resp = await app_client.post(
+        "/api/query",
+        json={"topic": "CORS hardening", "levels": ["eli5"], "mode": "learning"},
+    )
+    assert query_resp.status_code == 200
+    payload = query_resp.json()
+    assert payload["explanations"]["eli5"] == "ok"
