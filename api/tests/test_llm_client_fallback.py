@@ -31,7 +31,7 @@ async def test_create_chat_completion_cascades_through_primary_providers(monkeyp
 
         async def create(self, **kwargs):
             attempts.append(self.provider)
-            if self.provider in {"groq", "cerebras"}:
+            if self.provider in {"openai", "groq", "cerebras"}:
                 raise RuntimeError(f"{self.provider} unavailable")
             return SimpleNamespace(
                 model=kwargs.get("model", "gemini-2.5-flash"),
@@ -52,7 +52,7 @@ async def test_create_chat_completion_cascades_through_primary_providers(monkeyp
     )
 
     assert response.choices[0].message.content == "ok"
-    assert attempts == ["groq", "cerebras", "gemini"]
+    assert attempts == ["openai", "groq", "cerebras", "gemini"]
 
 
 @pytest.mark.asyncio
@@ -88,5 +88,5 @@ async def test_provider_state_mark_failure_is_atomic(monkeypatch):
     await asyncio.gather(*(manager.mark_failure("groq") for _ in range(25)))
     state = await manager._read_state("groq")
 
-    assert state["failures"] == 25
+    assert state["failure_count"] == 25
     assert state["blocked_until"] == 0

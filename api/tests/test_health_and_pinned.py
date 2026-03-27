@@ -23,8 +23,6 @@ async def test_health_ok(app_client, monkeypatch):
     assert set(data.keys()) >= {"status", "provider", "rate_limit", "db"}
     assert data["provider"]["status"] == "ok"
     assert isinstance(data["provider"]["latency_ms"], int)
-    # Compatibility payload retained for this release.
-    assert data["litellm"]["status"] == data["provider"]["status"]
     assert data["rate_limit"]["status"] == "ok"
     assert data["db"]["status"] == "ok"
 
@@ -53,12 +51,14 @@ async def test_health_redis_failure_in_prod(app_client, monkeypatch, test_settin
 @pytest.mark.asyncio
 async def test_health_missing_provider_config_degrades(app_client, test_settings):
     old_keys = (
+        test_settings.openai_api_key,
         test_settings.groq_api_key,
         test_settings.cerebras_api_key,
         test_settings.gemini_api_key,
         test_settings.openrouter_api_key,
     )
 
+    test_settings.openai_api_key = ""
     test_settings.groq_api_key = ""
     test_settings.cerebras_api_key = ""
     test_settings.gemini_api_key = ""
@@ -73,6 +73,7 @@ async def test_health_missing_provider_config_degrades(app_client, test_settings
         assert data.get("chat_enabled") is False
     finally:
         (
+            test_settings.openai_api_key,
             test_settings.groq_api_key,
             test_settings.cerebras_api_key,
             test_settings.gemini_api_key,
@@ -83,12 +84,14 @@ async def test_health_missing_provider_config_degrades(app_client, test_settings
 @pytest.mark.asyncio
 async def test_query_degraded_when_provider_keys_missing(app_client, test_settings):
     old_keys = (
+        test_settings.openai_api_key,
         test_settings.groq_api_key,
         test_settings.cerebras_api_key,
         test_settings.gemini_api_key,
         test_settings.openrouter_api_key,
     )
 
+    test_settings.openai_api_key = ""
     test_settings.groq_api_key = ""
     test_settings.cerebras_api_key = ""
     test_settings.gemini_api_key = ""
@@ -104,6 +107,7 @@ async def test_query_degraded_when_provider_keys_missing(app_client, test_settin
         assert payload["error"]["type"] == "service_degraded"
     finally:
         (
+            test_settings.openai_api_key,
             test_settings.groq_api_key,
             test_settings.cerebras_api_key,
             test_settings.gemini_api_key,
@@ -114,7 +118,7 @@ async def test_query_degraded_when_provider_keys_missing(app_client, test_settin
 @pytest.mark.asyncio
 async def test_invalid_provider_key_returns_structured_error(app_client, monkeypatch):
     async def invalid_key(*_args, **_kwargs):
-        raise LLMInvalidAPIKey("LiteLLM rejected credentials.")
+        raise LLMInvalidAPIKey("Provider rejected credentials.")
 
     monkeypatch.setattr(query_module, "generate_explanation", invalid_key)
 

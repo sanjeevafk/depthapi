@@ -38,16 +38,6 @@ function loadDotEnv() {
 const envFromFile = loadDotEnv();
 const baseEnv = { ...envFromFile, ...process.env };
 
-function resolveLitellmCommand() {
-    const isWin = process.platform === "win32";
-    const venvDir = path.join(process.cwd(), ".venv", isWin ? "Scripts" : "bin");
-    const venvCommand = path.join(venvDir, isWin ? "litellm.exe" : "litellm");
-    if (fs.existsSync(venvCommand)) {
-        return venvCommand;
-    }
-    return "litellm";
-}
-
 function start(name, command, args) {
     const child = spawn(command, args, {
         cwd: process.cwd(),
@@ -66,9 +56,6 @@ function start(name, command, args) {
 
     child.on("error", (error) => {
         console.error(`[dev:full] failed to start ${name}: ${error.message}`);
-        if (name === "litellm") {
-            console.error("[dev:full] ensure the virtualenv exists and litellm is installed (npm run api:install)");
-        }
         shutdown(1);
     });
 
@@ -93,9 +80,3 @@ process.on("SIGTERM", () => shutdown(0));
 
 start("frontend", npmCommand, ["run", "dev"]);
 start("backend", npmCommand, ["run", "api:dev"]);
-start("litellm", resolveLitellmCommand(), [
-    "--config",
-    "infra/litellm/config.yaml",
-    "--port",
-    "4000",
-]);

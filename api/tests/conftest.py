@@ -137,6 +137,7 @@ class FakeSupabase:
 def test_settings():
     return SimpleNamespace(
         environment="development",
+        openai_api_key="sk-openai-test",
         groq_api_key="gsk-test",
         cerebras_api_key="cs-test",
         gemini_api_key="gm-test",

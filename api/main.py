@@ -364,7 +364,6 @@ async def health():
     return {
         "status": overall,
         "provider": {"status": provider["status"], "latency_ms": provider["latency_ms"]},
-        "litellm": {"status": provider["status"], "latency_ms": provider["latency_ms"]},
         "rate_limit": {"status": rate_limit["status"]},
         "db": {"status": db["status"]},
         "chat_enabled": bool(provider.get("chat_enabled", False)),

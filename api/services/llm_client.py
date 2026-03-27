@@ -26,10 +26,11 @@ from services.cache import get_redis
 from services.llm_errors import LLMBadRequest, LLMInvalidAPIKey, LLMUnavailable
 
 
-ProviderName = Literal["groq", "cerebras", "gemini", "openrouter"]
+ProviderName = Literal["openai", "groq", "cerebras", "gemini", "openrouter"]
 
-PROVIDER_PRIORITY: tuple[ProviderName, ...] = ("groq", "cerebras", "gemini")
+PROVIDER_PRIORITY: tuple[ProviderName, ...] = ("openai", "groq", "cerebras", "gemini")
 PROVIDER_BASE_URLS: dict[ProviderName, str] = {
+    "openai": "https://api.openai.com/v1",
     "groq": "https://api.groq.com/openai/v1",
     "cerebras": "https://api.cerebras.ai/v1",
     "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
@@ -40,27 +41,32 @@ RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
 # Semantic alias -> provider-specific model IDs in fallback order.
 MODEL_FALLBACK_MAP: dict[str, dict[ProviderName, str]] = {
     "default-fast": {
+        "openai": "gpt-4.1-mini",
         "groq": "llama-3.1-8b-instant",
         "cerebras": "llama3.1-8b",
         "gemini": "gemini-2.5-flash",
     },
     "learning-detailed": {
+        "openai": "gpt-4.1",
         "groq": "llama-3.3-70b-versatile",
         "cerebras": "llama-3.3-70b",
         "gemini": "gemini-2.5-pro",
     },
     "technical-primary": {
+        "openai": "gpt-4.1",
         "groq": "llama-3.3-70b-versatile",
         "cerebras": "llama-3.3-70b",
         "gemini": "gemini-2.5-pro",
     },
     "technical-fallback": {
+        "openai": "gpt-4.1-mini",
         "groq": "llama-3.1-8b-instant",
         "cerebras": "llama3.1-8b",
         "gemini": "gemini-2.5-flash",
     },
 }
 SOCRATIC_OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct"
+SOCRATIC_OPENAI_MODEL = "gpt-4.1"
 
 
 @dataclass(frozen=True)
@@ -83,13 +89,23 @@ class ProviderStateManager:
         self.cooldown_seconds = max(cooldown_seconds, 1)
         self.state_ttl_seconds = max(state_ttl_seconds, 30)
         self._lock = asyncio.Lock()
-        self._memory_state: dict[str, dict[str, int]] = {}
+        self._memory_state: dict[str, dict[str, int | str]] = {}
 
     def _redis_key(self, provider: ProviderName) -> str:
         return f"knowbear:provider_state:{provider}"
 
-    async def _read_state_unlocked(self, provider: ProviderName) -> dict[str, int]:
-        state = dict(self._memory_state.get(provider, {"failures": 0, "blocked_until": 0}))
+    async def _read_state_unlocked(self, provider: ProviderName) -> dict[str, int | str]:
+        state = dict(
+            self._memory_state.get(
+                provider,
+                {
+                    "status": "healthy",
+                    "failure_count": 0,
+                    "last_failure_ts": 0,
+                    "blocked_until": 0,
+                },
+            )
+        )
 
         try:
             redis = await get_redis()
@@ -102,7 +118,9 @@ class ProviderStateManager:
                 loaded = json.loads(payload)
                 if isinstance(loaded, dict):
                     state = {
-                        "failures": int(loaded.get("failures", 0) or 0),
+                        "status": str(loaded.get("status", "healthy") or "healthy"),
+                        "failure_count": int(loaded.get("failure_count", loaded.get("failures", 0)) or 0),
+                        "last_failure_ts": int(loaded.get("last_failure_ts", 0) or 0),
                         "blocked_until": int(loaded.get("blocked_until", 0) or 0),
                     }
                     self._memory_state[provider] = dict(state)
@@ -112,13 +130,18 @@ class ProviderStateManager:
 
         return state
 
-    async def _read_state(self, provider: ProviderName) -> dict[str, int]:
+    async def _read_state(self, provider: ProviderName) -> dict[str, int | str]:
         async with self._lock:
             return await self._read_state_unlocked(provider)
 
-    async def _write_state_unlocked(self, provider: ProviderName, state: dict[str, int]) -> None:
+    async def _write_state_unlocked(self, provider: ProviderName, state: dict[str, int | str]) -> None:
+        status = str(state.get("status", "healthy") or "healthy").lower()
+        if status not in {"healthy", "degraded", "down"}:
+            status = "degraded"
         normalized = {
-            "failures": int(state.get("failures", 0) or 0),
+            "status": status,
+            "failure_count": int(state.get("failure_count", state.get("failures", 0)) or 0),
+            "last_failure_ts": int(state.get("last_failure_ts", 0) or 0),
             "blocked_until": int(state.get("blocked_until", 0) or 0),
         }
         self._memory_state[provider] = dict(normalized)
@@ -129,26 +152,57 @@ class ProviderStateManager:
         except Exception:
             pass
 
-    async def _write_state(self, provider: ProviderName, state: dict[str, int]) -> None:
+    async def _write_state(self, provider: ProviderName, state: dict[str, int | str]) -> None:
         async with self._lock:
             await self._write_state_unlocked(provider, state)
 
     async def should_attempt(self, provider: ProviderName) -> bool:
-        state = await self._read_state(provider)
-        return int(state.get("blocked_until", 0) or 0) <= int(time.time())
+        now = int(time.time())
+        async with self._lock:
+            state = await self._read_state_unlocked(provider)
+            blocked_until = int(state.get("blocked_until", 0) or 0)
+            if blocked_until > now:
+                return False
+
+            # Cooldown elapsed: recover provider and clear transient failure state.
+            if str(state.get("status", "healthy")) == "down":
+                await self._write_state_unlocked(
+                    provider,
+                    {
+                        "status": "healthy",
+                        "failure_count": 0,
+                        "last_failure_ts": int(state.get("last_failure_ts", 0) or 0),
+                        "blocked_until": 0,
+                    },
+                )
+            return True
 
     async def mark_success(self, provider: ProviderName) -> None:
         async with self._lock:
-            await self._write_state_unlocked(provider, {"failures": 0, "blocked_until": 0})
+            await self._write_state_unlocked(
+                provider,
+                {"status": "healthy", "failure_count": 0, "last_failure_ts": 0, "blocked_until": 0},
+            )
 
     async def mark_failure(self, provider: ProviderName) -> None:
         async with self._lock:
+            now = int(time.time())
             state = await self._read_state_unlocked(provider)
-            failures = int(state.get("failures", 0) or 0) + 1
+            failures = int(state.get("failure_count", state.get("failures", 0)) or 0) + 1
             blocked_until = int(state.get("blocked_until", 0) or 0)
+            status = "degraded"
             if failures >= self.failure_threshold:
-                blocked_until = int(time.time()) + self.cooldown_seconds
-            await self._write_state_unlocked(provider, {"failures": failures, "blocked_until": blocked_until})
+                blocked_until = now + self.cooldown_seconds
+                status = "down"
+            await self._write_state_unlocked(
+                provider,
+                {
+                    "status": status,
+                    "failure_count": failures,
+                    "last_failure_ts": now,
+                    "blocked_until": blocked_until,
+                },
+            )
 
 
 _clients: dict[ProviderName, AsyncOpenAI] = {}
@@ -193,6 +247,7 @@ def _get_timeout_seconds() -> float:
 def _provider_api_key(provider: ProviderName) -> str:
     settings = get_settings()
     lookup = {
+        "openai": "openai_api_key",
         "groq": "groq_api_key",
         "cerebras": "cerebras_api_key",
         "gemini": "gemini_api_key",
@@ -253,7 +308,10 @@ def _build_candidate_chain(model_alias: str | None) -> list[ProviderTarget]:
             return [ProviderTarget(provider=provider_name, model=raw_model)]
 
     if alias == "socratic":
-        return [ProviderTarget(provider="openrouter", model=SOCRATIC_OPENROUTER_MODEL)]
+        return [
+            ProviderTarget(provider="openai", model=SOCRATIC_OPENAI_MODEL),
+            ProviderTarget(provider="openrouter", model=SOCRATIC_OPENROUTER_MODEL),
+        ]
 
     model_map = MODEL_FALLBACK_MAP.get(alias) or MODEL_FALLBACK_MAP["default-fast"]
     return [
@@ -325,7 +383,7 @@ def get_provider_config_state() -> dict[str, object]:
             {
                 "code": "missing_provider_keys",
                 "severity": "error",
-                "message": "No AI provider API keys are configured.",
+                "message": "No AI provider API keys are configured. Set OPENAI_API_KEY at minimum.",
             }
         )
 
@@ -356,11 +414,6 @@ def get_provider_config_state() -> dict[str, object]:
         "has_api_key": any_configured,
         "base_url": "",
     }
-
-
-def get_litellm_config_state() -> dict[str, object]:
-    """Backward-compatible alias for provider config state."""
-    return get_provider_config_state()
 
 
 async def create_chat_completion(model: str, messages: list[ChatCompletionMessageParam], **kwargs):
