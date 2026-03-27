@@ -7,7 +7,7 @@ import time
 from typing import TypedDict
 import httpx
 import structlog
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from config import get_settings
 from prompts import (
     PROMPTS,
@@ -217,7 +217,7 @@ def score_model(features: IntentFeatures, model_alias: str, *, mode: str) -> flo
     profile = MODEL_PROFILES.get(model_alias, MODEL_PROFILES[LEARNING_MODEL_SIMPLE])
     score = 0.0
     for feature_name, value in features.items():
-        score += value * profile.get(feature_name, 0.0)
+        score += float(value if isinstance(value, (int, float)) else 0.0) * profile.get(feature_name, 0.0)
     score -= COST_PENALTY.get(model_alias, 0.0)
 
     # Mode-specific tie-breakers to keep behavior intentional.
@@ -553,10 +553,18 @@ def _extract_estimated_cost(result, usage: dict[str, int] | None) -> float | Non
     return None
 
 
+def is_transient_http_error(exc: BaseException) -> bool:
+    if isinstance(exc, (httpx.ConnectError, httpx.TimeoutException)):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500
+    return False
+
+
 @retry(
     stop=stop_after_attempt(2),
     wait=wait_exponential(multiplier=1, min=2, max=10),
-    retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError)),
+    retry=retry_if_exception(is_transient_http_error),
     reraise=True
 )
 async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **kwargs) -> str:

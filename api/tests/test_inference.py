@@ -1,3 +1,4 @@
+import httpx
 import pytest
 
 import services.inference as inference_module
@@ -263,3 +264,22 @@ def test_weighted_routing_prefers_fast_model_for_latency_queries():
         level="eli5",
     )
     assert ranked[0] == "default-fast"
+
+
+def test_is_transient_http_error_retries_on_connect_and_timeout():
+    connect_exc = httpx.ConnectError("connect failed")
+    timeout_exc = httpx.TimeoutException("timed out")
+
+    assert inference_module.is_transient_http_error(connect_exc) is True
+    assert inference_module.is_transient_http_error(timeout_exc) is True
+
+
+def test_is_transient_http_error_retries_on_5xx_only():
+    request = httpx.Request("GET", "https://example.com")
+    response_503 = httpx.Response(503, request=request)
+    response_400 = httpx.Response(400, request=request)
+    exc_503 = httpx.HTTPStatusError("server error", request=request, response=response_503)
+    exc_400 = httpx.HTTPStatusError("client error", request=request, response=response_400)
+
+    assert inference_module.is_transient_http_error(exc_503) is True
+    assert inference_module.is_transient_http_error(exc_400) is False
