@@ -182,7 +182,7 @@ def _merge_trace_headers(extra_headers: dict[str, str], trace_headers: dict[str,
 
 def _get_timeout_seconds() -> float:
     settings = get_settings()
-    raw_timeout = getattr(settings, "llm_timeout_seconds", getattr(settings, "litellm_timeout_seconds", 60))
+    raw_timeout = getattr(settings, "llm_timeout_seconds", 60)
     try:
         timeout = float(raw_timeout)
     except (TypeError, ValueError):
@@ -359,7 +359,7 @@ def get_provider_config_state() -> dict[str, object]:
 
 
 def get_litellm_config_state() -> dict[str, object]:
-    """Backward-compatible config probe name used by existing routers."""
+    """Backward-compatible alias for provider config state."""
     return get_provider_config_state()
 
 

@@ -16,10 +16,6 @@ class Settings(BaseSettings):
     gemini_api_key: SecretStr = SecretStr("")
     openrouter_api_key: SecretStr = SecretStr("")
     llm_timeout_seconds: int = 60
-    litellm_base_url: str = ""
-    litellm_virtual_key: str = ""
-    litellm_master_key: str = ""
-    litellm_timeout_seconds: int = 60
 
     stream_max_seconds: int = 25
     technical_stream_max_seconds: int = 45
