@@ -5,6 +5,9 @@ import {
   ChevronRight,
   CircleHelp,
   Code2,
+  Home,
+  LogIn,
+  LogOut,
   MessageCircle,
   Plus,
   Trash2,
@@ -20,12 +23,16 @@ interface WorkspaceSidebarProps {
   isCollapsed: boolean;
   userName: string;
   avatarUrl?: string | null;
+  isAuthenticated: boolean;
   onClose: () => void;
   onToggleCollapse: () => void;
   onNewThread: () => void;
+  onGoHome: () => void;
   onWorkspaceChange: (workspace: Workspace) => void;
   onSelectConversation: (id: string) => void;
   onDeleteConversation: (id: string) => void;
+  onSignIn: () => void;
+  onSignOut: () => void;
 }
 
 interface WorkspaceOption {
@@ -64,12 +71,16 @@ export default function WorkspaceSidebar({
   isCollapsed,
   userName,
   avatarUrl,
+  isAuthenticated,
   onClose,
   onToggleCollapse,
   onNewThread,
+  onGoHome,
   onWorkspaceChange,
   onSelectConversation,
   onDeleteConversation,
+  onSignIn,
+  onSignOut,
 }: WorkspaceSidebarProps): JSX.Element {
   const newThreadButtonRef = useRef<HTMLButtonElement>(null);
   const labelClassName = `max-w-[160px] overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-200 ${
@@ -93,10 +104,7 @@ export default function WorkspaceSidebar({
     requestAnimationFrame(() => newThreadButtonRef.current?.focus());
   }, [isOpen]);
 
-  const recentConversations = useMemo(
-    () => conversations.slice(0, 20),
-    [conversations],
-  );
+  const threadConversations = useMemo(() => conversations, [conversations]);
 
   return (
     <aside
@@ -145,6 +153,22 @@ export default function WorkspaceSidebar({
             {isCollapsed && (
               <span className="pointer-events-none absolute left-full top-1/2 ml-3 hidden -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-xs text-white opacity-0 shadow-sm transition group-hover:opacity-100 md:block">
                 New Thread
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onGoHome();
+              onClose();
+            }}
+            className="group relative mt-2 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/50 dark:border-white/10 dark:bg-dark-700 dark:text-slate-200 dark:hover:bg-dark-600"
+          >
+            <Home className="h-4 w-4" />
+            <span className={`inline-block ${labelClassName}`}>Go to Home</span>
+            {isCollapsed && (
+              <span className="pointer-events-none absolute left-full top-1/2 ml-3 hidden -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-xs text-white opacity-0 shadow-sm transition group-hover:opacity-100 md:block">
+                Go to Home
               </span>
             )}
           </button>
@@ -211,12 +235,12 @@ export default function WorkspaceSidebar({
             role="list"
             aria-label="Conversations"
           >
-            {recentConversations.length === 0 ? (
+            {threadConversations.length === 0 ? (
               <p className="rounded-xl border border-dashed border-slate-300 px-3 py-3 text-sm text-slate-500 dark:border-white/10 dark:text-slate-400">
                 No conversations yet.
               </p>
             ) : (
-              recentConversations.map((conversation) => {
+              threadConversations.map((conversation) => {
                 const isActive = conversation.id === currentConversationId;
                 const conversationTitle =
                   conversation.title || "Untitled conversation";
@@ -297,11 +321,43 @@ export default function WorkspaceSidebar({
             </p>
           </div>
           {!isCollapsed && (
-            <MessageCircle
-              className="ml-auto h-4 w-4 text-slate-400 dark:text-slate-500"
-              aria-hidden="true"
-            />
+            <button
+              type="button"
+              onClick={isAuthenticated ? onSignOut : onSignIn}
+              className="ml-auto inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/50 dark:border-white/10 dark:bg-dark-700 dark:text-slate-200 dark:hover:bg-dark-600"
+            >
+              {isAuthenticated ? (
+                <>
+                  <LogOut className="h-3.5 w-3.5" />
+                  Sign out
+                </>
+              ) : (
+                <>
+                  <LogIn className="h-3.5 w-3.5" />
+                  Sign in
+                </>
+              )}
+            </button>
           )}
+          {isCollapsed && (
+            <button
+              type="button"
+              onClick={isAuthenticated ? onSignOut : onSignIn}
+              className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-200 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-slate-100"
+              aria-label={isAuthenticated ? "Sign out" : "Sign in"}
+              title={isAuthenticated ? "Sign out" : "Sign in"}
+            >
+              {isAuthenticated ? (
+                <LogOut className="h-4 w-4" />
+              ) : (
+                <LogIn className="h-4 w-4" />
+              )}
+            </button>
+          )}
+          <MessageCircle
+            className="hidden h-4 w-4 text-slate-400 dark:text-slate-500"
+            aria-hidden="true"
+          />
         </div>
       </div>
     </aside>

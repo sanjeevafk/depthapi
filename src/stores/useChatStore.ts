@@ -139,7 +139,10 @@ interface ChatState {
 
   // Actions — conversations (delegate to conversation store)
   syncConversations: (conversations: Conversation[]) => void;
-  selectConversation: (id: string) => Promise<void>;
+  selectConversation: (
+    id: string,
+    options?: { forceReload?: boolean },
+  ) => Promise<void>;
   renameConversation: (id: string, title: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   startNewThread: () => void;
@@ -351,8 +354,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   syncConversations: (conversations) =>
     useConversationStore.getState().syncConversations(conversations),
 
-  selectConversation: (id) =>
-    useConversationStore.getState().selectConversation(id),
+  selectConversation: (id, options) =>
+    useConversationStore
+      .getState()
+      .selectConversation(id, options ?? { forceReload: true }),
 
   renameConversation: (id, title) =>
     useConversationStore.getState().renameConversation(id, title),

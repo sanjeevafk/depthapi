@@ -29,6 +29,9 @@ describe("WorkspaceSidebar", () => {
   const onSelectConversation = vi.fn();
   const onDeleteConversation = vi.fn();
   const onToggleCollapse = vi.fn();
+  const onGoHome = vi.fn();
+  const onSignIn = vi.fn();
+  const onSignOut = vi.fn();
 
   beforeEach(() => {
     onClose.mockReset();
@@ -37,6 +40,9 @@ describe("WorkspaceSidebar", () => {
     onSelectConversation.mockReset();
     onDeleteConversation.mockReset();
     onToggleCollapse.mockReset();
+    onGoHome.mockReset();
+    onSignIn.mockReset();
+    onSignOut.mockReset();
   });
 
   it("always starts a new thread when workspace button is clicked", () => {
@@ -48,12 +54,16 @@ describe("WorkspaceSidebar", () => {
         isOpen
         isCollapsed={false}
         userName="Tester"
+        isAuthenticated
         onClose={onClose}
         onToggleCollapse={onToggleCollapse}
         onNewThread={onNewThread}
+        onGoHome={onGoHome}
         onWorkspaceChange={onWorkspaceChange}
         onSelectConversation={onSelectConversation}
         onDeleteConversation={onDeleteConversation}
+        onSignIn={onSignIn}
+        onSignOut={onSignOut}
       />,
     );
 
@@ -73,12 +83,16 @@ describe("WorkspaceSidebar", () => {
         isOpen
         isCollapsed={false}
         userName="Tester"
+        isAuthenticated
         onClose={onClose}
         onToggleCollapse={onToggleCollapse}
         onNewThread={onNewThread}
+        onGoHome={onGoHome}
         onWorkspaceChange={onWorkspaceChange}
         onSelectConversation={onSelectConversation}
         onDeleteConversation={onDeleteConversation}
+        onSignIn={onSignIn}
+        onSignOut={onSignOut}
       />,
     );
 
@@ -104,12 +118,16 @@ describe("WorkspaceSidebar", () => {
         isOpen
         isCollapsed={false}
         userName="Tester"
+        isAuthenticated
         onClose={onClose}
         onToggleCollapse={onToggleCollapse}
         onNewThread={onNewThread}
+        onGoHome={onGoHome}
         onWorkspaceChange={onWorkspaceChange}
         onSelectConversation={onSelectConversation}
         onDeleteConversation={onDeleteConversation}
+        onSignIn={onSignIn}
+        onSignOut={onSignOut}
       />,
     );
 
@@ -134,12 +152,16 @@ describe("WorkspaceSidebar", () => {
         isOpen
         isCollapsed={false}
         userName="Tester"
+        isAuthenticated
         onClose={onClose}
         onToggleCollapse={onToggleCollapse}
         onNewThread={onNewThread}
+        onGoHome={onGoHome}
         onWorkspaceChange={onWorkspaceChange}
         onSelectConversation={onSelectConversation}
         onDeleteConversation={onDeleteConversation}
+        onSignIn={onSignIn}
+        onSignOut={onSignOut}
       />,
     );
 
@@ -148,5 +170,34 @@ describe("WorkspaceSidebar", () => {
     expect(onDeleteConversation).not.toHaveBeenCalled();
 
     confirmSpy.mockRestore();
+  });
+
+  it("routes home and signs out from sidebar actions", () => {
+    render(
+      <WorkspaceSidebar
+        workspace="learn"
+        conversations={conversations}
+        currentConversationId="conv-1"
+        isOpen
+        isCollapsed={false}
+        userName="Tester"
+        isAuthenticated
+        onClose={onClose}
+        onToggleCollapse={onToggleCollapse}
+        onNewThread={onNewThread}
+        onGoHome={onGoHome}
+        onWorkspaceChange={onWorkspaceChange}
+        onSelectConversation={onSelectConversation}
+        onDeleteConversation={onDeleteConversation}
+        onSignIn={onSignIn}
+        onSignOut={onSignOut}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Go to Home/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Sign out/i }));
+
+    expect(onGoHome).toHaveBeenCalledTimes(1);
+    expect(onSignOut).toHaveBeenCalledTimes(1);
   });
 });

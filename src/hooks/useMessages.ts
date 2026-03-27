@@ -34,10 +34,14 @@ export function useMessages(): void {
   const loadedConversationId = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!currentConversationId || !supabaseConfigured) return;
+    if (!supabaseConfigured) return;
+    if (!currentConversationId) {
+      loadedConversationId.current = null;
+      return;
+    }
     if (loadedConversationId.current === currentConversationId) return;
     loadedConversationId.current = currentConversationId;
-    void selectConversation(currentConversationId);
+    void selectConversation(currentConversationId, { forceReload: true });
   }, [currentConversationId, selectConversation]);
 
   useEffect(() => {

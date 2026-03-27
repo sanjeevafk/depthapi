@@ -15,6 +15,7 @@ import { useMessageStore } from "./useMessageStore";
 const supabaseConfigured =
   Boolean(import.meta.env.VITE_SUPABASE_URL) &&
   Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY);
+let latestMessageLoadToken = 0;
 
 interface ConversationState {
   conversations: Conversation[];
@@ -31,7 +32,10 @@ interface ConversationState {
 
   // Actions
   syncConversations: (conversations: Conversation[]) => void;
-  selectConversation: (id: string) => Promise<void>;
+  selectConversation: (
+    id: string,
+    options?: { forceReload?: boolean },
+  ) => Promise<void>;
   renameConversation: (id: string, title: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   setWorkspaceState: (
@@ -122,13 +126,15 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     });
   },
 
-  selectConversation: async (id: string) => {
+  selectConversation: async (id: string, options) => {
     if (!id) return;
     const state = get();
+    const forceReload = options?.forceReload === true;
 
     if (
       state.currentConversationId === id &&
-      (state.isLoading || useMessageStore.getState().messageIds.length > 0)
+      state.isLoading &&
+      !forceReload
     ) {
       return;
     }
@@ -151,6 +157,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       state.depthLevel,
     );
 
+    const loadToken = ++latestMessageLoadToken;
     useMessageStore.getState().clearMessages();
     set({
       currentConversationId: id,
@@ -164,7 +171,9 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     });
 
     if (!supabaseConfigured) {
-      set({ isLoading: false });
+      if (loadToken === latestMessageLoadToken) {
+        set({ isLoading: false });
+      }
       return;
     }
 
@@ -176,11 +185,16 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         .order("created_at", { ascending: true });
 
       if (error) throw error;
+      if (loadToken !== latestMessageLoadToken || get().currentConversationId !== id) {
+        return;
+      }
       useMessageStore.getState().setMessages((data ?? []) as Message[]);
     } catch (error) {
       console.error("Failed to fetch messages:", error);
     } finally {
-      set({ isLoading: false });
+      if (loadToken === latestMessageLoadToken) {
+        set({ isLoading: false });
+      }
     }
   },
 

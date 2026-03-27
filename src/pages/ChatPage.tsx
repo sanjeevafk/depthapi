@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Menu } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import MessageList from "../components/chat/MessageList";
 import RegenerationModal from "../components/chat/RegenerationModal";
 import ThemeToggle from "../components/chat/ThemeToggle";
@@ -24,7 +25,8 @@ const WORKSPACE_LABELS: Record<Workspace, string> = {
 const SIDEBAR_COLLAPSE_KEY = "kb_sidebar_collapsed_v1";
 
 export default function ChatPage(): JSX.Element {
-  const { user, signInWithGoogle } = useAuth();
+  const { user, signInWithGoogle, signOut } = useAuth();
+  const navigate = useNavigate();
   const { conversations } = useConversations();
 
   const workspace = useChatStore((state) => state.workspace);
@@ -42,14 +44,8 @@ export default function ChatPage(): JSX.Element {
   const sendMessage = useChatStore((state) => state.sendMessage);
   const [chatEnabled, setChatEnabled] = useState(true);
   const [healthMessage, setHealthMessage] = useState<string | null>(null);
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
-    if (typeof window === "undefined") return false;
-    try {
-      return window.localStorage.getItem(SIDEBAR_COLLAPSE_KEY) === "true";
-    } catch {
-      return false;
-    }
-  });
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isSidebarPrefHydrated, setIsSidebarPrefHydrated] = useState(false);
 
   const upgradeModalOpen = useChatStore((state) => state.upgradeModalOpen);
   const closeUpgradeModal = useChatStore((state) => state.closeUpgradeModal);
@@ -88,7 +84,21 @@ export default function ChatPage(): JSX.Element {
   useMessages();
 
   useEffect(() => {
+    if (isSidebarPrefHydrated || typeof window === "undefined") return;
+    try {
+      setIsSidebarCollapsed(
+        window.localStorage.getItem(SIDEBAR_COLLAPSE_KEY) === "true",
+      );
+    } catch {
+      setIsSidebarCollapsed(false);
+    } finally {
+      setIsSidebarPrefHydrated(true);
+    }
+  }, [isSidebarPrefHydrated]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
+    if (!isSidebarPrefHydrated) return;
     try {
       window.localStorage.setItem(
         SIDEBAR_COLLAPSE_KEY,
@@ -97,7 +107,7 @@ export default function ChatPage(): JSX.Element {
     } catch {
       // Ignore storage errors (e.g. private mode).
     }
-  }, [isSidebarCollapsed]);
+  }, [isSidebarCollapsed, isSidebarPrefHydrated]);
 
   useEffect(() => {
     if (!isSidebarOpen) return;
@@ -193,12 +203,16 @@ export default function ChatPage(): JSX.Element {
           isCollapsed={isSidebarCollapsed}
           userName={userName}
           avatarUrl={avatarUrl}
+          isAuthenticated={Boolean(user)}
           onClose={() => setIsSidebarOpen(false)}
           onToggleCollapse={() => setIsSidebarCollapsed((prev) => !prev)}
           onNewThread={startNewThread}
+          onGoHome={() => navigate("/")}
           onWorkspaceChange={setWorkspace}
           onSelectConversation={(id) => void selectConversation(id)}
           onDeleteConversation={(id) => void handleDeleteConversation(id)}
+          onSignIn={() => void signInWithGoogle()}
+          onSignOut={() => void signOut()}
         />
 
         {isSidebarOpen && (
