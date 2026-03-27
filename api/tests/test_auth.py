@@ -1,8 +1,10 @@
+import inspect
 import pytest
 from unittest.mock import MagicMock, patch
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 
+import auth as auth_module
 from auth import verify_token, verify_token_optional
 
 
@@ -55,3 +57,7 @@ async def test_verify_token_optional_invalid_credentials_raise():
         with pytest.raises(HTTPException) as excinfo:
             await verify_token_optional(creds)
         assert excinfo.value.status_code == 401
+
+
+def test_auth_module_has_no_print_statements():
+    assert "print(" not in inspect.getsource(auth_module)

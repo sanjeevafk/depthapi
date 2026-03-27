@@ -2,6 +2,7 @@ import pytest
 
 import auth as auth_module
 import routers.history as history_module
+from logging_config import anonymize_user_id
 
 
 @pytest.mark.asyncio
@@ -79,3 +80,30 @@ async def test_clear_history(app_client, monkeypatch, fake_user, fake_supabase):
     resp = await app_client.delete("/api/history")
     assert resp.status_code == 200
     assert resp.json()["status"] == "cleared"
+
+
+@pytest.mark.asyncio
+async def test_get_history_logs_anonymized_user_id_on_error(app_client, monkeypatch, fake_user):
+    class BrokenSupabase:
+        def table(self, _name):
+            raise RuntimeError("boom")
+
+    logged = []
+
+    def fake_log_error(event, **kwargs):
+        logged.append((event, kwargs))
+
+    monkeypatch.setattr(history_module, "get_supabase_admin", lambda: BrokenSupabase())
+    monkeypatch.setattr(history_module.logger, "error", fake_log_error)
+
+    async def fake_auth():
+        return {"user": fake_user}
+
+    app_client.app.dependency_overrides[auth_module.verify_token] = fake_auth
+
+    resp = await app_client.get("/api/history")
+    assert resp.status_code == 500
+    assert logged
+    _event, fields = logged[0]
+    assert fields.get("user_id_hash") == anonymize_user_id(fake_user.id)
+    assert "user_id" not in fields

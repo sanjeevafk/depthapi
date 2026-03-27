@@ -6,6 +6,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException
 
 from auth import verify_token, get_supabase_admin
+from logging_config import anonymize_user_id
 from pydantic import BaseModel
 from utils import DEFAULT_CHAT_MODE, SUPPORTED_CHAT_MODES, normalize_mode
 
@@ -44,7 +45,7 @@ async def get_history(auth_data: dict = Depends(verify_token)):
         return response.data
 
     except Exception as e:
-        logger.error("get_history_error", error=str(e), user_id=user_id)
+        logger.error("get_history_error", error=str(e), user_id_hash=anonymize_user_id(str(user_id)))
         raise HTTPException(status_code=500, detail="Failed to fetch history")
 
 @router.post("/history", response_model=HistoryItem)
@@ -74,7 +75,7 @@ async def add_history_item(data: HistoryCreate, auth_data: dict = Depends(verify
             
         return response.data[0]
     except Exception as e:
-        logger.error("add_history_error", error=str(e), user_id=user_id)
+        logger.error("add_history_error", error=str(e), user_id_hash=anonymize_user_id(str(user_id)))
         raise HTTPException(status_code=500, detail="Failed to save history")
 
 @router.delete("/history/{item_id}")
@@ -94,7 +95,12 @@ async def delete_history_item(item_id: str, auth_data: dict = Depends(verify_tok
         return {"status": "deleted"}
 
     except Exception as e:
-        logger.error("delete_history_error", error=str(e), user_id=user_id, item_id=item_id)
+        logger.error(
+            "delete_history_error",
+            error=str(e),
+            user_id_hash=anonymize_user_id(str(user_id)),
+            item_id=item_id,
+        )
         raise HTTPException(status_code=500, detail="Failed to delete history item")
 @router.delete("/history")
 async def clear_history(auth_data: dict = Depends(verify_token)):
@@ -112,5 +118,5 @@ async def clear_history(auth_data: dict = Depends(verify_token)):
         return {"status": "cleared"}
 
     except Exception as e:
-        logger.error("clear_history_error", error=str(e), user_id=user_id)
+        logger.error("clear_history_error", error=str(e), user_id_hash=anonymize_user_id(str(user_id)))
         raise HTTPException(status_code=500, detail="Failed to clear history")

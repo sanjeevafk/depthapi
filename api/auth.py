@@ -4,6 +4,7 @@ import time
 from fastapi import HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from config import get_settings
+from logging_config import anonymize_user_id, logger
 from monitoring import hash_for_monitoring, set_user_context
 from supabase import create_client, Client
 from supabase_auth.errors import AuthApiError
@@ -29,14 +30,14 @@ def invalidate_pro_cache(user_id: str) -> None:
 def get_supabase() -> Client | None:
     settings = get_settings()
     if not settings.supabase_url or not settings.supabase_anon_key:
-        print("Warning: Supabase credentials missing during init")
+        logger.warning("auth_supabase_credentials_missing")
         return None
     return create_client(settings.supabase_url, settings.supabase_anon_key)
 
 def get_supabase_admin() -> Client | None:
     settings = get_settings()
     if not settings.supabase_url or not settings.supabase_service_role_key:
-        print("Warning: Supabase Service Role Key missing")
+        logger.warning("auth_supabase_service_role_key_missing")
         return None
     return create_client(settings.supabase_url, settings.supabase_service_role_key)
 
@@ -64,10 +65,10 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Security(secu
         return {"user": user_response.user, "token": token}
         
     except AuthApiError as e:
-        print(f"Auth API Error: {e}")
+        logger.warning("auth_verify_token_api_error", error_type=type(e).__name__)
         raise HTTPException(status_code=401, detail=f"Authentication failed: {e.message}")
     except Exception as e:
-        print(f"Auth Validation Error: {e}")
+        logger.warning("auth_verify_token_validation_error", error_type=type(e).__name__)
         raise HTTPException(status_code=401, detail="Invalid authentication credentials")
 
 async def verify_token_optional(credentials: HTTPAuthorizationCredentials = Security(security)):
@@ -93,7 +94,7 @@ async def ensure_user_exists(user):
         
         await asyncio.to_thread(_upsert)
     except Exception as e:
-        print(f"Failed to ensure user exists: {e}")
+        logger.error("auth_ensure_user_exists_failed", error_type=type(e).__name__)
 
 async def check_is_pro(user_id: str, force_refresh: bool = False) -> bool:
     """Check if a user has pro status in the database."""
@@ -122,5 +123,9 @@ async def check_is_pro(user_id: str, force_refresh: bool = False) -> bool:
             _PRO_STATE_CACHE[user_id] = (is_pro, now + _pro_cache_ttl_seconds())
         return is_pro
     except Exception as e:
-        print(f"Failed to check pro status: {e}")
+        logger.error(
+            "auth_check_is_pro_failed",
+            error_type=type(e).__name__,
+            user_id_hash=anonymize_user_id(user_id),
+        )
         return False
