@@ -137,6 +137,11 @@ class FakeSupabase:
 def test_settings():
     return SimpleNamespace(
         environment="development",
+        groq_api_key="gsk-test",
+        cerebras_api_key="cs-test",
+        gemini_api_key="gm-test",
+        openrouter_api_key="or-test",
+        llm_timeout_seconds=60,
         litellm_base_url="http://localhost:4000",
         litellm_virtual_key="test-virtual-key",
         litellm_master_key="",

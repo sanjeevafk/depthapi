@@ -79,13 +79,17 @@ async def test_health_redis_failure_in_prod(app_client, monkeypatch, test_settin
 
 @pytest.mark.asyncio
 async def test_health_missing_litellm_config_degrades(app_client, test_settings):
-    old_base = test_settings.litellm_base_url
-    old_key = test_settings.litellm_virtual_key
-    old_master = test_settings.litellm_master_key
+    old_keys = (
+        test_settings.groq_api_key,
+        test_settings.cerebras_api_key,
+        test_settings.gemini_api_key,
+        test_settings.openrouter_api_key,
+    )
 
-    test_settings.litellm_base_url = ""
-    test_settings.litellm_virtual_key = ""
-    test_settings.litellm_master_key = ""
+    test_settings.groq_api_key = ""
+    test_settings.cerebras_api_key = ""
+    test_settings.gemini_api_key = ""
+    test_settings.openrouter_api_key = ""
 
     try:
         resp = await app_client.get("/api/health")
@@ -95,20 +99,27 @@ async def test_health_missing_litellm_config_degrades(app_client, test_settings)
         assert data["litellm"]["status"] == "degraded"
         assert data.get("chat_enabled") is False
     finally:
-        test_settings.litellm_base_url = old_base
-        test_settings.litellm_virtual_key = old_key
-        test_settings.litellm_master_key = old_master
+        (
+            test_settings.groq_api_key,
+            test_settings.cerebras_api_key,
+            test_settings.gemini_api_key,
+            test_settings.openrouter_api_key,
+        ) = old_keys
 
 
 @pytest.mark.asyncio
 async def test_query_degraded_when_litellm_missing(app_client, test_settings):
-    old_base = test_settings.litellm_base_url
-    old_key = test_settings.litellm_virtual_key
-    old_master = test_settings.litellm_master_key
+    old_keys = (
+        test_settings.groq_api_key,
+        test_settings.cerebras_api_key,
+        test_settings.gemini_api_key,
+        test_settings.openrouter_api_key,
+    )
 
-    test_settings.litellm_base_url = ""
-    test_settings.litellm_virtual_key = ""
-    test_settings.litellm_master_key = ""
+    test_settings.groq_api_key = ""
+    test_settings.cerebras_api_key = ""
+    test_settings.gemini_api_key = ""
+    test_settings.openrouter_api_key = ""
 
     try:
         resp = await app_client.post(
@@ -119,9 +130,12 @@ async def test_query_degraded_when_litellm_missing(app_client, test_settings):
         payload = resp.json()
         assert payload["error"]["type"] == "service_degraded"
     finally:
-        test_settings.litellm_base_url = old_base
-        test_settings.litellm_virtual_key = old_key
-        test_settings.litellm_master_key = old_master
+        (
+            test_settings.groq_api_key,
+            test_settings.cerebras_api_key,
+            test_settings.gemini_api_key,
+            test_settings.openrouter_api_key,
+        ) = old_keys
 
 
 @pytest.mark.asyncio

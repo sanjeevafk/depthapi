@@ -245,3 +245,21 @@ async def test_generate_stream_explanation_technical_partial_stream_failure_is_g
     assert chunks == ["partial"]
     assert telemetry_sink.get("stream_completed") is False
     assert telemetry_sink.get("partial_failure") is True
+
+
+def test_weighted_routing_prefers_technical_model_for_complex_queries():
+    ranked = inference_module.route_model_aliases(
+        "Compare distributed consensus tradeoffs and derive correctness guarantees.",
+        mode="technical",
+        level="eli15",
+    )
+    assert ranked[0] in {"technical-primary", "learning-detailed"}
+
+
+def test_weighted_routing_prefers_fast_model_for_latency_queries():
+    ranked = inference_module.route_model_aliases(
+        "Give me a quick brief summary of DNS.",
+        mode="learning",
+        level="eli5",
+    )
+    assert ranked[0] == "default-fast"

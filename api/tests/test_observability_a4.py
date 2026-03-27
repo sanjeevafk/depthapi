@@ -82,7 +82,7 @@ async def test_inference_logs_structured_observability_fields(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_litellm_client_receives_request_id_and_stream_telemetry(monkeypatch):
+async def test_native_llm_client_receives_request_id_and_stream_telemetry(monkeypatch):
     class Chunk:
         def __init__(self, content: str | None):
             self.model = "openai/gpt-4o-mini"
@@ -134,10 +134,21 @@ async def test_litellm_client_receives_request_id_and_stream_telemetry(monkeypat
     fake_completions = FakeCompletions()
     fake_client = SimpleNamespace(chat=SimpleNamespace(completions=fake_completions))
 
-    async def fake_get_llm_client():
+    class DummyProviderState:
+        async def should_attempt(self, _provider):
+            return True
+
+        async def mark_success(self, _provider):
+            return None
+
+        async def mark_failure(self, _provider):
+            return None
+
+    async def fake_get_provider_client(_provider):
         return fake_client
 
-    monkeypatch.setattr(llm_client_module, "get_llm_client", fake_get_llm_client)
+    monkeypatch.setattr(llm_client_module, "_provider_state_manager", DummyProviderState())
+    monkeypatch.setattr(llm_client_module, "_get_provider_client", fake_get_provider_client)
     monkeypatch.setattr(llm_client_module.sentry_sdk, "start_span", fake_start_span)
     monkeypatch.setattr(llm_client_module.sentry_sdk, "get_traceparent", lambda: "traceparent-value")
     monkeypatch.setattr(llm_client_module.sentry_sdk, "get_baggage", lambda: "baggage-value")
