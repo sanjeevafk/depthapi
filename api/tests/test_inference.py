@@ -1,5 +1,7 @@
 import httpx
 import pytest
+from openai import APIStatusError
+from types import SimpleNamespace
 
 import services.inference as inference_module
 import services.llm_client as llm_client
@@ -334,3 +336,63 @@ def test_is_transient_http_error_retries_on_5xx_only():
 
     assert inference_module.is_transient_http_error(exc_503) is True
     assert inference_module.is_transient_http_error(exc_400) is False
+
+
+def test_is_transient_http_error_retries_on_openai_retryable_statuses():
+    request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    response_429 = httpx.Response(429, request=request)
+    response_400 = httpx.Response(400, request=request)
+    exc_429 = APIStatusError("rate limited", response=response_429, body={"error": "rate_limited"})
+    exc_400 = APIStatusError("bad request", response=response_400, body={"error": "bad_request"})
+
+    assert inference_module.is_transient_http_error(exc_429) is True
+    assert inference_module.is_transient_http_error(exc_400) is False
+
+
+@pytest.mark.asyncio
+async def test_call_model_retries_on_openai_retryable_status(monkeypatch):
+    request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    retryable_exc = APIStatusError(
+        "rate limited",
+        response=httpx.Response(429, request=request),
+        body={"error": "rate_limited"},
+    )
+    attempts = {"count": 0}
+
+    async def flaky_completion(*_args, **_kwargs):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise retryable_exc
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
+            usage=None,
+            model="default-fast",
+        )
+
+    monkeypatch.setattr(inference_module, "create_chat_completion", flaky_completion)
+
+    result = await inference_module.call_model("default-fast", "hello", max_tokens=16)
+    assert result == "ok"
+    assert attempts["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_call_model_does_not_retry_on_openai_non_retryable_4xx(monkeypatch):
+    request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    non_retryable_exc = APIStatusError(
+        "bad request",
+        response=httpx.Response(400, request=request),
+        body={"error": "bad_request"},
+    )
+    attempts = {"count": 0}
+
+    async def always_bad_request(*_args, **_kwargs):
+        attempts["count"] += 1
+        raise non_retryable_exc
+
+    monkeypatch.setattr(inference_module, "create_chat_completion", always_bad_request)
+
+    with pytest.raises(APIStatusError):
+        await inference_module.call_model("default-fast", "hello", max_tokens=16)
+
+    assert attempts["count"] == 1
