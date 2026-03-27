@@ -7,6 +7,7 @@ import time
 from typing import TypedDict
 import httpx
 import structlog
+from openai import APIConnectionError, APIStatusError, APITimeoutError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from config import get_settings
 from prompts import (
@@ -554,8 +555,11 @@ def _extract_estimated_cost(result, usage: dict[str, int] | None) -> float | Non
 
 
 def is_transient_http_error(exc: BaseException) -> bool:
-    if isinstance(exc, (httpx.ConnectError, httpx.TimeoutException)):
+    if isinstance(exc, (httpx.ConnectError, httpx.TimeoutException, APIConnectionError, APITimeoutError)):
         return True
+    if isinstance(exc, APIStatusError):
+        status_code = int(getattr(exc, "status_code", 0) or 0)
+        return status_code in {408, 409, 425, 429, 500, 502, 503, 504}
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code >= 500
     return False
