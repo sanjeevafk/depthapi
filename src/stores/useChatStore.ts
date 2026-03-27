@@ -639,7 +639,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ...msg,
           isStreaming: false,
           isRegenerating: false,
-          error: "Canceled",
+          error: "Request canceled.",
         }));
         return;
       }
@@ -647,13 +647,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const apiError = error as ApiError;
       const errorDetail = apiError.detail;
       const retryAllowed = errorDetail?.retry_allowed !== false;
-      let errorMessage = getErrorMessage(error, "Failed to send message");
+      let errorMessage = getErrorMessage(
+        error,
+        "Request failed. Please try again.",
+      );
       if (errorDetail?.type === "quota_exceeded") {
-        errorMessage = "Daily quota exceeded. Please try again after your quota resets.";
+        errorMessage =
+          "Rate limited for today. Please try again after your quota resets.";
       }
-      if (/timed out/i.test(errorMessage)) errorMessage = "Streaming timed out. Retry.";
+      if (/timed out/i.test(errorMessage)) {
+        errorMessage = "The response timed out. Please retry.";
+      }
       if (/duplicate request already in progress/i.test(errorMessage)) {
-        errorMessage = "Retry will send a new request.";
+        errorMessage = "A similar request is still running. Retry to send a new request.";
       }
 
       captureFrontendError(

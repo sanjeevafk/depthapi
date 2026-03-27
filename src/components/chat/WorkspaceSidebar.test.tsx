@@ -97,13 +97,13 @@ describe("WorkspaceSidebar", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: /Learn\s+Quick\s+Learning/i }),
+      screen.getByRole("button", { name: /Learn\s+Adaptive\s+explanations/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Socratic\s+Guided\s+Thinking/i }),
+      screen.getByRole("button", { name: /Socratic\s+Guided\s+questions/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Technical\s+Deep\s+Analysis/i }),
+      screen.getByRole("button", { name: /Technical\s+Structured\s+deep\s+dives/i }),
     ).toBeInTheDocument();
   });
 

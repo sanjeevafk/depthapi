@@ -136,8 +136,8 @@ export default function ChatPage(): JSX.Element {
         if (!backendChatEnabled) {
           const message =
             health.key_valid === false
-              ? "Chat is temporarily unavailable because provider credentials are invalid."
-              : "Chat is temporarily unavailable because provider routing is not configured.";
+              ? "Authentication failed for one or more providers. Please check credentials and try again."
+              : "Chat is temporarily unavailable while provider configuration is being updated.";
           setHealthMessage(message);
           return;
         }
@@ -147,7 +147,7 @@ export default function ChatPage(): JSX.Element {
         if (disposed) return;
         setChatEnabled(false);
         setHealthMessage(
-          "Chat is temporarily unavailable while health checks are recovering.",
+          "Chat is temporarily unavailable right now. Please try again in a moment.",
         );
       }
     };
@@ -261,7 +261,7 @@ export default function ChatPage(): JSX.Element {
                 disabledReason={
                   chatEnabled
                     ? undefined
-                    : "Chat is disabled while provider configuration is degraded."
+                    : "Responses are paused while provider health recovers."
                 }
                 onPromptSelect={(prompt) => void handlePromptSelect(prompt)}
               />
@@ -273,7 +273,7 @@ export default function ChatPage(): JSX.Element {
             depthLevel={depthLevel}
             onDepthChange={setDepthLevel}
             disabled={!chatEnabled}
-            disabledReason="Chat is disabled while provider configuration is degraded."
+            disabledReason="Responses are paused while provider health recovers."
           />
         </div>
       </div>

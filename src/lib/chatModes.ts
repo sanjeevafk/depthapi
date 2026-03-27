@@ -69,10 +69,10 @@ export const CHAT_MODE_DESCRIPTIONS: Record<ChatMode, string> = {
   eli12: "Middle-school friendly depth.",
   eli15: "High-school level clarity.",
   meme: "Punchy, funny analogies.",
-  learning: "General learning with judged ensemble answers.",
+  learning: "General learning with adaptive provider routing and web freshness.",
   technical:
-    "Technical research with gemini-2.5-pro and deepseek-ai/DeepSeek-R1 fallback.",
-  socratic: "Guided question flow.",
+    "Technical explanations with search-aware context and structured clarity.",
+  socratic: "Guided, question-first learning to build understanding step by step.",
 };
 
 export const CHAT_MODE_ACCENTS: Record<ChatMode, string> = {
