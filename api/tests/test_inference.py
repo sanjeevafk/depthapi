@@ -444,7 +444,11 @@ def test_weighted_routing_prefers_technical_model_for_complex_queries():
         mode="technical",
         level="eli15",
     )
-    assert ranked[0] in {"technical-primary", "learning-detailed"}
+    assert ranked[0] in {
+        "technical-gemini-pro",
+        "technical-openrouter-free",
+        "technical-cerebras-glm",
+    }
 
 
 def test_weighted_routing_prefers_fast_model_for_latency_queries():
@@ -453,7 +457,7 @@ def test_weighted_routing_prefers_fast_model_for_latency_queries():
         mode="learning",
         level="eli5",
     )
-    assert ranked[0] == "default-fast"
+    assert ranked[0] in {"learn-groq-llama8b", "learn-gemini-flash"}
 
 
 def test_is_transient_http_error_retries_on_connect_and_timeout():

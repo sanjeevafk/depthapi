@@ -55,23 +55,18 @@ KnowBear monorepo
 
 ## Model Routing (Native Providers)
 
-All model calls go through `api/services/llm_client.py` using native `AsyncOpenAI` clients and provider fallback.
+All model calls go through `api/services/llm_client.py` using native `AsyncOpenAI` clients against:
 
-| Alias | Provider model | Purpose |
-|------|----------------|---------|
-| `default-fast` | `groq/llama-3.1-8b-instant` | Learning mode for ELI5/ELI10/ELI12 and default fast responses |
-| `learning-detailed` | `groq/llama-3.3-70b-versatile` | Learning mode for ELI15 and Meme |
-| `learning-fallback-simple` | `groq/openai/gpt-oss-20b` | Fallback for `default-fast` |
-| `learning-fallback-detailed` | `groq/openai/gpt-oss-120b` | Fallback for `learning-detailed` |
-| `technical-primary` | `gemini/gemini-2.5-pro` | Technical mode primary |
-| `technical-fallback` | `openrouter/deepseek/deepseek-chat-v3.1` | Technical mode fallback |
-| `socratic` | `groq/openai/gpt-oss-120b` | Socratic mode |
+- Groq (`llama-3.1-8b-instant`)
+- Gemini (`gemini-2.5-flash`, `gemini-2.5-pro`)
+- Cerebras (`zai-glm-4.7`)
+- OpenRouter (`openrouter/free`) as optional fallback
 
-Fallbacks are configured in provider routing settings:
+Primary app-level MoE aliases are defined in `api/services/inference.py` and mapped in `api/services/llm_client.py`:
 
-- `technical-primary` → `technical-fallback` → `default-fast`
-- `default-fast` → `learning-fallback-simple`
-- `learning-detailed` → `learning-fallback-detailed`
+- Learn: `learn-gemini-flash`, `learn-groq-llama8b`, `learn-openrouter-free`
+- Technical: `technical-openrouter-free`, `technical-groq-llama8b`, `technical-gemini-pro`, `technical-cerebras-glm`
+- Socratic: `socratic-openrouter-free`, `socratic-cerebras-glm`, `socratic-gemini-pro`
 
 ## API Endpoints (public)
 
@@ -156,7 +151,6 @@ npm run api:install
 cp .env.example .env
 
 # Required environment variables:
-# OPENAI_API_KEY=...
 # GROQ_API_KEY=...
 # GEMINI_API_KEY=...
 # OPENROUTER_API_KEY=...

@@ -211,6 +211,7 @@ async def query_topic(
             regenerate=req.regenerate,
             request_id=request_id,
             user_id=user_id_raw,
+            is_pro=is_verified_pro,
             telemetry_sink=level_telemetry[level],
         )
         for level in missing_levels
@@ -543,6 +544,7 @@ async def query_topic_stream(
                 regenerate=req.regenerate,
                 request_id=request_id,
                 user_id=user_id_raw,
+                is_pro=is_verified_pro,
                 telemetry_sink=telemetry_sink,
             )
             stream_iter = _stream_chunks(stream)
@@ -592,6 +594,7 @@ async def query_topic_stream(
                             regenerate=req.regenerate,
                             request_id=request_id,
                             user_id=user_id_raw,
+                            is_pro=is_verified_pro,
                             telemetry_sink=telemetry_sink,
                         ),
                         timeout=fallback_timeout_seconds,
@@ -661,6 +664,7 @@ async def query_topic_stream(
                             regenerate=req.regenerate,
                             request_id=request_id,
                             user_id=user_id_raw,
+                            is_pro=is_verified_pro,
                             telemetry_sink=telemetry_sink,
                         ),
                         timeout=fallback_timeout_seconds,
