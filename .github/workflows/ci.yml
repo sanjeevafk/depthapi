@@ -47,6 +47,21 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Backend Log Hygiene Guards
+        run: |
+          if rg -n --glob '*.py' --glob '!api/tests/**' 'print\s*\(' api; then
+            echo "Backend print() usage is not allowed."
+            exit 1
+          fi
+          if rg -n --pcre2 --glob '*.py' --glob '!api/tests/**' 'logger\.(?:debug|info|warning|error|critical)\([^\n]*\buser_id\s*=' api; then
+            echo "Raw user_id structured logger fields are not allowed. Use user_id_hash."
+            exit 1
+          fi
+          if rg -n -U --pcre2 --glob '*.py' --glob '!api/tests/**' 'logger\.(?:debug|info|warning|error|critical)\([^\n]*\n\s*user_id\s*=' api; then
+            echo "Raw user_id structured logger fields are not allowed. Use user_id_hash."
+            exit 1
+          fi
+
       - name: Backend tests
         run: |
           source .venv/bin/activate

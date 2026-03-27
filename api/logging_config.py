@@ -63,9 +63,8 @@ def _get_user_hash_salt() -> str:
             salt = uuid.uuid4().hex
             os.environ[_USER_HASH_SALT_ENV] = salt
             _user_hash_salt_cache = salt
-            print(
-                f"Warning: {_USER_HASH_SALT_ENV} not set; using ephemeral dev salt",
-                file=sys.stderr,
+            sys.stderr.write(
+                f"Warning: {_USER_HASH_SALT_ENV} not set; using ephemeral dev salt\n"
             )
             return salt
         raise RuntimeError(
