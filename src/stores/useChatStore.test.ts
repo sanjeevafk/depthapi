@@ -55,8 +55,6 @@ const resetStore = () => {
       isPro: false,
       gatedModes: ["technical"],
       upgradeModalOpen: false,
-      regenerationModalOpen: false,
-      regenerationTargetId: null,
       regeneratingMessageId: null,
       streamControllers: {},
     } as never,

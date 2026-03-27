@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Menu } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import MessageList from "../components/chat/MessageList";
-import RegenerationModal from "../components/chat/RegenerationModal";
 import ThemeToggle from "../components/chat/ThemeToggle";
 import WorkspaceInput from "../components/chat/WorkspaceInput";
 import WorkspaceSidebar from "../components/chat/WorkspaceSidebar";
@@ -287,7 +286,6 @@ export default function ChatPage(): JSX.Element {
         onUpgrade={handleUpgrade}
         onUseByok={handleUseByok}
       />
-      <RegenerationModal />
     </div>
   );
 }

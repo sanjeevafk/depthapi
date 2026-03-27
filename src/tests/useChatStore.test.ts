@@ -16,8 +16,6 @@ const resetStore = () => {
       streamControllers: {},
       isLoading: false,
       regeneratingMessageId: null,
-      regenerationModalOpen: false,
-      regenerationTargetId: null,
     },
     true,
   );
