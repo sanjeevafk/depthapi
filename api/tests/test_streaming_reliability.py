@@ -39,6 +39,7 @@ async def test_query_stream_fallback_on_start_timeout(app_client, monkeypatch, t
     assert "event: chunk" in text
     assert "fallback result" in text
     assert "event: done" in text
+    assert text.count("event: done") == 1
 
 
 @pytest.mark.asyncio
@@ -68,6 +69,7 @@ async def test_query_stream_fallback_on_stream_exception(app_client, monkeypatch
     assert "event: chunk" in text
     assert "fallback after stream exception" in text
     assert "event: done" in text
+    assert text.count("event: done") == 1
     assert "event: error" not in text
 
 
@@ -407,6 +409,7 @@ async def test_query_stream_partial_failure_returns_done_without_error(app_clien
         text = resp.text
         assert "partial technical chunk" in text
         assert "event: done" in text
+        assert text.count("event: done") == 1
         assert "event: error" not in text
     finally:
         main_app.app.dependency_overrides.pop(query_module.verify_token_optional, None)
@@ -504,6 +507,35 @@ async def test_messages_partial_failure_returns_done_without_error(app_client, m
         assert "event: error" not in resp.text
     finally:
         main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
+
+
+@pytest.mark.asyncio
+async def test_query_stream_emits_single_done_when_stream_and_fallback_fail(app_client, monkeypatch, test_settings):
+    test_settings.stream_start_timeout_seconds = 0.1
+    test_settings.stream_max_seconds = 2
+    test_settings.stream_heartbeat_seconds = 0.05
+
+    async def crashing_stream(*_args, **_kwargs):
+        raise RuntimeError("stream hard failure")
+        yield "unreachable"
+
+    async def crashing_fallback(*_args, **_kwargs):
+        raise RuntimeError("fallback hard failure")
+
+    monkeypatch.setattr(query_module, "generate_stream_explanation", crashing_stream)
+    monkeypatch.setattr(query_module, "generate_explanation", crashing_fallback)
+    monkeypatch.setattr(query_module, "get_settings", lambda: test_settings)
+
+    resp = await app_client.post(
+        "/api/query/stream",
+        json={"topic": "test", "levels": ["eli5"], "mode": "learning"},
+    )
+
+    assert resp.status_code == 200
+    text = resp.text
+    assert "event: error" in text
+    assert "event: done" in text
+    assert text.count("event: done") == 1
 
 
 @pytest.mark.asyncio
