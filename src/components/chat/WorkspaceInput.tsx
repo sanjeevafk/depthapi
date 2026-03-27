@@ -106,14 +106,19 @@ export default function WorkspaceInput({
 
           <div className="mt-3 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                aria-label="Attach file"
-                disabled
-                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-400 dark:border-white/10 dark:bg-dark-700 dark:text-slate-500"
-              >
-                <Paperclip className="h-4 w-4" />
-              </button>
+              <div className="group relative">
+                <button
+                  type="button"
+                  aria-label="Attach file"
+                  disabled
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-400 dark:border-white/10 dark:bg-dark-700 dark:text-slate-500"
+                >
+                  <Paperclip className="h-4 w-4" />
+                </button>
+                <span className="pointer-events-none absolute -top-10 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[11px] text-white opacity-0 shadow-sm transition-opacity duration-150 group-hover:opacity-100 dark:bg-slate-100 dark:text-slate-900">
+                  Upload options coming soon
+                </span>
+              </div>
 
               {workspace === "learn" && (
                 <DepthDropdown value={depthLevel} onChange={onDepthChange} />
