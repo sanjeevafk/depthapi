@@ -90,14 +90,38 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-allowed_origins = os.getenv(
-    "ALLOWED_ORIGINS",
-    "*" 
-).split(",")
+DEFAULT_ALLOWED_ORIGINS = (
+    "https://knowbear.sanjeevkumar.me",
+    "https://knowbear.vercel.app",
+)
+
+
+def resolve_allowed_origins(raw_allowed_origins: str | None) -> list[str]:
+    """Build a secure allowlist for credentialed CORS."""
+    if raw_allowed_origins is None or not raw_allowed_origins.strip():
+        return list(DEFAULT_ALLOWED_ORIGINS)
+
+    parsed_origins = [origin.strip() for origin in raw_allowed_origins.split(",") if origin.strip()]
+    if "*" in parsed_origins:
+        logger.warning(
+            "cors_wildcard_origin_sanitized",
+            configured_origins=raw_allowed_origins,
+            allow_credentials=True,
+        )
+        parsed_origins = [origin for origin in parsed_origins if origin != "*"]
+
+    if not parsed_origins:
+        logger.warning("cors_no_valid_origins_falling_back_to_defaults")
+        return list(DEFAULT_ALLOWED_ORIGINS)
+
+    return parsed_origins
+
+
+allowed_origins = resolve_allowed_origins(os.getenv("ALLOWED_ORIGINS"))
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origin.strip() for origin in allowed_origins],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["content-type", "authorization", "x-request-id"],
