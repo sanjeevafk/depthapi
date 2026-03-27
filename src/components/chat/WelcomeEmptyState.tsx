@@ -1,8 +1,9 @@
+import { useMemo } from "react";
 import type { Workspace } from "../../lib/chatStoreUtils";
 import {
   WORKSPACE_CONTENT,
   WORKSPACE_ICONS,
-  WORKSPACE_PROMPTS,
+  getCachedWorkspacePrompts,
 } from "./welcomeEmptyStateConstants";
 
 interface WelcomeEmptyStateProps {
@@ -22,7 +23,10 @@ export default function WelcomeEmptyState({
 }: WelcomeEmptyStateProps): JSX.Element {
   const content = WORKSPACE_CONTENT[workspace];
   const Icon = WORKSPACE_ICONS[workspace];
-  const prompts = WORKSPACE_PROMPTS[workspace];
+  const prompts = useMemo(
+    () => getCachedWorkspacePrompts()[workspace],
+    [workspace],
+  );
 
   return (
     <section

@@ -16,6 +16,7 @@ import { useConversations } from "../hooks/useConversations";
 import { useMessages } from "../hooks/useMessages";
 import { useChatStore } from "../stores/useChatStore";
 import { useConversationStore } from "../stores/useConversationStore";
+import { useMessageStore } from "../stores/useMessageStore";
 import type { Workspace } from "../lib/chatStoreUtils";
 
 const WORKSPACE_LABELS: Record<Workspace, string> = {
@@ -36,6 +37,8 @@ export default function ChatPage(): JSX.Element {
   const currentConversationId = useConversationStore(
     (state) => state.currentConversationId,
   );
+  const isDraftThread = useConversationStore((state) => state.isDraftThread);
+  const messageCount = useMessageStore((state) => state.messageIds.length);
   const selectConversation = useChatStore((state) => state.selectConversation);
   const setWorkspace = useChatStore((state) => state.setWorkspace);
   const setDepthLevel = useChatStore((state) => state.setDepthLevel);
@@ -168,12 +171,11 @@ export default function ChatPage(): JSX.Element {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-100 px-6 text-slate-900 dark:bg-dark-900 dark:text-white">
         <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-xl dark:border-white/10 dark:bg-dark-800">
-          <h1 className="mb-3 text-2xl font-semibold">
-            Sign in to start chatting
-          </h1>
+          <p className="mb-3 text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+            Welcome back
+          </p>
           <p className="mb-6 text-sm text-slate-500 dark:text-slate-400">
-            Your conversations are stored securely in Supabase and synced across
-            sessions.
+            Sign in to keep your conversations saved and in sync.
           </p>
           <button
             onClick={() => void signInWithGoogle()}
@@ -187,7 +189,7 @@ export default function ChatPage(): JSX.Element {
   }
 
   const workspaceLabel = WORKSPACE_LABELS[workspace];
-  const hasConversations = conversations.length > 0;
+  const showPinnedPrompts = isDraftThread || messageCount === 0;
   const userName =
     user.user_metadata?.full_name || user.email?.split("@")[0] || "User";
   const avatarUrl =
@@ -208,7 +210,7 @@ export default function ChatPage(): JSX.Element {
           onClose={() => setIsSidebarOpen(false)}
           onToggleCollapse={() => setIsSidebarCollapsed((prev) => !prev)}
           onNewThread={startNewThread}
-          onGoHome={() => navigate("/")}
+          onGoHome={() => navigate("/?stay=1")}
           onWorkspaceChange={setWorkspace}
           onSelectConversation={(id) => void selectConversation(id)}
           onDeleteConversation={(id) => void handleDeleteConversation(id)}
@@ -252,9 +254,7 @@ export default function ChatPage(): JSX.Element {
                 {healthMessage}
               </div>
             )}
-            {hasConversations ? (
-              <MessageList />
-            ) : (
+            {showPinnedPrompts ? (
               <WelcomeEmptyState
                 workspace={workspace}
                 userName={userName}
@@ -266,6 +266,8 @@ export default function ChatPage(): JSX.Element {
                 }
                 onPromptSelect={(prompt) => void handlePromptSelect(prompt)}
               />
+            ) : (
+              <MessageList />
             )}
           </main>
 
