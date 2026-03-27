@@ -31,7 +31,7 @@ async def test_create_chat_completion_cascades_through_primary_providers(monkeyp
 
         async def create(self, **kwargs):
             attempts.append(self.provider)
-            if self.provider in {"groq", "cerebras"}:
+            if self.provider in {"groq"}:
                 raise RuntimeError(f"{self.provider} unavailable")
             return SimpleNamespace(
                 model=kwargs.get("model", "gemini-2.5-flash"),
@@ -60,7 +60,7 @@ async def test_create_chat_completion_cascades_through_primary_providers(monkeyp
     )
 
     assert response.choices[0].message.content == "ok"
-    assert attempts == ["groq", "cerebras", "gemini"]
+    assert attempts == ["groq", "gemini"]
 
 
 @pytest.mark.asyncio

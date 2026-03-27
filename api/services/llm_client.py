@@ -44,9 +44,9 @@ CEREBRAS_DAILY_TOKEN_BUDGET_DEFAULT = 100000
 MODEL_FALLBACK_MAP: dict[str, dict[ProviderName, str]] = {
     "default-fast": {
         "groq": "llama-3.1-8b-instant",
-        "cerebras": "zai-glm-4.7",
         "gemini": "gemini-2.5-flash",
         "openrouter": "openrouter/free",
+        "cerebras": "zai-glm-4.7",
     },
     "learning-detailed": {
         "gemini": "gemini-2.5-pro",
@@ -75,14 +75,19 @@ MODEL_FALLBACK_MAP: dict[str, dict[ProviderName, str]] = {
         "openrouter": "openrouter/free",
     },
     "learn-openrouter-free": {
-        "openrouter": "openrouter/free",
         "gemini": "gemini-2.5-flash",
         "groq": "llama-3.1-8b-instant",
+        "openrouter": "openrouter/free",
+    },
+    "technical-gemini-flash": {
+        "gemini": "gemini-2.5-flash",
+        "groq": "llama-3.1-8b-instant",
+        "openrouter": "openrouter/free",
     },
     "technical-openrouter-free": {
-        "openrouter": "openrouter/free",
-        "groq": "llama-3.1-8b-instant",
         "gemini": "gemini-2.5-pro",
+        "groq": "llama-3.1-8b-instant",
+        "openrouter": "openrouter/free",
     },
     "technical-groq-llama8b": {
         "groq": "llama-3.1-8b-instant",
@@ -91,8 +96,8 @@ MODEL_FALLBACK_MAP: dict[str, dict[ProviderName, str]] = {
     },
     "technical-gemini-pro": {
         "gemini": "gemini-2.5-pro",
-        "cerebras": "zai-glm-4.7",
         "groq": "llama-3.1-8b-instant",
+        "openrouter": "openrouter/free",
     },
     "technical-cerebras-glm": {
         "cerebras": "zai-glm-4.7",
@@ -100,24 +105,30 @@ MODEL_FALLBACK_MAP: dict[str, dict[ProviderName, str]] = {
         "groq": "llama-3.1-8b-instant",
     },
     "socratic-openrouter-free": {
-        "openrouter": "openrouter/free",
         "gemini": "gemini-2.5-pro",
         "groq": "llama-3.1-8b-instant",
+        "openrouter": "openrouter/free",
+    },
+    "socratic-groq-llama8b": {
+        "groq": "llama-3.1-8b-instant",
+        "gemini": "gemini-2.5-pro",
+        "openrouter": "openrouter/free",
     },
     "socratic-cerebras-glm": {
         "cerebras": "zai-glm-4.7",
         "gemini": "gemini-2.5-pro",
+        "groq": "llama-3.1-8b-instant",
         "openrouter": "openrouter/free",
     },
     "socratic-gemini-pro": {
         "gemini": "gemini-2.5-pro",
-        "openrouter": "openrouter/free",
         "groq": "llama-3.1-8b-instant",
+        "openrouter": "openrouter/free",
     },
     "socratic": {
-        "openrouter": "openrouter/free",
         "gemini": "gemini-2.5-pro",
         "groq": "llama-3.1-8b-instant",
+        "openrouter": "openrouter/free",
     },
 }
 
@@ -556,16 +567,24 @@ async def create_chat_completion(model: str, messages: list[ChatCompletionMessag
 
     last_error: Exception | None = None
     alias = model or "default-fast"
+    eligible_candidates: list[ProviderTarget] = []
 
     for candidate in candidates:
         provider = candidate.provider
-        provider_model = candidate.model
 
         if not await _provider_state_manager.should_attempt(provider):
             logger.warning("provider_temporarily_blocked", provider=provider, model_alias=alias)
             continue
         if not await _provider_within_runtime_limits(provider):
             continue
+        eligible_candidates.append(candidate)
+
+    if not eligible_candidates:
+        raise LLMUnavailable("No healthy providers are currently available.")
+
+    for candidate in eligible_candidates:
+        provider = candidate.provider
+        provider_model = candidate.model
 
         try:
             client = await _get_provider_client(provider)
@@ -655,16 +674,24 @@ async def stream_chat_completion(
 
     alias = model or "default-fast"
     last_error: Exception | None = None
+    eligible_candidates: list[ProviderTarget] = []
 
     for candidate in candidates:
         provider = candidate.provider
-        provider_model = candidate.model
 
         if not await _provider_state_manager.should_attempt(provider):
             logger.warning("provider_temporarily_blocked", provider=provider, model_alias=alias)
             continue
         if not await _provider_within_runtime_limits(provider):
             continue
+        eligible_candidates.append(candidate)
+
+    if not eligible_candidates:
+        raise LLMUnavailable("No healthy providers are currently available.")
+
+    for candidate in eligible_candidates:
+        provider = candidate.provider
+        provider_model = candidate.model
 
         try:
             client = await _get_provider_client(provider)
