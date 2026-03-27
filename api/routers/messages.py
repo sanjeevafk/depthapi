@@ -158,6 +158,13 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     stream_max_seconds = max(int(getattr(config_settings, "stream_max_seconds", 25)), 1)
     if not is_prod:
         stream_max_seconds = max(stream_max_seconds, 60)
+    function_duration_cap: int | None = None
+    if is_prod:
+        function_duration_cap = max(
+            5,
+            int(getattr(config_settings, "vercel_function_max_duration_seconds", 25)) - 3,
+        )
+        stream_max_seconds = min(stream_max_seconds, function_duration_cap)
     fallback_budget_seconds = max(
         1.0,
         min(float(getattr(config_settings, "stream_fallback_budget_seconds", 6)), float(stream_max_seconds)),
@@ -267,6 +274,8 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             stream_max_seconds,
             int(getattr(config_settings, "technical_stream_max_seconds", 45)),
         )
+        if function_duration_cap is not None:
+            stream_max_seconds = min(stream_max_seconds, function_duration_cap)
         technical_start_timeout = float(
             getattr(config_settings, "technical_stream_start_timeout_seconds", max(raw_start_timeout, 6.0))
         )
