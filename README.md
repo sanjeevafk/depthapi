@@ -16,6 +16,8 @@ KnowBear is an AI-powered product that delivers explanations at exactly the righ
 - Dedicated modes: learning, technical, socratic
 - Technical mode v2 with intent detection (explain, compare, brainstorm), depth control, and optional diagram guidance
 - Stable alias-based model routing through native provider fallback chains
+- Production chat sidebar with full thread history, New Thread reset, Go to Home action, and auth-aware sign in/out controls
+- Fresh-thread guarantees on reload and thread switch (stale-message race guarded with request-tokened loads)
 - SSE streaming with heartbeat, start timeout, and graceful cutoffs
 - Fast repeat queries via Redis caching
 - Export formats: .txt, .md
@@ -65,8 +67,8 @@ All model calls go through `api/services/llm_client.py` using native `AsyncOpenA
 Primary app-level MoE aliases are defined in `api/services/inference.py` and mapped in `api/services/llm_client.py`:
 
 - Learn: `learn-gemini-flash`, `learn-groq-llama8b`, `learn-openrouter-free`
-- Technical: `technical-openrouter-free`, `technical-groq-llama8b`, `technical-gemini-pro`, `technical-cerebras-glm`
-- Socratic: `socratic-openrouter-free`, `socratic-cerebras-glm`, `socratic-gemini-pro`
+- Technical: `technical-gemini-flash`, `technical-gemini-pro`, `technical-groq-llama8b`, `technical-openrouter-free`, `technical-cerebras-glm`
+- Socratic: `socratic-gemini-pro`, `socratic-groq-llama8b`, `socratic-openrouter-free`, `socratic-cerebras-glm`
 
 ## API Endpoints (public)
 
@@ -84,6 +86,19 @@ Primary app-level MoE aliases are defined in `api/services/inference.py` and map
 - Stream duration is capped by `STREAM_MAX_SECONDS` (default 25s; longer in non-production).
 - Stream start timeout is mode-sensitive (technical mode uses the maximum window; other modes use a tighter cap).
 - If streaming cannot start in time, the backend falls back to non-streamed output.
+
+## Frontend UX (Task 14)
+
+- Sidebar now shows complete conversation history for the authenticated user (no 20-thread cap).
+- Sidebar includes:
+  - `New Thread` (immediate draft reset)
+  - `Go to Home` (landing page redirect)
+  - auth-aware `Sign in` / `Sign out` action in the account rail
+- Thread loading behavior is now deterministic and race-safe:
+  - selecting a thread clears visible messages immediately before loading the selected thread
+  - out-of-order async loads are ignored using a per-request message-load token
+  - reload/thread-switch paths always show the correct backend thread without stale bleed-through
+- Sidebar collapse preference is hydrated after mount to keep client state and rendered UI in sync.
 
 ## Degraded Mode (Provider Routing)
 
@@ -128,7 +143,7 @@ Primary app-level MoE aliases are defined in `api/services/inference.py` and map
 |------|--------------|
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS, Framer Motion, Zustand, React Query |
 | Backend | FastAPI, Python 3.11+, Pydantic v2, Structlog, Upstash Redis REST |
-| AI Inference | Native AsyncOpenAI clients, OpenAI, Groq, Gemini, OpenRouter |
+| AI Inference | Native AsyncOpenAI clients, Groq, Gemini, Cerebras, OpenRouter |
 | Auth | Supabase Auth (JWT + OAuth) |
 | Cache | Redis (Upstash) |
 | Deployment | Vercel (frontend + serverless backend), Render/Railway (optional) |

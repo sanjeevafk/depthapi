@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConversationStore } from "../stores/useConversationStore";
 import { useMessageStore } from "../stores/useMessageStore";
+import { supabase } from "../lib/supabase";
 import type { Message } from "../types/chat";
 
 type MockBuilder = {
@@ -157,6 +158,91 @@ describe("useChatStore", () => {
     expect(state.conversations).toEqual([]);
     expect(state.currentConversationId).toBeNull();
     expect(state.isDraftThread).toBe(true);
+  });
+
+  it("keeps the newest selected thread messages when loads resolve out of order", async () => {
+    useConversationStore.setState({
+      conversations: [
+        {
+          id: "conv-a",
+          title: "A",
+          mode: "learning",
+          settings: { mode: "learning" },
+          created_at: "2026-01-01T00:00:00.000Z",
+          updated_at: "2026-01-02T00:00:00.000Z",
+        },
+        {
+          id: "conv-b",
+          title: "B",
+          mode: "technical",
+          settings: { mode: "technical" },
+          created_at: "2026-01-01T00:00:00.000Z",
+          updated_at: "2026-01-03T00:00:00.000Z",
+        },
+      ],
+      currentConversationId: null,
+    });
+
+    const fromSpy = vi.spyOn(supabase, "from").mockImplementation((table) => {
+      if (table !== "messages") {
+        return createBuilder() as never;
+      }
+
+      let selectedConversationId = "";
+      const chain = {
+        select: vi.fn(() => chain),
+        eq: vi.fn((_column: string, value: string) => {
+          selectedConversationId = value;
+          return chain;
+        }),
+        order: vi.fn(async () => {
+          if (selectedConversationId === "conv-a") {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            return {
+              data: [
+                {
+                  id: "msg-a",
+                  role: "assistant",
+                  content: "old conversation",
+                  created_at: "2026-01-01T00:00:00.000Z",
+                },
+              ],
+              error: null,
+            };
+          }
+          return {
+            data: [
+              {
+                id: "msg-b",
+                role: "assistant",
+                content: "current conversation",
+                created_at: "2026-01-01T00:00:00.000Z",
+              },
+            ],
+            error: null,
+          };
+        }),
+      };
+      return chain as never;
+    });
+
+    const first = useConversationStore
+      .getState()
+      .selectConversation("conv-a", { forceReload: true });
+    const second = useConversationStore
+      .getState()
+      .selectConversation("conv-b", { forceReload: true });
+
+    await Promise.all([first, second]);
+
+    const state = useChatStore.getState();
+    expect(state.currentConversationId).toBe("conv-b");
+    expect(state.messageIds).toHaveLength(1);
+    expect(state.messagesById[state.messageIds[0]]?.content).toBe(
+      "current conversation",
+    );
+
+    fromSpy.mockRestore();
   });
 
   it("regenerates from original prompt and replaces assistant response", async () => {
