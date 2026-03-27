@@ -164,6 +164,7 @@ def process_dodo_webhook_payload(payload: dict[str, Any], supabase: Any) -> Paym
         customer_email = data.get("customer_email")
         if isinstance(customer_email, str) and customer_email.strip():
             user_id = _resolve_user_id_from_email(supabase, customer_email.strip())
+    user_id_hash = anonymize_user_id(user_id)
 
     if should_set_pro is not None:
         if not user_id:
@@ -183,7 +184,7 @@ def process_dodo_webhook_payload(payload: dict[str, Any], supabase: Any) -> Paym
             if not updated_rows:
                 logger.error(
                     "payment_webhook_user_not_found",
-                    user_id=user_id,
+                    user_id_hash=user_id_hash,
                     event_type=event_type,
                 )
                 raise HTTPException(
@@ -193,7 +194,7 @@ def process_dodo_webhook_payload(payload: dict[str, Any], supabase: Any) -> Paym
         except Exception as exc:
             logger.error(
                 "payment_webhook_user_update_failed",
-                user_id=user_id,
+                user_id_hash=user_id_hash,
                 event_type=event_type,
                 error=str(exc),
             )
@@ -206,7 +207,7 @@ def process_dodo_webhook_payload(payload: dict[str, Any], supabase: Any) -> Paym
         if response_error:
             logger.error(
                 "payment_webhook_user_update_error",
-                user_id=user_id,
+                user_id_hash=user_id_hash,
                 event_type=event_type,
                 error=str(response_error),
             )
@@ -237,7 +238,7 @@ async def create_checkout_session(
     """
     user_id = str(auth["user"].id)
     user_id_hash = anonymize_user_id(user_id)
-    logger.info("create_checkout_session_called", user_id=user_id)
+    logger.info("create_checkout_session_called", user_id_hash=user_id_hash)
     capture_telemetry_event("payment_checkout_start", user_id_hash=user_id_hash)
     settings = get_settings()
     if not settings.dodo_payment_link_id:
@@ -258,7 +259,7 @@ async def create_checkout_session(
     
     checkout_url = f"{base_payment_link}?{urllib.parse.urlencode(params)}"
     
-    logger.info("payment_link_generated", user_id=user_id)
+    logger.info("payment_link_generated", user_id_hash=user_id_hash)
     capture_telemetry_event("payment_checkout_session_created", user_id_hash=user_id_hash, plan=request.plan)
     
     return CheckoutResponse(
@@ -358,5 +359,9 @@ async def verify_payment_status(auth = Depends(verify_token)):
             "status": "active" if is_pro else "free"
         }
     except Exception as e:
-        logger.error("payment_status_verification_error", error=str(e), user_id=user_id)
+        logger.error(
+            "payment_status_verification_error",
+            error=str(e),
+            user_id_hash=anonymize_user_id(user_id),
+        )
         raise HTTPException(status_code=500, detail="Failed to verify payment status")

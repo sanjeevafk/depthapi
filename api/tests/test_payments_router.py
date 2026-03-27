@@ -4,6 +4,7 @@ import json
 import auth as auth_module
 import routers.payments as payments_module
 import services.cache as cache_module
+from logging_config import anonymize_user_id
 
 
 def _sign_payload(payload: dict, secret: str) -> str:
@@ -17,11 +18,17 @@ def _sign_payload(payload: dict, secret: str) -> str:
 
 @pytest.mark.asyncio
 async def test_create_checkout_session(app_client, monkeypatch, fake_user, test_settings):
+    logged = []
+
+    def fake_log_info(event, **kwargs):
+        logged.append((event, kwargs))
+
     async def fake_auth():
         return {"user": fake_user}
 
     app_client.app.dependency_overrides[auth_module.verify_token] = fake_auth
     monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
+    monkeypatch.setattr(payments_module.logger, "info", fake_log_info)
 
     resp = await app_client.post(
         "/api/payments/create-checkout",
@@ -32,6 +39,13 @@ async def test_create_checkout_session(app_client, monkeypatch, fake_user, test_
     data = resp.json()
     assert "pay.dodopayments.com" in data["checkout_url"]
     assert data["session_id"].startswith("pl_")
+    expected_hash = anonymize_user_id(fake_user.id)
+    create_event = next(fields for event, fields in logged if event == "create_checkout_session_called")
+    link_event = next(fields for event, fields in logged if event == "payment_link_generated")
+    assert create_event.get("user_id_hash") == expected_hash
+    assert link_event.get("user_id_hash") == expected_hash
+    assert "user_id" not in create_event
+    assert "user_id" not in link_event
 
 
 @pytest.mark.asyncio
