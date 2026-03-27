@@ -15,6 +15,7 @@ import { getHealth } from "../api";
 import { useConversations } from "../hooks/useConversations";
 import { useMessages } from "../hooks/useMessages";
 import { useChatStore } from "../stores/useChatStore";
+import { useConversationStore } from "../stores/useConversationStore";
 import type { Workspace } from "../lib/chatStoreUtils";
 
 const WORKSPACE_LABELS: Record<Workspace, string> = {
@@ -29,10 +30,10 @@ export default function ChatPage(): JSX.Element {
   const navigate = useNavigate();
   const { conversations } = useConversations();
 
-  const workspace = useChatStore((state) => state.workspace);
-  const depthLevel = useChatStore((state) => state.depthLevel);
+  const workspace = useConversationStore((state) => state.workspace);
+  const depthLevel = useConversationStore((state) => state.depthLevel);
   const isSidebarOpen = useChatStore((state) => state.isSidebarOpen);
-  const currentConversationId = useChatStore(
+  const currentConversationId = useConversationStore(
     (state) => state.currentConversationId,
   );
   const selectConversation = useChatStore((state) => state.selectConversation);
