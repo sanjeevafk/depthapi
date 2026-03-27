@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { ArrowRight, Search, Cpu, Layers, CheckCircle2 } from "lucide-react";
 import { LoginButton } from "../components/LoginButton";
 import { LivePreviewCard } from "../components/LivePreviewCard";
@@ -9,12 +10,14 @@ import { useEffect, type ReactNode } from "react";
 export default function LandingPage(): JSX.Element {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
 
   useEffect(() => {
-    if (user) {
+    const stayOnLanding = searchParams.get("stay") === "1";
+    if (user && !stayOnLanding) {
       navigate("/app");
     }
-  }, [user, navigate]);
+  }, [user, navigate, searchParams]);
 
   return (
     <div className="min-h-screen bg-black text-white selection:bg-cyan-500/30">
