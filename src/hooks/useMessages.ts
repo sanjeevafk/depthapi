@@ -42,7 +42,9 @@ export function useMessages(): void {
     }
     if (loadedConversationId.current === currentConversationId) return;
     loadedConversationId.current = currentConversationId;
-    void selectConversation(currentConversationId, { forceReload: true });
+    // Avoid force-reloading here: a hard reload clears optimistic placeholder
+    // messages and can drop live stream updates before they are rendered.
+    void selectConversation(currentConversationId, { forceReload: false });
   }, [currentConversationId, selectConversation]);
 
   useEffect(() => {
