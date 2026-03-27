@@ -77,7 +77,9 @@ export function useMessages(): void {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel).catch(() => {
+        // Ignore realtime teardown races during rapid conversation switches.
+      });
     };
   }, [currentConversationId, addMessage]);
 }

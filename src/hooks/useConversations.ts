@@ -126,7 +126,9 @@ export function useConversations(): UseConversationsResult {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel).catch(() => {
+        // Ignore realtime teardown races during rapid mount/unmount.
+      });
     };
   }, [user, queryClient]);
 
