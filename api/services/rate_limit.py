@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from fastapi import HTTPException
 
 from config import get_settings
-from logging_config import logger
+from logging_config import anonymize_user_id, logger
 from services.cache import get_redis
 
 
@@ -214,7 +214,12 @@ async def enforce_request_controls(
         try:
             quota_result = await check_daily_quota(user_id=str(user_id), estimated_tokens=estimated_tokens)
         except Exception as exc:
-            logger.warning("quota_check_failed", user_id=user_id, fail_open=fail_open, error=str(exc))
+            logger.warning(
+                "quota_check_failed",
+                user_id_hash=anonymize_user_id(str(user_id) if user_id is not None else None),
+                fail_open=fail_open,
+                error=str(exc),
+            )
             quota_result = QuotaResult(allowed=True, consumed=0, limit=0, retry_after=0)
 
         if not quota_result.allowed:
