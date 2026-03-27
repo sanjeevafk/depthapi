@@ -11,6 +11,7 @@ class Settings(BaseSettings):
 
     environment: str = "development"
     log_user_hash_salt: str = ""
+    openai_api_key: SecretStr = SecretStr("")
     groq_api_key: SecretStr = SecretStr("")
     cerebras_api_key: SecretStr = SecretStr("")
     gemini_api_key: SecretStr = SecretStr("")
@@ -75,7 +76,14 @@ class Settings(BaseSettings):
         env_file_encoding = "utf-8"
         extra = "ignore"
 
-    @field_validator("groq_api_key", "cerebras_api_key", "gemini_api_key", "openrouter_api_key", mode="before")
+    @field_validator(
+        "openai_api_key",
+        "groq_api_key",
+        "cerebras_api_key",
+        "gemini_api_key",
+        "openrouter_api_key",
+        mode="before",
+    )
     @classmethod
     def _normalize_provider_key(cls, value: object) -> SecretStr:
         if value is None:

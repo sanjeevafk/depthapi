@@ -1,6 +1,6 @@
 # KnowBear – Layered AI Knowledge Engine
 
-KnowBear is an AI-powered product that delivers explanations at exactly the right depth for any topic, from ELI5 to technical deep dives. It routes requests through a LiteLLM proxy, enforces mode-specific behavior, caches repeat queries, and provides exportable responses in a focused UI.
+KnowBear is an AI-powered product that delivers explanations at exactly the right depth for any topic, from ELI5 to technical deep dives. It routes requests through native `AsyncOpenAI` provider clients, enforces mode-specific behavior, caches repeat queries, and provides exportable responses in a focused UI.
 
 - Live demo: https://knowbear.vercel.app (now-deprecated v1)
 - Deprecated v1 repo: https://github.com/voidcommit-afk/knowbear-v1
@@ -15,7 +15,7 @@ KnowBear is an AI-powered product that delivers explanations at exactly the righ
 - Layered explanation levels: ELI5, ELI10, ELI12, ELI15, Meme
 - Dedicated modes: learning, technical, socratic
 - Technical mode v2 with intent detection (explain, compare, brainstorm), depth control, and optional diagram guidance
-- Stable alias-based model routing through LiteLLM with explicit fallbacks
+- Stable alias-based model routing through native provider fallback chains
 - SSE streaming with heartbeat, start timeout, and graceful cutoffs
 - Fast repeat queries via Redis caching
 - Export formats: .txt, .md
@@ -35,13 +35,12 @@ KnowBear monorepo
 │   │   ├── pinned.py
 │   │   └── health.py
 │   ├── services/
-│   │   ├── inference.py      # LiteLLM alias routing + streaming
+│   │   ├── inference.py      # model alias routing + streaming
 │   │   ├── intent.py         # technical intent/depth/diagram detection
 │   │   ├── cache.py          # Redis abstraction
 │   │   ├── auth.py           # Supabase / JWT verification
 │   │   └── rate_limit.py     # per-user / global limits
 │   └── schemas/              # Pydantic models
-├── infra/litellm/            # LiteLLM proxy config + deployment assets
 ├── src/                      # React + Vite frontend
 │   ├── components/
 │   ├── pages/
@@ -54,9 +53,9 @@ KnowBear monorepo
 └── README.md
 ```
 
-## Model Routing (LiteLLM)
+## Model Routing (Native Providers)
 
-All model calls go through a LiteLLM proxy that exposes stable aliases. The backend only references aliases; provider models are configured in `infra/litellm/config.yaml`.
+All model calls go through `api/services/llm_client.py` using native `AsyncOpenAI` clients and provider fallback.
 
 | Alias | Provider model | Purpose |
 |------|----------------|---------|
@@ -68,7 +67,7 @@ All model calls go through a LiteLLM proxy that exposes stable aliases. The back
 | `technical-fallback` | `openrouter/deepseek/deepseek-chat-v3.1` | Technical mode fallback |
 | `socratic` | `groq/openai/gpt-oss-120b` | Socratic mode |
 
-Fallbacks are configured in LiteLLM router settings:
+Fallbacks are configured in provider routing settings:
 
 - `technical-primary` → `technical-fallback` → `default-fast`
 - `default-fast` → `learning-fallback-simple`
@@ -91,11 +90,11 @@ Fallbacks are configured in LiteLLM router settings:
 - Stream start timeout is mode-sensitive (technical mode uses the maximum window; other modes use a tighter cap).
 - If streaming cannot start in time, the backend falls back to non-streamed output.
 
-## Degraded Mode (LiteLLM)
+## Degraded Mode (Provider Routing)
 
-- On startup, the backend validates LiteLLM config (`LITELLM_BASE_URL` format and API key presence) and logs structured warning/error events.
-- Missing LiteLLM config disables chat endpoints in degraded mode (`503`) while keeping the rest of the app available.
-- Invalid LiteLLM credentials return structured errors (`invalid_api_key`).
+- On startup, the backend validates provider API key config and logs structured warning/error events.
+- Missing provider config disables chat endpoints in degraded mode (`503`) while keeping the rest of the app available.
+- Invalid provider credentials return structured errors (`invalid_api_key`).
 - Frontend polls `/api/health` and shows a banner when chat is unavailable.
 
 `/api/health` response shape:
@@ -103,7 +102,7 @@ Fallbacks are configured in LiteLLM router settings:
 ```json
 {
   "status": "ok|degraded|down",
-  "litellm": { "status": "ok|degraded|down", "latency_ms": 0 },
+  "provider": { "status": "ok|degraded|down", "latency_ms": 0 },
   "rate_limit": { "status": "ok|degraded|down" },
   "db": { "status": "ok|degraded|down" }
 }
@@ -116,7 +115,7 @@ Fallbacks are configured in LiteLLM router settings:
 - Release tagging is supported via `SENTRY_RELEASE` (backend) and `VITE_SENTRY_RELEASE` (frontend).
 - Sampling is enabled by default to reduce noise.
 - PII and secrets are redacted before telemetry is emitted (emails, auth tokens, cookies, headers, and query strings).
-- Distributed tracing headers (`sentry-trace`, `baggage`) are propagated from frontend calls to backend and forwarded to LiteLLM requests.
+- Distributed tracing headers (`sentry-trace`, `baggage`) are propagated from frontend calls to backend and forwarded to provider requests.
 - CI release automation lives in `.github/workflows/sentry-release.yml`.
 - Alert bootstrap script: `scripts/setup_sentry_alerts.sh`.
 
@@ -134,7 +133,7 @@ Fallbacks are configured in LiteLLM router settings:
 |------|--------------|
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS, Framer Motion, Zustand, React Query |
 | Backend | FastAPI, Python 3.11+, Pydantic v2, Structlog, Upstash Redis REST |
-| AI Inference | LiteLLM proxy, Groq, Gemini, OpenRouter |
+| AI Inference | Native AsyncOpenAI clients, OpenAI, Groq, Gemini, OpenRouter |
 | Auth | Supabase Auth (JWT + OAuth) |
 | Cache | Redis (Upstash) |
 | Deployment | Vercel (frontend + serverless backend), Render/Railway (optional) |
@@ -157,8 +156,7 @@ npm run api:install
 cp .env.example .env
 
 # Required environment variables:
-# LITELLM_BASE_URL=http://localhost:4000
-# LITELLM_VIRTUAL_KEY=... (or LITELLM_MASTER_KEY=...)
+# OPENAI_API_KEY=...
 # GROQ_API_KEY=...
 # GEMINI_API_KEY=...
 # OPENROUTER_API_KEY=...
@@ -167,12 +165,6 @@ cp .env.example .env
 # UPSTASH_REDIS_REST_URL=...
 
 npm run api:dev
-```
-
-Optional: run a local LiteLLM proxy (if not pointing at a hosted proxy):
-
-```bash
-litellm --config infra/litellm/config.yaml --port 4000
 ```
 
 Open http://localhost:8000/docs to see the Swagger UI.

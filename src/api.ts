@@ -20,7 +20,7 @@ import { supabase } from "./lib/supabase";
 
 export interface HealthResponse {
   status: "ok" | "degraded" | "down";
-  litellm: { status: "ok" | "degraded" | "down"; latency_ms: number };
+  provider: { status: "ok" | "degraded" | "down"; latency_ms: number };
   rate_limit: { status: "ok" | "degraded" | "down" };
   db: { status: "ok" | "degraded" | "down" };
   chat_enabled?: boolean;
