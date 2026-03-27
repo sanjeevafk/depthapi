@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime
-from typing import List
+from typing import List, Dict, Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
@@ -40,8 +40,9 @@ async def get_history(auth_data: dict = Depends(verify_token)):
             supabase.table("history").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(50).execute
         )
         for item in response.data:
-            normalized_mode = normalize_mode(item.get("mode"))
-            item["mode"] = normalized_mode if normalized_mode in SUPPORTED_CHAT_MODES else DEFAULT_CHAT_MODE
+            item_dict: Dict[str, Any] = item  # type: ignore
+            normalized_mode = normalize_mode(item_dict.get("mode"))
+            item_dict["mode"] = normalized_mode if normalized_mode in SUPPORTED_CHAT_MODES else DEFAULT_CHAT_MODE
         return response.data
 
     except Exception as e:

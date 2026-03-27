@@ -417,13 +417,13 @@ async def health():
 
 
 # Catch-all route for debugging (should be last)
-@app.get("/{path:path}")
-async def catch_all(path: str):
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+async def catch_all(request: Request, path: str):
     return JSONResponse(
         status_code=404,
         content={
             "error": "Not Found",
-            "detail": f"Route '/{path}' does not exist.",
+            "detail": f"Route '{request.method} /{path}' does not exist.",
         },
     )
 
