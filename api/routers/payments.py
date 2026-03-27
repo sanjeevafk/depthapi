@@ -165,7 +165,7 @@ def process_dodo_webhook_payload(payload: dict[str, Any], supabase: Any) -> Paym
         customer_email = data.get("customer_email")
         if isinstance(customer_email, str) and customer_email.strip():
             user_id = _resolve_user_id_from_email(supabase, customer_email.strip())
-    user_id_hash = anonymize_user_id(user_id)
+    user_id_hash = anonymize_user_id(user_id) if user_id else None
 
     if should_set_pro is not None:
         if not user_id:

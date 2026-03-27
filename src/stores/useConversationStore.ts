@@ -133,8 +133,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
     if (
       state.currentConversationId === id &&
-      state.isLoading &&
-      !forceReload
+      !forceReload &&
+      (state.isLoading || useMessageStore.getState().messageIds.length > 0)
     ) {
       return;
     }

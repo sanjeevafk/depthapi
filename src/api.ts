@@ -260,13 +260,13 @@ export async function queryTopicStream(
         try {
           readResult = await Promise.race([readPromise, timeoutPromise]);
         } catch (e) {
+          clearTimeout(timeoutId);
           reader.cancel().catch(() => {});
           throw e;
-        }
-        const { done, value } = readResult;
-        if (timeoutId) {
+        } finally {
           clearTimeout(timeoutId);
         }
+        const { done, value } = readResult;
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
@@ -318,16 +318,19 @@ export async function queryTopicStream(
           buffer.substring(0, 100),
         );
       }
+      // Stream ended without [DONE], still notify completion
+      onDone({});
     } catch (err) {
       if (isAbortError(err)) {
         console.log("Stream aborted by user");
         return;
       }
 
-      const error = normalizeError(err) as ApiError;
-      const retryAllowed = error.detail?.retry_allowed !== false;
+      const error = normalizeError(err);
+      const apiError = err as ApiError;
+      const retryAllowed = apiError.detail?.retry_allowed !== false;
       if (!retryAllowed) {
-        onError(error);
+        onError(apiError);
         return;
       }
 

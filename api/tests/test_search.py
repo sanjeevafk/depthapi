@@ -41,8 +41,6 @@ async def test_search_context_uses_only_configured_provider(monkeypatch):
     async def fake_cache_set(_key, _value, ttl=None):
         return True
 
-    manager = search_module.SearchManager()
-
     async def fail_if_called(_query):
         raise AssertionError("non-configured provider should not be called")
 
@@ -52,6 +50,7 @@ async def test_search_context_uses_only_configured_provider(monkeypatch):
     monkeypatch.setattr(search_module.config_module, "get_settings", lambda: settings)
     monkeypatch.setattr(search_module, "cache_get", fake_cache_get)
     monkeypatch.setattr(search_module, "cache_set", fake_cache_set)
+    manager = search_module.SearchManager()
     monkeypatch.setattr(manager, "_search_tavily", fail_if_called)
     monkeypatch.setattr(manager, "_search_exa", fail_if_called)
     monkeypatch.setattr(manager, "_search_serper", serper_ok)
