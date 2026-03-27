@@ -107,9 +107,7 @@ export default function MessageList(): JSX.Element {
 
 function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
   const message = useMessageStore((state) => state.messagesById[messageId]);
-  const openRegenerationModal = useChatStore(
-    (state) => state.openRegenerationModal,
-  );
+  const regenerateMessage = useChatStore((state) => state.regenerateMessage);
   const retrySync = useChatStore((state) => state.retrySync);
 
   if (!message) return null;
@@ -139,7 +137,7 @@ function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
           <MessageActionToolbar
             content={message.content}
             disabled={message.isStreaming || message.isRegenerating}
-            onRegenerate={() => openRegenerationModal(messageId)}
+            onRegenerate={() => void regenerateMessage(messageId)}
           />
         )}
         {assistantLabel && (

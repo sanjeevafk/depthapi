@@ -100,8 +100,6 @@ interface ChatState {
   isPro: boolean;
   gatedModes: ChatMode[];
   upgradeModalOpen: boolean;
-  regenerationModalOpen: boolean;
-  regenerationTargetId: string | null;
   regeneratingMessageId: string | null;
   streamControllers: Record<string, AbortController>;
 
@@ -125,8 +123,6 @@ interface ChatState {
   setIsPro: (isPro: boolean) => void;
   openUpgradeModal: () => void;
   closeUpgradeModal: () => void;
-  openRegenerationModal: (messageId: string) => void;
-  closeRegenerationModal: () => void;
   abortStream: (clientId: string) => void;
   abortAllStreams: () => void;
 
@@ -179,8 +175,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isPro: defaultIsPro,
   gatedModes: [...CHAT_PREMIUM_MODES],
   upgradeModalOpen: false,
-  regenerationModalOpen: false,
-  regenerationTargetId: null,
   regeneratingMessageId: null,
   streamControllers: {},
 
@@ -214,10 +208,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setIsPro: (isPro) => set({ isPro }),
   openUpgradeModal: () => set({ upgradeModalOpen: true }),
   closeUpgradeModal: () => set({ upgradeModalOpen: false }),
-  openRegenerationModal: (messageId) =>
-    set({ regenerationModalOpen: true, regenerationTargetId: messageId }),
-  closeRegenerationModal: () =>
-    set({ regenerationModalOpen: false, regenerationTargetId: null }),
 
   abortStream: (clientId: string) => {
     const controller = get().streamControllers[clientId];
