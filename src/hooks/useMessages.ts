@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { supabase } from "../lib/supabase";
 import { useChatStore } from "../stores/useChatStore";
+import { useConversationStore } from "../stores/useConversationStore";
 import type { Message } from "../types/chat";
 
 const supabaseConfigured =
@@ -26,7 +27,7 @@ const mapMessage = (record: MessageRecord): Message => ({
 });
 
 export function useMessages(): void {
-  const currentConversationId = useChatStore(
+  const currentConversationId = useConversationStore(
     (state) => state.currentConversationId,
   );
   const selectConversation = useChatStore((state) => state.selectConversation);

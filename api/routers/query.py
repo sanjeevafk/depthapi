@@ -357,6 +357,7 @@ async def query_topic_stream(
         min(float(getattr(settings, "stream_fallback_budget_seconds", 6)), float(stream_max_seconds)),
     )
     fallback_timeout_seconds = max(fallback_budget_seconds, 3.0)
+    close_timeout_seconds = 0.25
     heartbeat_seconds = min(
         max(float(getattr(settings, "stream_heartbeat_seconds", 2)), 0.1),
         2,
@@ -526,7 +527,16 @@ async def query_topic_stream(
             close_fn = getattr(stream, "aclose", None)
             if close_fn:
                 try:
-                    await close_fn()
+                    await asyncio.wait_for(close_fn(), timeout=close_timeout_seconds)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "query_stream_close_timeout",
+                        request_id=request_id,
+                        user_id_hash=user_id_hash,
+                        topic_hash=topic_hash,
+                        mode=mode,
+                        sampled=False,
+                    )
                 except Exception:
                     pass
 

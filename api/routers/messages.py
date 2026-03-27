@@ -170,6 +170,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         min(float(getattr(config_settings, "stream_fallback_budget_seconds", 6)), float(stream_max_seconds)),
     )
     fallback_timeout_seconds = max(fallback_budget_seconds, 3.0)
+    close_timeout_seconds = 0.25
     heartbeat_seconds = min(
         max(float(getattr(config_settings, "stream_heartbeat_seconds", 2)), 0.1),
         2,
@@ -504,7 +505,16 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             close_fn = getattr(stream, "aclose", None)
             if close_fn:
                 try:
-                    await close_fn()
+                    await asyncio.wait_for(close_fn(), timeout=close_timeout_seconds)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "messages_stream_close_timeout",
+                        request_id=request_id,
+                        user_id_hash=user_id_hash,
+                        conversation_id=req.conversation_id,
+                        mode=selected_mode,
+                        sampled=False,
+                    )
                 except Exception:
                     pass
 
@@ -605,13 +615,20 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
 
             generation_ms = (time.perf_counter() - generation_start) * 1000
 
-            if (start_timeout or timed_out) and not full_content.strip() and not aborted:
+            no_chunks = chunk_count == 0 and not full_content.strip()
+            if (start_timeout or timed_out or no_chunks) and not full_content.strip() and not aborted:
                 fallback_used = True
                 logger.warning(
                     "messages_stream_fallback",
                     request_id=request_id,
                     user_id_hash=user_id_hash,
-                    reason="start_timeout" if start_timeout else "max_duration",
+                    reason=(
+                        "start_timeout"
+                        if start_timeout
+                        else "max_duration"
+                        if timed_out
+                        else "empty_stream"
+                    ),
                     conversation_id=req.conversation_id,
                     message_id=client_message_id,
                     retry=bool(req.regenerate),
