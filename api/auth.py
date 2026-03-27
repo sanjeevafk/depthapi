@@ -88,7 +88,7 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Security(secu
         
     except AuthApiError as e:
         logger.warning("auth_verify_token_api_error", error_type=type(e).__name__)
-        raise HTTPException(status_code=401, detail=f"Authentication failed: {e.message}")
+        raise HTTPException(status_code=401, detail="Authentication failed")
     except Exception as e:
         logger.warning("auth_verify_token_validation_error", error_type=type(e).__name__)
         raise HTTPException(status_code=401, detail="Invalid authentication credentials")

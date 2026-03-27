@@ -577,7 +577,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                         break
 
                 try:
-                    chunk = await asyncio.wait_for(stream_iter.__anext__(), timeout=timeout)
+                    chunk = await asyncio.wait_for(anext(stream_iter), timeout=timeout)
                 except asyncio.TimeoutError:
                     yield emit("heartbeat", {"ts": datetime.now(timezone.utc).isoformat()})
                     if chunk_count == 0 and time.perf_counter() >= start_deadline:
@@ -588,9 +588,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 except StopAsyncIteration:
                     break
 
-                if aborted:
-                    tokens_after_abort += 1
-                    continue
+
 
                 full_content += chunk
                 record_chunk()

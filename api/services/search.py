@@ -44,6 +44,11 @@ class SearchManager:
             return cleaned if cleaned else default
         return default
 
+    @staticmethod
+    def _json_dict(response: httpx.Response) -> dict[str, Any]:
+        payload = response.json()
+        return payload if isinstance(payload, dict) else {}
+
     def _provider_keys_present(self) -> dict[ProviderName, bool]:
         settings = self._settings()
         return {
@@ -173,10 +178,15 @@ class SearchManager:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.post("https://api.tavily.com/search", json=payload)
             resp.raise_for_status()
-            data = resp.json() if isinstance(resp.json(), dict) else {}
+            data = self._json_dict(resp)
 
         answer = self._safe_text(data.get("answer"), "")
-        results = data.get("results") if isinstance(data.get("results"), list) else []
+        raw_results = data.get("results")
+        results: list[dict[str, Any]] = (
+            [item for item in raw_results if isinstance(item, dict)]
+            if isinstance(raw_results, list)
+            else []
+        )
 
         lines: list[str] = []
         for item in results:
@@ -211,13 +221,16 @@ class SearchManager:
                 json={"q": query},
             )
             resp.raise_for_status()
-            data = resp.json() if isinstance(resp.json(), dict) else {}
+            data = self._json_dict(resp)
 
-        organic = data.get("organic") if isinstance(data.get("organic"), list) else []
+        raw_organic = data.get("organic")
+        organic: list[dict[str, Any]] = (
+            [item for item in raw_organic if isinstance(item, dict)]
+            if isinstance(raw_organic, list)
+            else []
+        )
         lines: list[str] = []
         for item in organic[:5]:
-            if not isinstance(item, dict):
-                continue
             title = self._safe_text(item.get("title"), "Untitled")
             snippet = self._safe_text(item.get("snippet"), "No snippet available.")
             link = self._safe_text(item.get("link"), "")
@@ -243,18 +256,27 @@ class SearchManager:
                 json={"query": query, "numResults": 5, "contents": {"text": True}},
             )
             resp.raise_for_status()
-            data = resp.json() if isinstance(resp.json(), dict) else {}
+            data = self._json_dict(resp)
 
-        results = data.get("results") if isinstance(data.get("results"), list) else []
+        raw_results = data.get("results")
+        results: list[dict[str, Any]] = (
+            [item for item in raw_results if isinstance(item, dict)]
+            if isinstance(raw_results, list)
+            else []
+        )
         lines: list[str] = []
         for item in results:
-            if not isinstance(item, dict):
-                continue
             title = self._safe_text(item.get("title"), "Untitled")
-            body = self._safe_text(item.get("text"), "No summary available.")[:300]
+            raw_text = self._safe_text(item.get("text"), "")
+            if raw_text:
+                body = raw_text[:300]
+                ellipsis = "..." if len(raw_text) > 300 else ""
+            else:
+                body = "No summary available."
+                ellipsis = ""
             url = self._safe_text(item.get("url"), "")
             url_suffix = f" ({url})" if url else ""
-            lines.append(f"- {title}: {body}{'...' if body else ''}{url_suffix}")
+            lines.append(f"- {title}: {body}{ellipsis}{url_suffix}")
 
         return "\n".join(lines)
 
@@ -265,7 +287,11 @@ class SearchManager:
         configured_providers: list[ProviderName] | None = None,
     ) -> str:
         """Parallel fallback that returns first non-empty result and cancels the rest."""
-        provider_pool = configured_providers or self._configured_providers()
+        provider_pool: list[ProviderName] = (
+            configured_providers
+            if configured_providers is not None
+            else self._configured_providers()
+        )
         candidates = [provider for provider in provider_pool if provider != failed_provider]
         logger.info(
             "search_fallback_start",
@@ -277,7 +303,8 @@ class SearchManager:
             return ""
 
         task_to_provider = {
-            asyncio.create_task(self._search_provider(provider, query)): provider for provider in candidates
+            asyncio.create_task(self._search_provider(provider=provider, query=query)): provider  # type: ignore[arg-type]
+            for provider in candidates
         }
         pending = set(task_to_provider.keys())
 
@@ -324,12 +351,15 @@ class SearchManager:
                     json={"q": query},
                 )
                 resp.raise_for_status()
-                data = resp.json() if isinstance(resp.json(), dict) else {}
-                images = data.get("images") if isinstance(data.get("images"), list) else []
+                data = self._json_dict(resp)
+                raw_images = data.get("images")
+                images: list[dict[str, Any]] = (
+                    [item for item in raw_images if isinstance(item, dict)]
+                    if isinstance(raw_images, list)
+                    else []
+                )
                 output: list[dict[str, str]] = []
                 for image in images[:3]:
-                    if not isinstance(image, dict):
-                        continue
                     image_url = self._safe_text(image.get("imageUrl"), "")
                     title = self._safe_text(image.get("title"), "Image")
                     if image_url:

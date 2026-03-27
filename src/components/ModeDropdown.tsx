@@ -27,7 +27,7 @@ const MODES: {
   {
     id: "learning",
     label: "Learning",
-    description: "General learning with adaptive provider routing.",
+    description: "Optimized responses for general learning.",
     icon: BookOpen,
     color: "text-teal-400",
     premium: false,

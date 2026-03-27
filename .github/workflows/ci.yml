@@ -49,17 +49,34 @@ jobs:
 
       - name: Backend Log Hygiene Guards
         run: |
-          if rg -n --glob '*.py' --glob '!api/tests/**' '\bprint\s*\(' api; then
+          rc=0
+          rg -n --glob '*.py' --glob '!api/tests/**' '\bprint\s*\(' api || rc=$?
+          if [ "$rc" -eq 0 ]; then
             echo "Backend print() usage is not allowed."
             exit 1
+          elif [ "$rc" -gt 1 ]; then
+            echo "rg failed during print() policy check (exit code: $rc)."
+            exit "$rc"
           fi
-          if rg -n --pcre2 --glob '*.py' --glob '!api/tests/**' 'logger\.(?:debug|info|warning|error|critical)\([^\n]*\buser_id\s*=' api; then
+
+          rc=0
+          rg -n --pcre2 --glob '*.py' --glob '!api/tests/**' 'logger\.(?:debug|info|warning|error|critical)\([^\n]*\buser_id\s*=' api || rc=$?
+          if [ "$rc" -eq 0 ]; then
             echo "Raw user_id structured logger fields are not allowed. Use user_id_hash."
             exit 1
+          elif [ "$rc" -gt 1 ]; then
+            echo "rg failed during single-line logger user_id policy check (exit code: $rc)."
+            exit "$rc"
           fi
-          if rg -n -U --pcre2 --glob '*.py' --glob '!api/tests/**' 'logger\.(?:debug|info|warning|error|critical)\([^\n]*\n\s*user_id\s*=' api; then
+
+          rc=0
+          rg -n -U --pcre2 --glob '*.py' --glob '!api/tests/**' 'logger\.(?:debug|info|warning|error|critical)\([^\n]*\n\s*user_id\s*=' api || rc=$?
+          if [ "$rc" -eq 0 ]; then
             echo "Raw user_id structured logger fields are not allowed. Use user_id_hash."
             exit 1
+          elif [ "$rc" -gt 1 ]; then
+            echo "rg failed during multi-line logger user_id policy check (exit code: $rc)."
+            exit "$rc"
           fi
 
       - name: Backend tests
