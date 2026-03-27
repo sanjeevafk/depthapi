@@ -134,6 +134,7 @@ async def _stream_chunks(stream: AsyncIterable[str] | Iterable[str]) -> AsyncIte
     else:
         for chunk in stream:
             yield chunk
+            await asyncio.sleep(0)  # yield control to event loop
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -440,7 +441,29 @@ async def query_topic_stream(
                     age_seconds = max(now_ts - started_ts, 0)
                     if age_seconds < idempotency_stale_seconds:
                         raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
-                    await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
+                    current = await cache_get(idempotency_key)
+                    if not current:
+                        await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
+                    else:
+                        current_status = current.get("status")
+                        current_started_at = current.get("started_at")
+                        current_started_ts = (
+                            int(current_started_at)
+                            if isinstance(current_started_at, (int, float))
+                            else None
+                        )
+                        if current_status == "completed" and current.get("response"):
+                            return _build_stream_replay_response(
+                                topic=topic,
+                                level=level,
+                                mode=mode,
+                                message_id=message_id or "",
+                                content=str(current.get("response")),
+                            )
+                        if current_status == "in_progress" and current_started_ts == started_ts:
+                            await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
+                        else:
+                            raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
 
     async def event_generator():
         full_content = ""

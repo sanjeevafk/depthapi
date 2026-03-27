@@ -78,7 +78,14 @@ class UpstashRedisCompat:
 
 
 _client: UpstashRedisCompat | None = None
-_client_lock = asyncio.Lock()
+_client_lock: asyncio.Lock | None = None
+
+
+def get_client_lock() -> asyncio.Lock:
+    global _client_lock
+    if _client_lock is None:
+        _client_lock = asyncio.Lock()
+    return _client_lock
 
 
 def _strip_env_quotes(value: str) -> str:
@@ -91,7 +98,7 @@ async def get_redis() -> UpstashRedisCompat:
     if _client is not None:
         return _client
 
-    async with _client_lock:
+    async with get_client_lock():
         if _client is not None:
             return _client
 
@@ -154,7 +161,7 @@ async def close_redis() -> None:
     """Close Upstash Redis REST client."""
     global _client
     client: UpstashRedisCompat | None = None
-    async with _client_lock:
+    async with get_client_lock():
         if _client:
             client = _client
             _client = None

@@ -49,7 +49,7 @@ jobs:
 
       - name: Backend Log Hygiene Guards
         run: |
-          if rg -n --glob '*.py' --glob '!api/tests/**' 'print\s*\(' api; then
+          if rg -n --glob '*.py' --glob '!api/tests/**' '\bprint\s*\(' api; then
             echo "Backend print() usage is not allowed."
             exit 1
           fi
