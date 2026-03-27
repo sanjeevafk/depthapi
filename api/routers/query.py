@@ -458,6 +458,7 @@ async def query_topic_stream(
         fallback_used = False
         telemetry_sink: dict[str, Any] = {}
         model_alias: str | None = None
+        done_emitted = False
 
         def record_chunk():
             nonlocal first_token_ms, last_chunk_time, total_chunk_interval_ms, chunk_count
@@ -476,6 +477,13 @@ async def query_topic_stream(
             if isinstance(payload, dict):
                 return builder.emit_json(event, payload)
             return builder.emit(event, payload)
+
+        def emit_done_once() -> str | None:
+            nonlocal done_emitted
+            if done_emitted:
+                return None
+            done_emitted = True
+            return emit("done", "[DONE]")
 
         async def close_stream(stream):
             close_fn = getattr(stream, "aclose", None)
@@ -497,7 +505,9 @@ async def query_topic_stream(
                     content = cached["text"]
                     for index in range(0, len(content), chunk_size):
                         yield emit("chunk", {"chunk": content[index : index + chunk_size]})
-                    yield emit("done", "[DONE]")
+                    done_event = emit_done_once()
+                    if done_event:
+                        yield done_event
                     if auth_data:
                         await _persist_history_safely(auth_data["user"], topic, [level], mode)
                     return
@@ -575,13 +585,17 @@ async def query_topic_stream(
                         sampled=False,
                     )
                     yield emit("error", {"error": "Streaming timed out. Please retry."})
-                    yield emit("done", "[DONE]")
+                    done_event = emit_done_once()
+                    if done_event:
+                        yield done_event
                     return
 
                 full_content = str(fallback_content)
                 for index in range(0, len(full_content), chunk_size):
                     yield emit("chunk", {"chunk": full_content[index : index + chunk_size]})
-                yield emit("done", "[DONE]")
+                done_event = emit_done_once()
+                if done_event:
+                    yield done_event
                 if full_content.strip():
                     await cache_set(_cache_key(topic, level, mode), {"text": full_content})
                 if auth_data:
@@ -598,7 +612,9 @@ async def query_topic_stream(
             if auth_data:
                 await _persist_history_safely(auth_data["user"], topic, [level], mode)
 
-            yield emit("done", "[DONE]")
+            done_event = emit_done_once()
+            if done_event:
+                yield done_event
         except Exception as exc:
             logger.error(
                 "streaming_failed",
@@ -630,7 +646,9 @@ async def query_topic_stream(
                     for index in range(0, len(full_content), chunk_size):
                         record_chunk()
                         yield emit("chunk", {"chunk": full_content[index : index + chunk_size]})
-                    yield emit("done", "[DONE]")
+                    done_event = emit_done_once()
+                    if done_event:
+                        yield done_event
                     if full_content.strip():
                         await cache_set(_cache_key(topic, level, mode), {"text": full_content})
                     if auth_data:
@@ -651,14 +669,18 @@ async def query_topic_stream(
             if full_content.strip():
                 mode_label = "technical " if mode == TECHNICAL_MODE else ""
                 yield emit("chunk", {"chunk": f"\n\n[Connection interrupted. Partial {mode_label}response delivered.]"})
-                yield emit("done", "[DONE]")
+                done_event = emit_done_once()
+                if done_event:
+                    yield done_event
                 if full_content.strip():
                     await cache_set(_cache_key(topic, level, mode), {"text": full_content})
                 if auth_data:
                     await _persist_history_safely(auth_data["user"], topic, [level], mode)
                 return
             yield emit("error", {"error": "An error occurred while streaming. Please try again."})
-            yield emit("done", "[DONE]")
+            done_event = emit_done_once()
+            if done_event:
+                yield done_event
         finally:
             if idempotency_key and message_id:
                 if full_content.strip():
