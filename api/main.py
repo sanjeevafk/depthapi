@@ -419,5 +419,11 @@ async def health():
 # Catch-all route for debugging (should be last)
 @app.get("/{path:path}")
 async def catch_all(path: str):
-    return {"message": f"Catch-all route hit: /{path}", "status": "Backend is running!"}
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": "Not Found",
+            "detail": f"Route '/{path}' does not exist.",
+        },
+    )
 

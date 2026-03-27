@@ -156,6 +156,23 @@ async def test_invalid_litellm_key_returns_structured_error(app_client, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_unknown_route_returns_404_json(app_client):
+    resp = await app_client.get("/definitely-not-a-route")
+    assert resp.status_code == 404
+    payload = resp.json()
+    assert payload["error"] == "Not Found"
+    assert "does not exist" in payload["detail"]
+
+
+@pytest.mark.asyncio
+async def test_known_route_not_caught_by_catch_all(app_client):
+    resp = await app_client.get("/api/health")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert "status" in payload
+
+
+@pytest.mark.asyncio
 async def test_pinned_topics():
     topics = await pinned_module.get_pinned()
     assert topics
