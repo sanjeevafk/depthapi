@@ -123,7 +123,9 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     request_id = str(getattr(request.state, "request_id", "") or "")
     config_state = get_provider_config_state()
     if not bool(config_state.get("chat_enabled", False)):
-        raise LLMUnavailable("Chat is disabled because provider routing is not configured correctly.")
+        raise LLMUnavailable(
+            "Model service is temporarily unavailable. Please try again shortly."
+        )
 
     user = auth_data["user"]
     user_id = str(getattr(user, "id", "") or "").strip()

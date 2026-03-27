@@ -148,7 +148,9 @@ async def query_topic(
     topic_hash = anonymize_text(req.topic)
     config_state = get_provider_config_state()
     if not bool(config_state.get("chat_enabled", False)):
-        raise LLMUnavailable("Chat is disabled because provider routing is not configured correctly.")
+        raise LLMUnavailable(
+            "Model service is temporarily unavailable. Please try again shortly."
+        )
 
     try:
         topic = sanitize_topic(req.topic)
@@ -294,7 +296,9 @@ async def query_topic_stream(
     topic_hash = anonymize_text(req.topic)
     config_state = get_provider_config_state()
     if not bool(config_state.get("chat_enabled", False)):
-        raise LLMUnavailable("Chat is disabled because provider routing is not configured correctly.")
+        raise LLMUnavailable(
+            "Model service is temporarily unavailable. Please try again shortly."
+        )
 
     try:
         topic = sanitize_topic(req.topic)

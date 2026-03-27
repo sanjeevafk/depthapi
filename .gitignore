@@ -26,3 +26,4 @@ finish-this.md
 .vscode/settings.json
 .planning/debug
 test-results/
+VERCEL_DEPLOYMENT_PLAN.md

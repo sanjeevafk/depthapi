@@ -46,19 +46,19 @@ const WORKSPACE_OPTIONS: WorkspaceOption[] = [
   {
     id: "learn",
     label: "Learn",
-    description: "Quick Learning",
+    description: "Adaptive explanations",
     icon: BookOpen,
   },
   {
     id: "socratic",
     label: "Socratic",
-    description: "Guided Thinking",
+    description: "Guided questions",
     icon: CircleHelp,
   },
   {
     id: "technical",
     label: "Technical",
-    description: "Deep Analysis",
+    description: "Structured deep dives",
     icon: Code2,
   },
 ];
