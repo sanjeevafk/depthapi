@@ -78,10 +78,28 @@ class TestValidateTechnicalResponse:
         assert reason == "too_short"
 
     def test_truncated_invalid(self):
-        response = "## Core Idea\nThis is cut off mid" + ("x" * 200)
+        response = (
+            "## Core Idea\nFoundational context for the system and scope.\n\n"
+            "## First Principles Breakdown\nStepwise decomposition of assumptions and mechanics.\n\n"
+            "## Intuition\nConcrete mental model for operational behavior.\n\n"
+            "## Edge Cases / Limitations\nFailure modes and practical constraints.\n\n"
+            "## Connections\nThis explanation is intentionally left hanging and"
+        )
         valid, reason = validate_technical_response(response, "explain")
         assert not valid
         assert reason == "truncated"
+
+    def test_valid_without_terminal_punctuation(self):
+        response = (
+            "## Core Idea\nFoundational context for the system and scope\n\n"
+            "## First Principles Breakdown\nStepwise decomposition of assumptions and mechanics\n\n"
+            "## Intuition\nConcrete mental model for operational behavior\n\n"
+            "## Edge Cases / Limitations\nFailure modes and practical constraints\n\n"
+            "## Connections\nRelated mechanisms, tradeoffs, and adjacent concepts"
+        )
+        valid, reason = validate_technical_response(response, "explain")
+        assert valid
+        assert reason == ""
 
     def test_valid_default_structure(self):
         response = (
