@@ -14,6 +14,93 @@ async def test_generate_explanation_unknown_level():
 
 
 @pytest.mark.asyncio
+async def test_generate_explanation_learning_injects_search_context(monkeypatch):
+    captured: dict[str, str] = {}
+
+    async def fake_search_context(_topic: str):
+        return "search context for learning"
+
+    async def fake_call_model(_model, prompt, **_kwargs):
+        captured["prompt"] = prompt
+        return "ok"
+
+    monkeypatch.setattr(inference_module.search_service, "get_search_context", fake_search_context)
+    monkeypatch.setattr(inference_module, "call_model", fake_call_model)
+
+    result = await inference_module.generate_explanation("dns caching", "eli5", mode="learning")
+    assert result == "ok"
+    assert "External web context" in captured["prompt"]
+    assert "search context for learning" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_generate_explanation_socratic_injects_search_context(monkeypatch):
+    captured: dict[str, str] = {}
+
+    async def fake_search_context(_topic: str):
+        return "search context for socratic"
+
+    async def fake_call_model(_model, prompt, **_kwargs):
+        captured["prompt"] = prompt
+        return "What is DNS?"
+
+    monkeypatch.setattr(inference_module.search_service, "get_search_context", fake_search_context)
+    monkeypatch.setattr(inference_module, "call_model", fake_call_model)
+
+    result = await inference_module.generate_explanation("dns", "eli15", mode="socratic")
+    assert "What is DNS?" in result
+    assert "External web context" in captured["prompt"]
+    assert "search context for socratic" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_technical_mode_handler_injects_search_context(monkeypatch):
+    captured: dict[str, str] = {}
+
+    async def fake_search_context(_topic: str):
+        return "search context for technical"
+
+    async def fake_call_model(_model, prompt, **_kwargs):
+        captured["prompt"] = prompt
+        return "valid technical response"
+
+    monkeypatch.setattr(inference_module.search_service, "get_search_context", fake_search_context)
+    monkeypatch.setattr(
+        inference_module,
+        "detect_intent_and_depth",
+        lambda _topic: {"intent": "explain", "depth": "medium"},
+    )
+    monkeypatch.setattr(inference_module, "detect_diagram_type", lambda _topic: None)
+    monkeypatch.setattr(inference_module, "build_technical_prompt", lambda *_args, **_kwargs: "technical base prompt")
+    monkeypatch.setattr(inference_module, "call_model", fake_call_model)
+    monkeypatch.setattr(inference_module, "validate_technical_response", lambda *_args, **_kwargs: (True, None))
+
+    result = await inference_module.technical_mode_handler("raft consensus")
+    assert result == "valid technical response"
+    assert "External web context" in captured["prompt"]
+    assert "search context for technical" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_generate_explanation_search_failure_is_fail_soft(monkeypatch):
+    calls = {"count": 0}
+
+    async def broken_search(_topic: str):
+        raise RuntimeError("search backend down")
+
+    async def fake_call_model(_model, _prompt, **_kwargs):
+        calls["count"] += 1
+        return "ok without search"
+
+    monkeypatch.setattr(inference_module.search_service, "get_search_context", broken_search)
+    monkeypatch.setattr(inference_module, "call_model", fake_call_model)
+
+    result = await inference_module.generate_explanation("tcp", "eli10", mode="learning")
+    assert result == "ok without search"
+    assert calls["count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_generate_stream_explanation_passes_temperature(monkeypatch):
     captured = {}
 

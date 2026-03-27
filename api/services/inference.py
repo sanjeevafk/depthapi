@@ -1,6 +1,7 @@
 """Native multi-provider inference service."""
 
 import asyncio
+import hashlib
 import json
 import re
 import time
@@ -88,6 +89,9 @@ COST_PENALTY: dict[str, float] = {
     TECHNICAL_MODEL_PRIMARY: 0.24,
     TECHNICAL_MODEL_FALLBACK: 0.12,
 }
+
+SEARCH_CONTEXT_MAX_CHARS = 1800
+SEARCH_CONTEXT_TIMEOUT_SECONDS = 3.5
 
 LATENCY_KEYWORDS = (
     r"\bquick\b",
@@ -360,6 +364,12 @@ async def technical_mode_handler(
             diagram_type=diagram_type,
         )
 
+    prefetched_search_context = kwargs.pop("_search_context", None)
+    search_context = (
+        _truncate_search_context(prefetched_search_context)
+        if isinstance(prefetched_search_context, str)
+        else await _load_search_context(topic, mode=TECHNICAL_MODE)
+    )
     prompt = build_technical_prompt(topic, intent, depth, diagram_type)
     if not prompt or not prompt.strip():
         _tech_logger.warning(
@@ -369,6 +379,7 @@ async def technical_mode_handler(
             diagram_type=diagram_type,
         )
         prompt = TECHNICAL_MINIMAL_PROMPT
+    prompt = _append_search_context(prompt, search_context)
 
     fallback_triggered = False
     fallback_reason: str | None = None
@@ -554,6 +565,52 @@ def _extract_estimated_cost(result, usage: dict[str, int] | None) -> float | Non
     return None
 
 
+def _hash_topic(topic: str) -> str:
+    return hashlib.sha256((topic or "").strip().lower().encode("utf-8")).hexdigest()
+
+
+def _truncate_search_context(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if len(text) <= SEARCH_CONTEXT_MAX_CHARS:
+        return text
+    return f"{text[:SEARCH_CONTEXT_MAX_CHARS].rstrip()}..."
+
+
+def _append_search_context(prompt: str, context: str) -> str:
+    if not context:
+        return prompt
+    return (
+        f"{prompt}\n\n"
+        "External web context (supplemental, may be incomplete):\n"
+        f"{context}\n\n"
+        "Use this context only when relevant and do not fabricate details."
+    )
+
+
+async def _load_search_context(topic: str, *, mode: str) -> str:
+    normalized_topic = " ".join((topic or "").strip().split())
+    if not normalized_topic:
+        return ""
+
+    try:
+        context = await asyncio.wait_for(
+            search_service.get_search_context(normalized_topic),
+            timeout=SEARCH_CONTEXT_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        logger.warning(
+            "search_context_unavailable",
+            mode=mode,
+            topic_hash=_hash_topic(normalized_topic),
+            error=str(exc),
+        )
+        return ""
+
+    return _truncate_search_context(str(context or ""))
+
+
 def is_transient_http_error(exc: BaseException) -> bool:
     if isinstance(exc, (httpx.ConnectError, httpx.TimeoutException, APIConnectionError, APITimeoutError)):
         return True
@@ -640,10 +697,12 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
         template = PROMPTS.get("socratic")
         if not template:
             raise ValueError("Unknown mode template: socratic")
+        search_context = await _load_search_context(topic, mode=SOCRATIC_MODE)
         prompt = template.format(
             topic=topic,
             conversation_context=kwargs.get("conversation_context", "No prior context."),
         )
+        prompt = _append_search_context(prompt, search_context)
         routed_alias = model or route_model_aliases(topic, mode=mode, level=level)[0]
         response = await call_model(routed_alias, prompt, **kwargs)
         return _enforce_socratic_response_constraints(response)
@@ -652,7 +711,9 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
     if not template:
         raise ValueError(f"Unknown level: {level}")
         
+    search_context = await _load_search_context(topic, mode=LEARNING_MODE)
     prompt = template.format(topic=topic)
+    prompt = _append_search_context(prompt, search_context)
         
     routed_aliases = route_model_aliases(topic, mode=mode, level=level)
     model_alias = model or (routed_aliases[0] if routed_aliases else _learning_model_for_level(level))
@@ -684,9 +745,11 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
                 diagram_type=diagram_type,
             )
 
+        search_context = await _load_search_context(topic, mode=TECHNICAL_MODE)
         prompt = build_technical_prompt(topic, intent, depth, diagram_type)
         if not prompt or not prompt.strip():
             prompt = TECHNICAL_MINIMAL_PROMPT
+        prompt = _append_search_context(prompt, search_context)
 
         primary_alias, _fallback_alias = _technical_route(topic, intent=intent, depth=depth)
         alias = model or primary_alias
@@ -715,7 +778,7 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
                 model_alias=alias,
             )
             if streamed_chunks == 0:
-                full_response = await technical_mode_handler(topic, **kwargs)
+                full_response = await technical_mode_handler(topic, _search_context=search_context, **kwargs)
                 for index in range(0, len(full_response), 400):
                     yield full_response[index : index + 400]
             else:
@@ -781,15 +844,19 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         template = PROMPTS.get("socratic")
         if not template:
             raise ValueError("Unknown mode template: socratic")
+        search_context = await _load_search_context(topic, mode=SOCRATIC_MODE)
         prompt = template.format(
             topic=topic,
             conversation_context=kwargs.get("conversation_context", "No prior context."),
         )
+        prompt = _append_search_context(prompt, search_context)
     else:
         template = PROMPTS.get(level)
         if not template:
             raise ValueError(f"Unknown level: {level}")
+        search_context = await _load_search_context(topic, mode=LEARNING_MODE)
         prompt = template.format(topic=topic)
+        prompt = _append_search_context(prompt, search_context)
     
     if model:
         alias = model
