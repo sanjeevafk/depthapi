@@ -185,7 +185,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       selectedLevel: nextWorkspaceState.depthLevel as Level,
     });
 
-    if (!supabaseConfigured) {
+    const canFetchRemoteMessages =
+      !id.startsWith("local-") &&
+      typeof (supabase as { from?: unknown })?.from === "function";
+
+    if (!canFetchRemoteMessages) {
       if (loadToken === latestMessageLoadToken) {
         set({ isLoading: false });
       }
