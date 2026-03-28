@@ -1,7 +1,6 @@
 import pytest
 
 import main as main_app
-import api.main as api_main_app
 import routers.pinned as pinned_module
 import routers.query as query_module
 from services.llm_errors import LLMInvalidAPIKey
@@ -16,28 +15,15 @@ async def test_health_ok(app_client, monkeypatch):
     async def fake_get_redis():
         return DummyRedis()
 
-    class DummyResponse:
-        status_code = 200
-
-    class DummyClient:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return None
-
-        async def get(self, *_args, **_kwargs):
-            return DummyResponse()
-
     monkeypatch.setattr(main_app, "get_redis", fake_get_redis)
-    monkeypatch.setattr(api_main_app.httpx, "AsyncClient", lambda **_kwargs: DummyClient())
     resp = await app_client.get("/api/health")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "ok"
-    assert set(data.keys()) >= {"status", "litellm", "rate_limit", "db"}
-    assert data["litellm"]["status"] == "ok"
-    assert isinstance(data["litellm"]["latency_ms"], int)
+    assert data["status"] in {"ok", "degraded"}
+    assert set(data.keys()) >= {"status", "provider", "rate_limit", "db"}
+    assert data["provider"]["status"] == "ok"
+    assert isinstance(data["provider"]["reachable"], bool)
+    assert isinstance(data["provider"]["key_valid"], bool)
     assert data["rate_limit"]["status"] == "ok"
     assert data["db"]["status"] == "ok"
 
@@ -54,21 +40,7 @@ async def test_health_redis_failure_in_prod(app_client, monkeypatch, test_settin
     async def fake_get_redis():
         return DummyRedis()
 
-    class DummyResponse:
-        status_code = 200
-
-    class DummyClient:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return None
-
-        async def get(self, *_args, **_kwargs):
-            return DummyResponse()
-
     monkeypatch.setattr(main_app, "get_redis", fake_get_redis)
-    monkeypatch.setattr(api_main_app.httpx, "AsyncClient", lambda **_kwargs: DummyClient())
     resp = await app_client.get("/api/health")
     assert resp.status_code == 200
     data = resp.json()
@@ -78,67 +50,98 @@ async def test_health_redis_failure_in_prod(app_client, monkeypatch, test_settin
 
 
 @pytest.mark.asyncio
-async def test_health_missing_litellm_config_degrades(app_client, test_settings):
-    old_base = test_settings.litellm_base_url
-    old_key = test_settings.litellm_virtual_key
-    old_master = test_settings.litellm_master_key
+async def test_health_missing_provider_config_degrades(app_client, test_settings):
+    old_keys = (
+        test_settings.groq_api_key,
+        test_settings.cerebras_api_key,
+        test_settings.gemini_api_key,
+        test_settings.openrouter_api_key,
+    )
 
-    test_settings.litellm_base_url = ""
-    test_settings.litellm_virtual_key = ""
-    test_settings.litellm_master_key = ""
+    test_settings.groq_api_key = ""
+    test_settings.cerebras_api_key = ""
+    test_settings.gemini_api_key = ""
+    test_settings.openrouter_api_key = ""
 
     try:
         resp = await app_client.get("/api/health")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] in {"degraded", "down"}
-        assert data["litellm"]["status"] == "degraded"
+        assert data["provider"]["status"] == "degraded"
         assert data.get("chat_enabled") is False
     finally:
-        test_settings.litellm_base_url = old_base
-        test_settings.litellm_virtual_key = old_key
-        test_settings.litellm_master_key = old_master
+        (
+            test_settings.groq_api_key,
+            test_settings.cerebras_api_key,
+            test_settings.gemini_api_key,
+            test_settings.openrouter_api_key,
+        ) = old_keys
 
 
 @pytest.mark.asyncio
-async def test_query_succeeds_when_litellm_missing_in_learning_mode(app_client, test_settings):
-    old_base = test_settings.litellm_base_url
-    old_key = test_settings.litellm_virtual_key
-    old_master = test_settings.litellm_master_key
+async def test_query_degraded_when_provider_keys_missing(app_client, test_settings):
+    old_keys = (
+        test_settings.groq_api_key,
+        test_settings.cerebras_api_key,
+        test_settings.gemini_api_key,
+        test_settings.openrouter_api_key,
+    )
 
-    test_settings.litellm_base_url = ""
-    test_settings.litellm_virtual_key = ""
-    test_settings.litellm_master_key = ""
+    test_settings.groq_api_key = ""
+    test_settings.cerebras_api_key = ""
+    test_settings.gemini_api_key = ""
+    test_settings.openrouter_api_key = ""
 
     try:
         resp = await app_client.post(
             "/api/query",
-            json={"topic": "lite llm", "levels": ["eli15"], "mode": "learning"},
+            json={"topic": "provider routing", "levels": ["eli15"], "mode": "learning"},
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 503
         payload = resp.json()
-        assert payload["topic"] == "lite llm"
+        assert payload["error"]["type"] == "service_degraded"
     finally:
-        test_settings.litellm_base_url = old_base
-        test_settings.litellm_virtual_key = old_key
-        test_settings.litellm_master_key = old_master
+        (
+            test_settings.groq_api_key,
+            test_settings.cerebras_api_key,
+            test_settings.gemini_api_key,
+            test_settings.openrouter_api_key,
+        ) = old_keys
 
 
 @pytest.mark.asyncio
-async def test_invalid_litellm_key_returns_structured_error(app_client, monkeypatch):
+async def test_invalid_provider_key_returns_structured_error(app_client, monkeypatch):
     async def invalid_key(*_args, **_kwargs):
-        raise LLMInvalidAPIKey("LiteLLM rejected credentials.")
+        raise LLMInvalidAPIKey("Provider rejected credentials.")
 
     monkeypatch.setattr(query_module, "generate_explanation", invalid_key)
 
     resp = await app_client.post(
         "/api/query",
-        json={"topic": "lite llm invalid key", "levels": ["eli15"], "mode": "learning", "bypass_cache": True},
+        json={"topic": "provider invalid key", "levels": ["eli15"], "mode": "learning", "bypass_cache": True},
     )
     assert resp.status_code == 502
     payload = resp.json()
     assert payload["error"]["type"] == "invalid_api_key"
     assert payload["error"]["retryable"] is False
+
+
+@pytest.mark.asyncio
+async def test_unknown_route_returns_404_json(app_client):
+    resp = await app_client.get("/definitely-not-a-route")
+    assert resp.status_code == 404
+    payload = resp.json()
+    assert payload["error"] == "Not Found"
+    assert "does not exist" in payload["detail"]
+
+
+@pytest.mark.asyncio
+async def test_known_route_not_caught_by_catch_all(app_client):
+    resp = await app_client.get("/api/health")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert "status" in payload
 
 
 @pytest.mark.asyncio

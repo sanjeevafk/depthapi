@@ -1,188 +1,103 @@
 import importlib
+import asyncio
 from types import SimpleNamespace
 
-import httpx
 import pytest
-from openai import APIStatusError
-from pydantic import SecretStr
 
 import services.llm_client as llm_client_module
 
 
-def _invalid_model_error(model_alias: str) -> APIStatusError:
-    request = httpx.Request("POST", "https://proxy.example/v1/chat/completions")
-    response = httpx.Response(status_code=400, request=request)
-    message = f"Invalid model name passed in model={model_alias}"
-    return APIStatusError(
-        message=message,
-        response=response,
-        body={
-            "error": {
-                "message": message,
-                "type": "invalid_request_error",
-                "param": "model",
-                "code": "model_not_found",
-            }
-        },
-    )
+class DummyProviderState:
+    async def should_attempt(self, _provider):
+        return True
 
+    async def mark_success(self, _provider):
+        return None
 
-class _StreamChunk:
-    def __init__(self, content: str | None):
-        self.model = "llama-3.1-8b-instant"
-        self.usage = None
-        self._hidden_params = {}
-        self.choices = [SimpleNamespace(delta=SimpleNamespace(content=content))]
+    async def mark_failure(self, _provider):
+        return None
 
 
 @pytest.mark.asyncio
-async def test_create_chat_completion_recovers_from_invalid_alias(monkeypatch):
+async def test_create_chat_completion_cascades_through_primary_providers(monkeypatch):
+    # Restore real module functions because conftest autouse fixtures patch them.
     importlib.reload(llm_client_module)
 
-    class LiteLLMCompletions:
-        def __init__(self):
-            self.calls: list[dict] = []
+    attempts: list[str] = []
+
+    class FakeCompletions:
+        def __init__(self, provider: str):
+            self.provider = provider
 
         async def create(self, **kwargs):
-            self.calls.append(kwargs)
-            raise _invalid_model_error("default-fast")
-
-    class GroqCompletions:
-        def __init__(self):
-            self.calls: list[dict] = []
-
-        async def create(self, **kwargs):
-            self.calls.append(kwargs)
+            attempts.append(self.provider)
+            if self.provider in {"groq"}:
+                raise RuntimeError(f"{self.provider} unavailable")
             return SimpleNamespace(
-                choices=[SimpleNamespace(message=SimpleNamespace(content="fallback-ok"))],
+                model=kwargs.get("model", "gemini-2.5-flash"),
                 usage=None,
-                model="llama-3.1-8b-instant",
+                choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
             )
 
-    litellm_completions = LiteLLMCompletions()
-    groq_completions = GroqCompletions()
-    litellm_client = SimpleNamespace(chat=SimpleNamespace(completions=litellm_completions))
-    groq_client = SimpleNamespace(chat=SimpleNamespace(completions=groq_completions))
+    async def fake_get_provider_client(provider: str):
+        return SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions(provider)))
 
-    async def fake_get_llm_client():
-        return litellm_client
+    monkeypatch.setattr(llm_client_module, "_provider_state_manager", DummyProviderState())
+    monkeypatch.setattr(llm_client_module, "_get_provider_client", fake_get_provider_client)
+    monkeypatch.setattr(llm_client_module, "_is_retryable_error", lambda exc: isinstance(exc, RuntimeError))
+    async def fake_provider_within_runtime_limits(*_args, **_kwargs):
+        return True
 
-    async def fake_get_groq_client():
-        return groq_client
+    monkeypatch.setattr(llm_client_module, "_provider_within_runtime_limits", fake_provider_within_runtime_limits)
+    async def fake_increment_provider_usage(*_args, **_kwargs):
+        return None
 
-    monkeypatch.setattr(llm_client_module, "get_llm_client", fake_get_llm_client)
-    monkeypatch.setattr(llm_client_module, "get_groq_client", fake_get_groq_client)
-    monkeypatch.setattr(llm_client_module.sentry_sdk, "capture_exception", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(llm_client_module, "_increment_provider_usage", fake_increment_provider_usage)
 
-    result = await llm_client_module.create_chat_completion(
+    response = await llm_client_module.create_chat_completion(
         model="default-fast",
-        messages=[{"role": "user", "content": "hi"}],
+        messages=[{"role": "user", "content": "hello"}],
     )
 
-    assert result.choices[0].message.content == "fallback-ok"
-    assert litellm_completions.calls[0]["model"] == "default-fast"
-    assert groq_completions.calls[0]["model"] == "llama-3.1-8b-instant"
+    assert response.choices[0].message.content == "ok"
+    assert attempts == ["groq", "gemini"]
 
 
 @pytest.mark.asyncio
-async def test_create_chat_completion_recovers_via_litellm_model_mapping(monkeypatch):
+async def test_provider_state_mark_failure_is_atomic(monkeypatch):
     importlib.reload(llm_client_module)
 
-    class LiteLLMCompletions:
+    class FakeRedis:
         def __init__(self):
-            self.calls: list[dict] = []
+            self.store = {}
+            self._lock = asyncio.Lock()
 
-        async def create(self, **kwargs):
-            self.calls.append(kwargs)
-            if kwargs["model"] == "default-fast":
-                raise _invalid_model_error("default-fast")
-            return SimpleNamespace(
-                choices=[SimpleNamespace(message=SimpleNamespace(content="proxy-fallback-ok"))],
-                usage=None,
-                model="groq/llama-3.1-8b-instant",
-            )
+        async def get(self, key):
+            await asyncio.sleep(0.001)
+            async with self._lock:
+                return self.store.get(key)
 
-    litellm_completions = LiteLLMCompletions()
-    litellm_client = SimpleNamespace(chat=SimpleNamespace(completions=litellm_completions))
+        async def setex(self, key, _ttl, value):
+            await asyncio.sleep(0.001)
+            async with self._lock:
+                self.store[key] = value
+                return True
 
-    async def fake_get_llm_client():
-        return litellm_client
+    fake_redis = FakeRedis()
 
-    async def fake_get_groq_client():
-        raise AssertionError("Direct Groq fallback should not run when proxy fallback succeeds.")
+    async def fake_get_redis():
+        return fake_redis
 
-    monkeypatch.setattr(llm_client_module, "get_llm_client", fake_get_llm_client)
-    monkeypatch.setattr(llm_client_module, "get_groq_client", fake_get_groq_client)
-    monkeypatch.setattr(llm_client_module.sentry_sdk, "capture_exception", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(llm_client_module, "get_redis", fake_get_redis)
 
-    result = await llm_client_module.create_chat_completion(
-        model="default-fast",
-        messages=[{"role": "user", "content": "hi"}],
+    manager = llm_client_module.ProviderStateManager(
+        failure_threshold=999,
+        cooldown_seconds=30,
+        state_ttl_seconds=300,
     )
 
-    assert result.choices[0].message.content == "proxy-fallback-ok"
-    assert litellm_completions.calls[0]["model"] == "default-fast"
-    assert litellm_completions.calls[1]["model"] == "groq/llama-3.1-8b-instant"
+    await asyncio.gather(*(manager.mark_failure("groq") for _ in range(25)))
+    state = await manager._read_state("groq")
 
-
-@pytest.mark.asyncio
-async def test_stream_chat_completion_recovers_from_invalid_alias(monkeypatch):
-    importlib.reload(llm_client_module)
-
-    class LiteLLMCompletions:
-        def __init__(self):
-            self.calls: list[dict] = []
-
-        async def create(self, **kwargs):
-            self.calls.append(kwargs)
-            raise _invalid_model_error("default-fast")
-
-    class GroqCompletions:
-        def __init__(self):
-            self.calls: list[dict] = []
-
-        async def create(self, **kwargs):
-            self.calls.append(kwargs)
-
-            async def _stream():
-                yield _StreamChunk("hello")
-                yield _StreamChunk(None)
-
-            return _stream()
-
-    litellm_completions = LiteLLMCompletions()
-    groq_completions = GroqCompletions()
-    litellm_client = SimpleNamespace(chat=SimpleNamespace(completions=litellm_completions))
-    groq_client = SimpleNamespace(chat=SimpleNamespace(completions=groq_completions))
-
-    async def fake_get_llm_client():
-        return litellm_client
-
-    async def fake_get_groq_client():
-        return groq_client
-
-    monkeypatch.setattr(llm_client_module, "get_llm_client", fake_get_llm_client)
-    monkeypatch.setattr(llm_client_module, "get_groq_client", fake_get_groq_client)
-    monkeypatch.setattr(llm_client_module.sentry_sdk, "capture_exception", lambda *_args, **_kwargs: None)
-
-    chunks: list[str] = []
-    async for chunk in llm_client_module.stream_chat_completion(
-        model="default-fast",
-        messages=[{"role": "user", "content": "hi"}],
-    ):
-        chunks.append(chunk)
-
-    assert chunks == ["hello"]
-    assert litellm_completions.calls[0]["model"] == "default-fast"
-    assert litellm_completions.calls[0]["stream"] is True
-    assert groq_completions.calls[0]["model"] == "llama-3.1-8b-instant"
-    assert groq_completions.calls[0]["stream"] is True
-
-
-def test_resolve_groq_api_key_uses_secret_value(monkeypatch):
-    importlib.reload(llm_client_module)
-
-    settings = SimpleNamespace(groq_api_key=SecretStr("groq-test-key"))
-    monkeypatch.setattr(llm_client_module, "get_settings", lambda: settings)
-
-    assert llm_client_module._resolve_groq_api_key() == "groq-test-key"
+    assert state["failure_count"] == 25
+    assert state["blocked_until"] == 0

@@ -13,11 +13,10 @@ import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from auth import check_is_pro, invalidate_pro_cache, verify_token
+from auth import check_is_pro, get_supabase_admin, invalidate_pro_cache, verify_token
 from config import get_settings
 from logging_config import anonymize_user_id
 from monitoring import capture_telemetry_event
-from supabase import create_client
 
 logger = structlog.get_logger()
 
@@ -53,8 +52,9 @@ class PaymentWebhookResult(BaseModel):
 
 def verify_dodo_signature(payload: bytes, signature: str, secret: str) -> bool:
     """Verify webhook signature with HMAC SHA-256."""
+    normalized_signature = signature.strip()
     expected_signature = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(signature, expected_signature)
+    return hmac.compare_digest(normalized_signature, expected_signature)
 
 
 def _extract_user_id(data: dict[str, Any]) -> Optional[str]:
@@ -164,6 +164,7 @@ def process_dodo_webhook_payload(payload: dict[str, Any], supabase: Any) -> Paym
         customer_email = data.get("customer_email")
         if isinstance(customer_email, str) and customer_email.strip():
             user_id = _resolve_user_id_from_email(supabase, customer_email.strip())
+    user_id_hash = anonymize_user_id(user_id) if user_id else None
 
     if should_set_pro is not None:
         if not user_id:
@@ -183,7 +184,7 @@ def process_dodo_webhook_payload(payload: dict[str, Any], supabase: Any) -> Paym
             if not updated_rows:
                 logger.error(
                     "payment_webhook_user_not_found",
-                    user_id=user_id,
+                    user_id_hash=user_id_hash,
                     event_type=event_type,
                 )
                 raise HTTPException(
@@ -193,7 +194,7 @@ def process_dodo_webhook_payload(payload: dict[str, Any], supabase: Any) -> Paym
         except Exception as exc:
             logger.error(
                 "payment_webhook_user_update_failed",
-                user_id=user_id,
+                user_id_hash=user_id_hash,
                 event_type=event_type,
                 error=str(exc),
             )
@@ -206,7 +207,7 @@ def process_dodo_webhook_payload(payload: dict[str, Any], supabase: Any) -> Paym
         if response_error:
             logger.error(
                 "payment_webhook_user_update_error",
-                user_id=user_id,
+                user_id_hash=user_id_hash,
                 event_type=event_type,
                 error=str(response_error),
             )
@@ -237,7 +238,7 @@ async def create_checkout_session(
     """
     user_id = str(auth["user"].id)
     user_id_hash = anonymize_user_id(user_id)
-    logger.info("create_checkout_session_called", user_id=user_id)
+    logger.info("create_checkout_session_called", user_id_hash=user_id_hash)
     capture_telemetry_event("payment_checkout_start", user_id_hash=user_id_hash)
     settings = get_settings()
     if not settings.dodo_payment_link_id:
@@ -258,7 +259,7 @@ async def create_checkout_session(
     
     checkout_url = f"{base_payment_link}?{urllib.parse.urlencode(params)}"
     
-    logger.info("payment_link_generated", user_id=user_id)
+    logger.info("payment_link_generated", user_id_hash=user_id_hash)
     capture_telemetry_event("payment_checkout_session_created", user_id_hash=user_id_hash, plan=request.plan)
     
     return CheckoutResponse(
@@ -316,13 +317,12 @@ async def dodo_webhook(
             message="Duplicate event ignored",
         )
 
-    if not settings.supabase_url or not settings.supabase_service_role_key:
+    supabase = get_supabase_admin()
+    if not supabase:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Supabase configuration missing",
         )
-
-    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
     result = process_dodo_webhook_payload(payload, supabase)
     capture_telemetry_event(
         "payment_webhook_processed",
@@ -358,5 +358,9 @@ async def verify_payment_status(auth = Depends(verify_token)):
             "status": "active" if is_pro else "free"
         }
     except Exception as e:
-        logger.error("payment_status_verification_error", error=str(e), user_id=user_id)
+        logger.error(
+            "payment_status_verification_error",
+            error=str(e),
+            user_id_hash=anonymize_user_id(user_id),
+        )
         raise HTTPException(status_code=500, detail="Failed to verify payment status")
