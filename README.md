@@ -64,11 +64,38 @@ All model calls go through `api/services/llm_client.py` using native `AsyncOpenA
 - Cerebras (`zai-glm-4.7`)
 - OpenRouter (`openrouter/free`) as optional fallback
 
-Primary app-level MoE aliases are defined in `api/services/inference.py` and mapped in `api/services/llm_client.py`:
+Primary app-level MoE routing is defined in `api/services/inference.py` and alias-to-provider fallback mapping lives in `api/services/llm_client.py`.
 
-- Learn: `learn-gemini-flash`, `learn-groq-llama8b`, `learn-openrouter-free`
-- Technical: `technical-gemini-flash`, `technical-gemini-pro`, `technical-groq-llama8b`, `technical-openrouter-free`, `technical-cerebras-glm`
-- Socratic: `socratic-gemini-pro`, `socratic-groq-llama8b`, `socratic-openrouter-free`, `socratic-cerebras-glm`
+### MoE Routing Matrix (Mode -> Alias Chain)
+
+| Mode | Condition | Ranked Alias Chain (first -> fallback) |
+|------|-----------|-----------------------------------------|
+| Learning | Freshness query (`latest`, `today`, `recent`, etc.) | `learn-gemini-flash` -> `learn-groq-llama8b` -> `learn-openrouter-free` |
+| Learning | Short/latency-biased query (`<8` tokens or high latency priority) | `learn-groq-llama8b` -> `learn-gemini-flash` -> `learn-openrouter-free` |
+| Learning | Default | `learn-gemini-flash` -> `learn-groq-llama8b` -> `learn-openrouter-free` |
+| Technical | Math-heavy, high complexity (`>=0.6`) | `technical-gemini-pro` -> (`technical-cerebras-glm` when Pro and complexity `>=0.8`) -> `technical-groq-llama8b` -> `technical-openrouter-free` |
+| Technical | Math-heavy, low complexity (`<0.4`) | `technical-gemini-flash` -> `technical-groq-llama8b` -> `technical-openrouter-free` |
+| Technical | Programming query or search-context assisted | `technical-gemini-pro` -> `technical-groq-llama8b` -> `technical-openrouter-free` (+ `technical-cerebras-glm` appended when Pro and complexity `>=0.8`) |
+| Technical | Default | `technical-gemini-pro` -> (`technical-cerebras-glm` inserted at rank 2 when Pro and complexity `>=0.8`) -> `technical-groq-llama8b` -> `technical-openrouter-free` |
+| Socratic | Default | `socratic-gemini-pro` -> `socratic-groq-llama8b` -> `socratic-openrouter-free` |
+| Socratic | High-reasoning Pro path (reasoning + complexity `>=0.8`) | `socratic-cerebras-glm` -> `socratic-gemini-pro` -> `socratic-groq-llama8b` -> `socratic-openrouter-free` |
+
+### Alias-to-Provider Matrix (Provider Model Fallback)
+
+| Alias | Provider Fallback Order (provider:model) |
+|------|-------------------------------------------|
+| `learn-gemini-flash` | `gemini:gemini-2.5-flash` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
+| `learn-groq-llama8b` | `groq:llama-3.1-8b-instant` -> `gemini:gemini-2.5-flash` -> `openrouter:openrouter/free` |
+| `learn-openrouter-free` | `gemini:gemini-2.5-flash` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
+| `technical-gemini-flash` | `gemini:gemini-2.5-flash` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
+| `technical-gemini-pro` | `gemini:gemini-2.5-pro` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
+| `technical-groq-llama8b` | `groq:llama-3.1-8b-instant` -> `gemini:gemini-2.5-pro` -> `openrouter:openrouter/free` |
+| `technical-openrouter-free` | `gemini:gemini-2.5-pro` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
+| `technical-cerebras-glm` | `cerebras:zai-glm-4.7` -> `gemini:gemini-2.5-pro` -> `groq:llama-3.1-8b-instant` |
+| `socratic-gemini-pro` | `gemini:gemini-2.5-pro` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
+| `socratic-groq-llama8b` | `groq:llama-3.1-8b-instant` -> `gemini:gemini-2.5-pro` -> `openrouter:openrouter/free` |
+| `socratic-openrouter-free` | `gemini:gemini-2.5-pro` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
+| `socratic-cerebras-glm` | `cerebras:zai-glm-4.7` -> `gemini:gemini-2.5-pro` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
 
 ## API Endpoints (public)
 
