@@ -56,38 +56,76 @@ export default function MessageActionToolbar({
   };
 
   return (
-    <div className="absolute right-3 top-3 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
-      <button
-        onClick={handleCopy}
-        title={copied ? "Copied" : "Copy"}
-        aria-label={copied ? "Copied" : "Copy"}
-        disabled={disabled}
-        className="h-7 w-7 rounded-lg border border-white/10 bg-dark-900/70 text-gray-300 hover:text-white flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {copied ? (
-          <Check className="h-3.5 w-3.5 text-cyan-300" />
-        ) : (
-          <Copy className="h-3.5 w-3.5" />
-        )}
-      </button>
-      <button
-        onClick={handleRegenerate}
-        title="Regenerate"
-        aria-label="Regenerate"
-        disabled={disabled}
-        className="h-7 w-7 rounded-lg border border-white/10 bg-dark-900/70 text-gray-300 hover:text-white flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        <RefreshCcw className="h-3.5 w-3.5" />
-      </button>
-      <button
-        onClick={handleShare}
-        title="Share"
-        aria-label="Share"
-        disabled={disabled}
-        className="h-7 w-7 rounded-lg border border-white/10 bg-dark-900/70 text-gray-300 hover:text-white flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        <Share2 className="h-3.5 w-3.5" />
-      </button>
-    </div>
+    <>
+      {/* Mobile: always-visible toolbar below message content */}
+      <div className="flex items-center gap-1.5 mt-2 sm:hidden">
+        <button
+          onClick={handleCopy}
+          title={copied ? "Copied" : "Copy"}
+          aria-label={copied ? "Copied" : "Copy"}
+          disabled={disabled}
+          className="h-10 w-10 rounded-xl border border-white/10 bg-dark-900/70 text-gray-300 active:text-white flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {copied ? (
+            <Check className="h-4 w-4 text-cyan-300" />
+          ) : (
+            <Copy className="h-4 w-4" />
+          )}
+        </button>
+        <button
+          onClick={handleRegenerate}
+          title="Regenerate"
+          aria-label="Regenerate"
+          disabled={disabled}
+          className="h-10 w-10 rounded-xl border border-white/10 bg-dark-900/70 text-gray-300 active:text-white flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <RefreshCcw className="h-4 w-4" />
+        </button>
+        <button
+          onClick={handleShare}
+          title="Share"
+          aria-label="Share"
+          disabled={disabled}
+          className="h-10 w-10 rounded-xl border border-white/10 bg-dark-900/70 text-gray-300 active:text-white flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Share2 className="h-4 w-4" />
+        </button>
+      </div>
+
+      {/* Desktop: hover-only compact absolute toolbar */}
+      <div className="hidden sm:flex absolute right-3 top-3 items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+        <button
+          onClick={handleCopy}
+          title={copied ? "Copied" : "Copy"}
+          aria-label={copied ? "Copied" : "Copy"}
+          disabled={disabled}
+          className="h-7 w-7 rounded-lg border border-white/10 bg-dark-900/70 text-gray-300 hover:text-white flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {copied ? (
+            <Check className="h-3.5 w-3.5 text-cyan-300" />
+          ) : (
+            <Copy className="h-3.5 w-3.5" />
+          )}
+        </button>
+        <button
+          onClick={handleRegenerate}
+          title="Regenerate"
+          aria-label="Regenerate"
+          disabled={disabled}
+          className="h-7 w-7 rounded-lg border border-white/10 bg-dark-900/70 text-gray-300 hover:text-white flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <RefreshCcw className="h-3.5 w-3.5" />
+        </button>
+        <button
+          onClick={handleShare}
+          title="Share"
+          aria-label="Share"
+          disabled={disabled}
+          className="h-7 w-7 rounded-lg border border-white/10 bg-dark-900/70 text-gray-300 hover:text-white flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Share2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </>
   );
 }

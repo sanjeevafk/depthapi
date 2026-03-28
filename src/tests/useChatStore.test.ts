@@ -16,8 +16,6 @@ const resetStore = () => {
       streamControllers: {},
       isLoading: false,
       regeneratingMessageId: null,
-      regenerationModalOpen: false,
-      regenerationTargetId: null,
     },
     true,
   );
@@ -138,7 +136,7 @@ describe("useChatStore streaming", () => {
     await sendPromise;
 
     const assistant = findAssistantMessage();
-    expect(assistant?.error).toBe("Streaming timed out. Retry.");
+    expect(assistant?.error).toBe("The response timed out. Please retry.");
     expect(assistant?.syncStatus).toBe("failed");
   });
 
@@ -167,7 +165,7 @@ describe("useChatStore streaming", () => {
     await sendPromise;
 
     const assistant = findAssistantMessage();
-    expect(assistant?.error).toBe("Canceled");
+    expect(assistant?.error).toBe("Request canceled.");
     expect(assistant?.isStreaming).toBe(false);
     expect(assistant?.syncStatus).not.toBe("synced");
   });
@@ -249,7 +247,9 @@ describe("useChatStore streaming", () => {
 
     const failed = findAssistantMessage();
     expect(failed?.syncStatus).toBe("failed");
-    expect(failed?.error).toContain("Retry will send a new request");
+    expect(failed?.error).toContain(
+      "A similar request is still running. Retry to send a new request.",
+    );
 
     await useChatStore.getState().retrySync(failed?.clientGeneratedId || "");
 
@@ -309,5 +309,41 @@ describe("useChatStore regeneration", () => {
     const assistant = useChatStore.getState().messagesById["assistant1"];
     expect(assistant?.content).toBe("New answer");
     expect(assistant?.metadata?.temperature).toBe(0.7);
+  });
+});
+
+describe("useChatStore workspace + learn depth switching", () => {
+  beforeEach(() => {
+    resetStore();
+    seedConversation();
+  });
+
+  it("switches workspaces deterministically", () => {
+    useChatStore.getState().setWorkspace("technical");
+    expect(useChatStore.getState().workspace).toBe("technical");
+    expect(useChatStore.getState().currentMode).toBe("technical");
+
+    useChatStore.getState().setWorkspace("socratic");
+    expect(useChatStore.getState().workspace).toBe("socratic");
+    expect(useChatStore.getState().currentMode).toBe("socratic");
+
+    useChatStore.getState().setWorkspace("learn");
+    expect(useChatStore.getState().workspace).toBe("learn");
+    expect(useChatStore.getState().currentMode).toBe("learning");
+  });
+
+  it("updates learn depth without leaving learn workspace", () => {
+    useChatStore.getState().setWorkspace("learn");
+    useChatStore.getState().setDepthLevel("eli5");
+
+    expect(useChatStore.getState().workspace).toBe("learn");
+    expect(useChatStore.getState().currentMode).toBe("learning");
+    expect(useChatStore.getState().depthLevel).toBe("eli5");
+    expect(useChatStore.getState().currentPromptMode).toBe("eli5");
+
+    useChatStore.getState().setDepthLevel("meme");
+    expect(useChatStore.getState().workspace).toBe("learn");
+    expect(useChatStore.getState().depthLevel).toBe("meme");
+    expect(useChatStore.getState().currentPromptMode).toBe("meme");
   });
 });

@@ -4,10 +4,8 @@ import {
   CHAT_FREE_MODES,
   CHAT_PREMIUM_MODES,
   CHAT_PROMPT_MODES,
-  LEGACY_CHAT_MODES,
   type ChatMode,
   type ConversationMode,
-  type LegacyChatMode,
   type PromptMode,
 } from "../types/chat";
 
@@ -16,7 +14,6 @@ export {
   CHAT_FREE_MODES,
   CHAT_PREMIUM_MODES,
   CHAT_PROMPT_MODES,
-  LEGACY_CHAT_MODES,
 };
 
 const SHARED_CONVERSATION_MODES = [
@@ -46,7 +43,6 @@ if (import.meta.env.DEV) {
   matchesSharedModes("free_modes", SHARED_FREE_MODES, chatModes.free_modes);
   matchesSharedModes("pro_modes", SHARED_PREMIUM_MODES, chatModes.pro_modes);
   matchesSharedModes("prompt_modes", CHAT_PROMPT_MODES, chatModes.prompt_modes);
-  matchesSharedModes("legacy_modes", [], chatModes.legacy_modes);
 }
 
 export const CHAT_DEFAULT_MODE: PromptMode = "eli5";
@@ -69,10 +65,10 @@ export const CHAT_MODE_DESCRIPTIONS: Record<ChatMode, string> = {
   eli12: "Middle-school friendly depth.",
   eli15: "High-school level clarity.",
   meme: "Punchy, funny analogies.",
-  learning: "General learning with judged ensemble answers.",
+  learning: "General learning with adaptive provider routing and web freshness.",
   technical:
-    "Technical research with gemini-2.5-pro and deepseek-ai/DeepSeek-R1 fallback.",
-  socratic: "Guided question flow.",
+    "Technical explanations with search-aware context and structured clarity.",
+  socratic: "Guided, question-first learning to build understanding step by step.",
 };
 
 export const CHAT_MODE_ACCENTS: Record<ChatMode, string> = {
@@ -112,23 +108,12 @@ export const isChatMode = (value?: string | null): value is ChatMode => {
 
 export const resolveChatMode = (value?: string | null): ChatMode => {
   if (isChatMode(value)) return value;
-  if (
-    value === "fast" ||
-    value === "ensemble" ||
-    value === "default" ||
-    value === "balanced"
-  )
-    return "learning";
-  if (value === "technical-depth" || value === "technical_depth")
-    return "technical";
-  if (value === "meme-style") return "meme";
   return CHAT_DEFAULT_CONVERSATION_MODE;
 };
 
 export const resolvePromptMode = (value?: string | null): PromptMode => {
   if (isChatMode(value) && isPromptMode(value as ChatMode))
     return value as PromptMode;
-  if (value === "meme-style") return "meme";
   return CHAT_DEFAULT_MODE;
 };
 
@@ -147,23 +132,12 @@ export const isModeGated = (
 export const formatModeLabel = (mode?: ConversationMode | null) => {
   if (!mode) return CHAT_MODE_LABELS[CHAT_DEFAULT_CONVERSATION_MODE];
   if (isChatMode(mode)) return CHAT_MODE_LABELS[mode];
-  if (mode === "meme-style") return CHAT_MODE_LABELS.meme;
-  if (
-    mode === "fast" ||
-    mode === "ensemble" ||
-    mode === "default" ||
-    mode === "balanced"
-  )
-    return CHAT_MODE_LABELS.learning;
-  if (mode === "technical-depth" || mode === "technical_depth")
-    return CHAT_MODE_LABELS.technical;
   return typeof mode === "string" && mode
     ? (mode as string).toUpperCase()
     : CHAT_MODE_LABELS[CHAT_DEFAULT_CONVERSATION_MODE];
 };
 
-export const toQueryLevel = (mode: ChatMode | PromptMode | LegacyChatMode) => {
-  if (mode === "meme-style") return "meme";
+export const toQueryLevel = (mode: ChatMode | PromptMode) => {
   if (mode === "learning" || mode === "technical" || mode === "socratic")
     return "eli15";
   return mode;

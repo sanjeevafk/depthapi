@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Menu } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import MessageList from "../components/chat/MessageList";
-import RegenerationModal from "../components/chat/RegenerationModal";
 import ThemeToggle from "../components/chat/ThemeToggle";
 import WorkspaceInput from "../components/chat/WorkspaceInput";
 import WorkspaceSidebar from "../components/chat/WorkspaceSidebar";
@@ -14,6 +14,8 @@ import { getHealth } from "../api";
 import { useConversations } from "../hooks/useConversations";
 import { useMessages } from "../hooks/useMessages";
 import { useChatStore } from "../stores/useChatStore";
+import { useConversationStore } from "../stores/useConversationStore";
+import { useMessageStore } from "../stores/useMessageStore";
 import type { Workspace } from "../lib/chatStoreUtils";
 
 const WORKSPACE_LABELS: Record<Workspace, string> = {
@@ -24,15 +26,18 @@ const WORKSPACE_LABELS: Record<Workspace, string> = {
 const SIDEBAR_COLLAPSE_KEY = "kb_sidebar_collapsed_v1";
 
 export default function ChatPage(): JSX.Element {
-  const { user, signInWithGoogle } = useAuth();
+  const { user, signInWithGoogle, signOut } = useAuth();
+  const navigate = useNavigate();
   const { conversations } = useConversations();
 
-  const workspace = useChatStore((state) => state.workspace);
-  const depthLevel = useChatStore((state) => state.depthLevel);
+  const workspace = useConversationStore((state) => state.workspace);
+  const depthLevel = useConversationStore((state) => state.depthLevel);
   const isSidebarOpen = useChatStore((state) => state.isSidebarOpen);
-  const currentConversationId = useChatStore(
+  const currentConversationId = useConversationStore(
     (state) => state.currentConversationId,
   );
+  const isDraftThread = useConversationStore((state) => state.isDraftThread);
+  const messageCount = useMessageStore((state) => state.messageIds.length);
   const selectConversation = useChatStore((state) => state.selectConversation);
   const setWorkspace = useChatStore((state) => state.setWorkspace);
   const setDepthLevel = useChatStore((state) => state.setDepthLevel);
@@ -42,14 +47,8 @@ export default function ChatPage(): JSX.Element {
   const sendMessage = useChatStore((state) => state.sendMessage);
   const [chatEnabled, setChatEnabled] = useState(true);
   const [healthMessage, setHealthMessage] = useState<string | null>(null);
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
-    if (typeof window === "undefined") return false;
-    try {
-      return window.localStorage.getItem(SIDEBAR_COLLAPSE_KEY) === "true";
-    } catch {
-      return false;
-    }
-  });
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isSidebarPrefHydrated, setIsSidebarPrefHydrated] = useState(false);
 
   const upgradeModalOpen = useChatStore((state) => state.upgradeModalOpen);
   const closeUpgradeModal = useChatStore((state) => state.closeUpgradeModal);
@@ -88,7 +87,21 @@ export default function ChatPage(): JSX.Element {
   useMessages();
 
   useEffect(() => {
+    if (isSidebarPrefHydrated || typeof window === "undefined") return;
+    try {
+      setIsSidebarCollapsed(
+        window.localStorage.getItem(SIDEBAR_COLLAPSE_KEY) === "true",
+      );
+    } catch {
+      setIsSidebarCollapsed(false);
+    } finally {
+      setIsSidebarPrefHydrated(true);
+    }
+  }, [isSidebarPrefHydrated]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
+    if (!isSidebarPrefHydrated) return;
     try {
       window.localStorage.setItem(
         SIDEBAR_COLLAPSE_KEY,
@@ -97,7 +110,7 @@ export default function ChatPage(): JSX.Element {
     } catch {
       // Ignore storage errors (e.g. private mode).
     }
-  }, [isSidebarCollapsed]);
+  }, [isSidebarCollapsed, isSidebarPrefHydrated]);
 
   useEffect(() => {
     if (!isSidebarOpen) return;
@@ -119,15 +132,15 @@ export default function ChatPage(): JSX.Element {
         const backendChatEnabled =
           typeof health.chat_enabled === "boolean"
             ? health.chat_enabled
-            : health.litellm?.status === "ok";
+            : health.provider?.status === "ok";
         if (disposed) return;
         setChatEnabled(backendChatEnabled);
 
         if (!backendChatEnabled) {
           const message =
             health.key_valid === false
-              ? "Chat is temporarily unavailable because LiteLLM credentials are invalid."
-              : "Chat is temporarily unavailable because LiteLLM is not configured.";
+              ? "Authentication failed for one or more providers. Please check credentials and try again."
+              : "Chat is temporarily unavailable while provider configuration is being updated.";
           setHealthMessage(message);
           return;
         }
@@ -137,7 +150,7 @@ export default function ChatPage(): JSX.Element {
         if (disposed) return;
         setChatEnabled(false);
         setHealthMessage(
-          "Chat is temporarily unavailable while health checks are recovering.",
+          "Chat is temporarily unavailable right now. Please try again in a moment.",
         );
       }
     };
@@ -157,12 +170,11 @@ export default function ChatPage(): JSX.Element {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-100 px-6 text-slate-900 dark:bg-dark-900 dark:text-white">
         <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-xl dark:border-white/10 dark:bg-dark-800">
-          <h1 className="mb-3 text-2xl font-semibold">
-            Sign in to start chatting
-          </h1>
+          <p className="mb-3 text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+            Welcome back
+          </p>
           <p className="mb-6 text-sm text-slate-500 dark:text-slate-400">
-            Your conversations are stored securely in Supabase and synced across
-            sessions.
+            Sign in to keep your conversations saved and in sync.
           </p>
           <button
             onClick={() => void signInWithGoogle()}
@@ -176,14 +188,14 @@ export default function ChatPage(): JSX.Element {
   }
 
   const workspaceLabel = WORKSPACE_LABELS[workspace];
-  const hasConversations = conversations.length > 0;
+  const showPinnedPrompts = isDraftThread || messageCount === 0;
   const userName =
     user.user_metadata?.full_name || user.email?.split("@")[0] || "User";
   const avatarUrl =
     (user.user_metadata?.avatar_url as string | undefined) ?? null;
 
   return (
-    <div className="h-screen overflow-hidden bg-slate-100 text-slate-900 dark:bg-dark-900 dark:text-slate-100">
+    <div className="h-[100dvh] min-h-[100dvh] overflow-hidden bg-slate-100 text-slate-900 dark:bg-dark-900 dark:text-slate-100">
       <div className="flex h-full">
         <WorkspaceSidebar
           workspace={workspace}
@@ -193,12 +205,16 @@ export default function ChatPage(): JSX.Element {
           isCollapsed={isSidebarCollapsed}
           userName={userName}
           avatarUrl={avatarUrl}
+          isAuthenticated={Boolean(user)}
           onClose={() => setIsSidebarOpen(false)}
           onToggleCollapse={() => setIsSidebarCollapsed((prev) => !prev)}
           onNewThread={startNewThread}
+          onGoHome={() => navigate("/?stay=1")}
           onWorkspaceChange={setWorkspace}
           onSelectConversation={(id) => void selectConversation(id)}
           onDeleteConversation={(id) => void handleDeleteConversation(id)}
+          onSignIn={() => void signInWithGoogle()}
+          onSignOut={() => void signOut()}
         />
 
         {isSidebarOpen && (
@@ -217,7 +233,7 @@ export default function ChatPage(): JSX.Element {
                 type="button"
                 onClick={() => setIsSidebarOpen(true)}
                 aria-label="Open sidebar"
-                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/50 md:hidden dark:border-white/10 dark:bg-dark-800 dark:text-slate-300 dark:hover:bg-dark-700"
+                className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/50 md:hidden dark:border-white/10 dark:bg-dark-800 dark:text-slate-300 dark:hover:bg-dark-700"
               >
                 <Menu className="h-4 w-4" />
               </button>
@@ -233,13 +249,11 @@ export default function ChatPage(): JSX.Element {
 
           <main className="flex min-h-0 flex-1 flex-col">
             {healthMessage && (
-              <div className="mx-auto mt-4 w-full max-w-3xl rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100">
+              <div className="mx-3 mt-3 sm:mx-auto sm:mt-4 w-auto sm:w-full max-w-3xl rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100">
                 {healthMessage}
               </div>
             )}
-            {hasConversations ? (
-              <MessageList />
-            ) : (
+            {showPinnedPrompts ? (
               <WelcomeEmptyState
                 workspace={workspace}
                 userName={userName}
@@ -247,10 +261,12 @@ export default function ChatPage(): JSX.Element {
                 disabledReason={
                   chatEnabled
                     ? undefined
-                    : "Chat is disabled while LiteLLM configuration is degraded."
+                    : "Responses are paused while provider health recovers."
                 }
                 onPromptSelect={(prompt) => void handlePromptSelect(prompt)}
               />
+            ) : (
+              <MessageList />
             )}
           </main>
 
@@ -259,7 +275,7 @@ export default function ChatPage(): JSX.Element {
             depthLevel={depthLevel}
             onDepthChange={setDepthLevel}
             disabled={!chatEnabled}
-            disabledReason="Chat is disabled while LiteLLM configuration is degraded."
+            disabledReason="Responses are paused while provider health recovers."
           />
         </div>
       </div>
@@ -270,7 +286,6 @@ export default function ChatPage(): JSX.Element {
         onUpgrade={handleUpgrade}
         onUseByok={handleUseByok}
       />
-      <RegenerationModal />
     </div>
   );
 }

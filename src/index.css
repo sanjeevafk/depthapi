@@ -138,3 +138,39 @@ body {
   will-change: opacity, transform;
   transform: translateZ(0);
 }
+
+/* Eliminate 300ms tap delay on mobile */
+button,
+a,
+[role="button"],
+[role="option"],
+label {
+  touch-action: manipulation;
+}
+
+/* Prevent horizontal overflow bleed at HTML level */
+html {
+  overflow-x: hidden;
+}
+
+/* Custom scrollbar for sidebar conversations */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.3) transparent;
+}
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.3);
+  border-radius: 4px;
+}
+.dark .custom-scrollbar {
+  scrollbar-color: rgba(71, 85, 105, 0.4) transparent;
+}
+.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(71, 85, 105, 0.4);
+}
