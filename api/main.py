@@ -329,8 +329,8 @@ async def health():
 
     async def check_rate_limit() -> dict[str, str]:
         try:
-            redis = await asyncio.wait_for(get_redis(), timeout=0.35)
-            await asyncio.wait_for(redis.ping(), timeout=0.35)
+            redis = await asyncio.wait_for(get_redis(), timeout=2.0)
+            await asyncio.wait_for(redis.ping(), timeout=2.0)
             return {"status": "ok"}
         except Exception as exc:
             is_prod = settings.environment == "production"
@@ -344,7 +344,7 @@ async def health():
             if not settings.supabase_url or not settings.supabase_service_role_key:
                 logger.warning("db_health_degraded_missing_config", severity="warning")
                 return {"status": "degraded"}
-            supabase = await asyncio.wait_for(asyncio.to_thread(get_supabase_admin), timeout=0.35)
+            supabase = await asyncio.wait_for(asyncio.to_thread(get_supabase_admin), timeout=2.0)
             return {"status": "ok" if supabase else "degraded"}
         except Exception as exc:
             logger.error("db_health_probe_failed", severity="error", error=str(exc))
