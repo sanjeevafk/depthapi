@@ -90,6 +90,21 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         return { conversations };
       }
 
+      // On startup/login with no active selection, stay in a fresh Learn thread
+      // instead of auto-opening the most recent conversation.
+      if (state.currentConversationId === null) {
+        return {
+          conversations,
+          currentConversationId: null,
+          isDraftThread: true,
+          workspace: "learn" as Workspace,
+          depthLevel: DEFAULT_DEPTH_LEVEL,
+          currentMode: "learning" as ChatMode,
+          currentPromptMode: DEFAULT_DEPTH_LEVEL as PromptMode,
+          selectedLevel: DEFAULT_DEPTH_LEVEL as Level,
+        };
+      }
+
       const preferredId = state.currentConversationId;
       const hasPreferred = preferredId
         ? conversations.some((item) => item.id === preferredId)
