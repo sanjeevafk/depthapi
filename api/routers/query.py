@@ -127,6 +127,35 @@ def _build_stream_replay_response(
     )
 
 
+def _build_stream_wait_response(
+    *,
+    topic: str,
+    level: str,
+    mode: str,
+    message_id: str,
+) -> StreamingResponse:
+    async def wait_generator():
+        builder = SseEventBuilder()
+        yield builder.emit_json(
+            "status",
+            {
+                "status": "waiting",
+                "reason": "duplicate_in_progress",
+                "topic": topic,
+                "level": level,
+                "mode": mode,
+                "message_id": message_id,
+            },
+        )
+        yield builder.emit("done", "[DONE]")
+
+    return StreamingResponse(
+        wait_generator(),
+        media_type="text/event-stream",
+        headers=SSE_RESPONSE_HEADERS,
+    )
+
+
 async def _stream_chunks(stream: AsyncIterable[str] | Iterable[str]) -> AsyncIterator[str]:
     if isinstance(stream, AsyncIterable):
         async for chunk in stream:
@@ -410,7 +439,12 @@ async def query_topic_stream(
                 started_ts = int(started_at) if isinstance(started_at, (int, float)) else now_ts
                 age_seconds = max(now_ts - started_ts, 0)
                 if age_seconds < idempotency_stale_seconds:
-                    raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
+                    return _build_stream_wait_response(
+                        topic=topic,
+                        level=level,
+                        mode=mode,
+                        message_id=message_id or "",
+                    )
                 reclaimed = await cache_set(
                     idempotency_key,
                     {
@@ -422,7 +456,12 @@ async def query_topic_stream(
                     ttl=idempotency_ttl_seconds,
                 )
                 if not reclaimed:
-                    raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
+                    return _build_stream_wait_response(
+                        topic=topic,
+                        level=level,
+                        mode=mode,
+                        message_id=message_id or "",
+                    )
                 idempotency_claimed = True
 
     if idempotency_key:
@@ -455,7 +494,12 @@ async def query_topic_stream(
                     started_ts = int(started_at) if isinstance(started_at, (int, float)) else now_ts
                     age_seconds = max(now_ts - started_ts, 0)
                     if age_seconds < idempotency_stale_seconds:
-                        raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
+                        return _build_stream_wait_response(
+                            topic=topic,
+                            level=level,
+                            mode=mode,
+                            message_id=message_id or "",
+                        )
                     current = await cache_get(idempotency_key)
                     if not current:
                         await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
@@ -478,7 +522,12 @@ async def query_topic_stream(
                         if current_status == "in_progress" and current_started_ts == started_ts:
                             await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
                         else:
-                            raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
+                            return _build_stream_wait_response(
+                                topic=topic,
+                                level=level,
+                                mode=mode,
+                                message_id=message_id or "",
+                            )
 
     async def event_generator():
         full_content = ""
@@ -860,6 +909,7 @@ async def save_to_history(user, topic: str, levels: list[str], mode: str) -> Non
             .select("id, levels")
             .eq("user_id", user.id)
             .eq("topic", topic)
+            .eq("mode", normalized_mode)
             .execute()
         )
     except Exception as exc:

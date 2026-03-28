@@ -361,16 +361,27 @@ async def test_generate_stream_explanation_technical_streams_via_llm_stream(monk
 
 @pytest.mark.asyncio
 async def test_generate_stream_explanation_technical_does_not_duplicate_request_id(monkeypatch):
-    async def fake_technical_stream_explanation(*_args, request_id=None, **kwargs):
+    async def fake_stream_chat_completion(*_args, request_id=None, **kwargs):
         assert request_id == "req-123"
         assert "request_id" not in kwargs
-        assert kwargs.get("temperature") == 0.7
+        assert kwargs.get("temperature") == inference_module.TECHNICAL_TEMPERATURE
         yield "ok"
 
+    monkeypatch.setattr(inference_module, "stream_chat_completion", fake_stream_chat_completion)
     monkeypatch.setattr(
-        inference_module._technical_mode,
-        "technical_stream_explanation",
-        fake_technical_stream_explanation,
+        inference_module,
+        "detect_intent_and_depth",
+        lambda _topic: {"intent": "explain", "depth": "shallow"},
+    )
+    monkeypatch.setattr(inference_module, "detect_diagram_type", lambda _topic: None)
+    monkeypatch.setattr(inference_module, "build_technical_prompt", lambda *_args, **_kwargs: "prompt")
+    async def fake_search_context(*_args, **_kwargs):
+        return ""
+    monkeypatch.setattr(inference_module, "_load_search_context", fake_search_context)
+    monkeypatch.setattr(
+        inference_module,
+        "_technical_route",
+        lambda *_args, **_kwargs: ("technical-gemini-pro", "technical-groq-llama8b"),
     )
 
     chunks = []
