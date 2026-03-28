@@ -5,7 +5,7 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'api'))
 
 try:
-    from config import get_settings
+    from api.config import get_settings
     from supabase import create_client
 except ImportError as e:
     print(f"Error importing required modules: {e}")
@@ -39,6 +39,9 @@ def promote_user(email: str):
         return
         
     user = response.data[0]
+    if not isinstance(user, dict):
+        print("❌ Unexpected user data format.")
+        return
     user_id = user.get('id')
     current_status = user.get('is_pro', False)
     
