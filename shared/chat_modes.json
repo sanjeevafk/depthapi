@@ -18,5 +18,4 @@
   "pro_modes": [
     "technical"
   ],
-  "legacy_modes": []
-}
+  "default_mode": "learning"}

@@ -73,3 +73,20 @@ async def test_get_redis_singleton_is_lock_safe(monkeypatch):
 
     assert all(client is clients[0] for client in clients)
     assert FakeRedisClient.instances == 1
+
+
+@pytest.mark.asyncio
+async def test_close_redis_is_lock_safe_under_parallel_calls(monkeypatch):
+    class FakeRedisClient:
+        close_calls = 0
+
+        async def close(self):
+            await asyncio.sleep(0.01)
+            type(self).close_calls += 1
+
+    monkeypatch.setattr(cache_module, "_client", FakeRedisClient())
+
+    await asyncio.gather(*(cache_module.close_redis() for _ in range(20)))
+
+    assert cache_module._client is None
+    assert FakeRedisClient.close_calls == 1

@@ -1,6 +1,6 @@
 """Upstash Redis REST cache service with a Redis-like async interface."""
 
-import threading
+import asyncio
 from typing import Any
 
 import httpx
@@ -78,7 +78,24 @@ class UpstashRedisCompat:
 
 
 _client: UpstashRedisCompat | None = None
-_client_lock = threading.Lock()
+import asyncio
+import threading
+from typing import Any
+
+_client: UpstashRedisCompat | None = None
+_client_lock: asyncio.Lock | None = None
+_client_lock_loop: asyncio.AbstractEventLoop | None = None
+_thread_lock = threading.Lock()
+
+
+def _get_lock() -> asyncio.Lock:
+    global _client_lock, _client_lock_loop
+    with _thread_lock:
+        current_loop = asyncio.get_running_loop()
+        if _client_lock is None or _client_lock_loop is not current_loop:
+            _client_lock = asyncio.Lock()
+            _client_lock_loop = current_loop
+        return _client_lock
 
 
 def _strip_env_quotes(value: str) -> str:
@@ -91,7 +108,7 @@ async def get_redis() -> UpstashRedisCompat:
     if _client is not None:
         return _client
 
-    with _client_lock:
+    async with _get_lock():
         if _client is not None:
             return _client
 
@@ -154,7 +171,7 @@ async def close_redis() -> None:
     """Close Upstash Redis REST client."""
     global _client
     client: UpstashRedisCompat | None = None
-    with _client_lock:
+    async with _get_lock():
         if _client:
             client = _client
             _client = None

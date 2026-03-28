@@ -4,10 +4,10 @@ from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
+from auth import get_supabase_admin
 from config import get_settings
 from routers.payments import dodo_webhook as payments_dodo_webhook
 from routers.payments import process_dodo_webhook_payload, verify_dodo_signature
-from supabase import create_client
 
 router = APIRouter(tags=["webhooks"])
 
@@ -25,5 +25,7 @@ async def dodo_webhook_dev(payload: dict):
     if settings.environment == "production":
         raise HTTPException(status_code=404, detail="Not found")
 
-    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+    supabase = get_supabase_admin()
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase configuration missing")
     return process_dodo_webhook_payload(payload, supabase)

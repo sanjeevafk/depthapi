@@ -5,7 +5,6 @@ import os
 import time
 import structlog
 from contextlib import asynccontextmanager
-import httpx
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -13,7 +12,7 @@ from routers import pinned, query, export, history, webhooks, payments, messages
 from auth import get_supabase_admin
 from services.cache import close_redis, get_redis
 from services.inference import close_client
-from services.llm_client import get_litellm_config_state
+from services.llm_client import get_provider_config_state
 from services.llm_errors import LLMError, LLMBadRequest, LLMInvalidAPIKey, LLMUnavailable
 from logging_config import (
     setup_logging,
@@ -39,7 +38,7 @@ async def lifespan(app: FastAPI):
     global redis_available
     redis_available = False
 
-    config_state = get_litellm_config_state()
+    config_state = get_provider_config_state()
     issues = config_state.get("issues")
     if not isinstance(issues, list):
         issues = []
@@ -47,7 +46,7 @@ async def lifespan(app: FastAPI):
         if not isinstance(issue, dict):
             continue
         level = str(issue.get("severity", "warning"))
-        event = "litellm_config_validation"
+        event = "provider_config_validation"
         payload = {
             "severity": level,
             "issue_code": issue.get("code"),
@@ -90,14 +89,38 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-allowed_origins = os.getenv(
-    "ALLOWED_ORIGINS",
-    "*" 
-).split(",")
+DEFAULT_ALLOWED_ORIGINS = (
+    "https://knowbear.sanjeevkumar.me",
+    "https://knowbear.vercel.app",
+)
+
+
+def resolve_allowed_origins(raw_allowed_origins: str | None) -> list[str]:
+    """Build a secure allowlist for credentialed CORS."""
+    if raw_allowed_origins is None or not raw_allowed_origins.strip():
+        return list(DEFAULT_ALLOWED_ORIGINS)
+
+    parsed_origins = [origin.strip() for origin in raw_allowed_origins.split(",") if origin.strip()]
+    if "*" in parsed_origins:
+        logger.warning(
+            "cors_wildcard_origin_sanitized",
+            configured_origins=raw_allowed_origins,
+            allow_credentials=True,
+        )
+        parsed_origins = [origin for origin in parsed_origins if origin != "*"]
+
+    if not parsed_origins:
+        logger.warning("cors_no_valid_origins_falling_back_to_defaults")
+        return list(DEFAULT_ALLOWED_ORIGINS)
+
+    return parsed_origins
+
+
+allowed_origins = resolve_allowed_origins(os.getenv("ALLOWED_ORIGINS"))
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origin.strip() for origin in allowed_origins],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["content-type", "authorization", "x-request-id"],
@@ -215,7 +238,7 @@ async def llm_unavailable_handler(request: Request, exc: LLMUnavailable):
 
 @app.exception_handler(LLMInvalidAPIKey)
 async def llm_invalid_api_key_handler(request: Request, exc: LLMInvalidAPIKey):
-    """Handle invalid LiteLLM credentials."""
+    """Handle invalid provider credentials."""
     capture_exception(exc, request_id=getattr(request.state, "request_id", None), handler="llm_invalid_api_key")
     logger.error("llm_invalid_api_key", error=str(exc))
     return JSONResponse(
@@ -280,71 +303,28 @@ app.include_router(payments.router, prefix="/api")
 
 @app.get("/api/health", tags=["health"])
 async def health():
-    """Lightweight dependency health checks with degraded state semantics."""
+    """Lightweight dependency checks with config-derived provider status semantics."""
     settings = get_settings()
-    config_state = get_litellm_config_state()
-    litellm_base_url = str(config_state.get("base_url") or "")
-    litellm_api_key = settings.litellm_virtual_key or settings.litellm_master_key
+    config_state = get_provider_config_state()
 
-    async def check_litellm() -> dict[str, object]:
-        if not bool(config_state.get("chat_enabled", False)):
+    async def check_provider_stack() -> dict[str, object]:
+        """Return provider health from validated config state (no active network probe)."""
+        chat_enabled = bool(config_state.get("chat_enabled", False))
+        has_api_key = bool(config_state.get("has_api_key", False))
+        if not chat_enabled:
             return {
                 "status": "degraded",
-                "latency_ms": 0,
                 "reachable": False,
-                "key_valid": False,
-                "chat_enabled": False,
+                "key_valid": has_api_key,
+                "chat_enabled": chat_enabled,
             }
 
-        url = litellm_base_url.rstrip("/")
-        if not url.endswith("/v1"):
-            url = f"{url}/v1"
-        models_url = f"{url}/models"
-
-        start = time.perf_counter()
-        try:
-            timeout = min(max(float(settings.litellm_timeout_seconds), 1.0), 2.0)
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.get(
-                    models_url,
-                    headers={"Authorization": f"Bearer {litellm_api_key}"},
-                )
-            latency_ms = int((time.perf_counter() - start) * 1000)
-
-            if response.status_code in {401, 403}:
-                logger.error("litellm_invalid_key_detected", severity="error", status_code=response.status_code)
-                return {
-                    "status": "down",
-                    "latency_ms": latency_ms,
-                    "reachable": True,
-                    "key_valid": False,
-                    "chat_enabled": False,
-                }
-
-            if response.status_code >= 500:
-                return {
-                    "status": "down",
-                    "latency_ms": latency_ms,
-                    "reachable": True,
-                    "key_valid": True,
-                    "chat_enabled": False,
-                }
-            return {
-                "status": "ok",
-                "latency_ms": latency_ms,
-                "reachable": True,
-                "key_valid": True,
-                "chat_enabled": True,
-            }
-        except Exception as exc:
-            logger.warning("litellm_health_probe_failed", severity="warning", error=str(exc))
-            return {
-                "status": "down",
-                "latency_ms": 0,
-                "reachable": False,
-                "key_valid": bool(litellm_api_key),
-                "chat_enabled": False,
-            }
+        return {
+            "status": "ok",
+            "reachable": chat_enabled,
+            "key_valid": has_api_key,
+            "chat_enabled": chat_enabled,
+        }
 
     async def check_rate_limit() -> dict[str, str]:
         try:
@@ -369,10 +349,10 @@ async def health():
             logger.error("db_health_probe_failed", severity="error", error=str(exc))
             return {"status": "down"}
 
-    litellm, rate_limit, db = await asyncio.gather(check_litellm(), check_rate_limit(), check_db())
+    provider, rate_limit, db = await asyncio.gather(check_provider_stack(), check_rate_limit(), check_db())
 
     component_statuses = [
-        str(litellm.get("status", "down")),
+        str(provider.get("status", "down")),
         rate_limit["status"],
         db["status"],
     ]
@@ -384,16 +364,26 @@ async def health():
 
     return {
         "status": overall,
-        "litellm": {"status": litellm["status"], "latency_ms": litellm["latency_ms"]},
+        "provider": {
+            "status": provider["status"],
+            "reachable": bool(provider.get("reachable", False)),
+            "key_valid": bool(provider.get("key_valid", False)),
+        },
         "rate_limit": {"status": rate_limit["status"]},
         "db": {"status": db["status"]},
-        "chat_enabled": bool(litellm.get("chat_enabled", False)),
-        "key_valid": bool(litellm.get("key_valid", False)),
+        "chat_enabled": bool(provider.get("chat_enabled", False)),
+        "key_valid": bool(provider.get("key_valid", False)),
     }
 
 
 # Catch-all route for debugging (should be last)
-@app.get("/{path:path}")
-async def catch_all(path: str):
-    return {"message": f"Catch-all route hit: /{path}", "status": "Backend is running!"}
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+async def catch_all(request: Request, path: str):
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": "Not Found",
+            "detail": f"Route '{request.method} /{path}' does not exist.",
+        },
+    )
 

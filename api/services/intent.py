@@ -142,10 +142,32 @@ BRAINSTORM_STRUCTURE_HEADERS = [
 ]
 
 VALID_TERMINAL_CHARS = {".", "?", "!", "`"}
+TRUNCATED_TERMINAL_CHARS = {":", ";", ",", "-", "(", "[", "{", "/", "\\"}
+DANGLING_TERMINAL_WORDS = {"and", "or", "but", "with", "to", "for", "of", "in", "on", "by", "via", "into"}
 MIN_RESPONSE_LENGTH = 150
 MIN_DEFAULT_HEADERS = 3
 MIN_COMPARE_HEADERS = 3
 MIN_BRAINSTORM_HEADERS = 2
+
+
+def _looks_truncated(stripped: str) -> bool:
+    if not stripped:
+        return True
+
+    if stripped.endswith("..."):
+        return True
+
+    terminal_char = stripped[-1]
+    if terminal_char in VALID_TERMINAL_CHARS:
+        return False
+    if terminal_char in TRUNCATED_TERMINAL_CHARS:
+        return True
+
+    match = re.search(r"([A-Za-z']+)\s*$", stripped)
+    if match and match.group(1).lower() in DANGLING_TERMINAL_WORDS:
+        return True
+
+    return False
 
 
 def validate_technical_response(response: str, intent: str) -> tuple[bool, str]:
@@ -162,7 +184,7 @@ def validate_technical_response(response: str, intent: str) -> tuple[bool, str]:
 
     stripped = response.strip()
 
-    if stripped[-1] not in VALID_TERMINAL_CHARS:
+    if _looks_truncated(stripped):
         return False, "truncated"
 
     if intent == "brainstorm":

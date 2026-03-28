@@ -5,6 +5,7 @@ import pytest
 import httpx
 
 os.environ.setdefault("LOG_USER_HASH_SALT", "test-log-salt")
+_RUN_REAL_PROVIDER_TESTS = os.getenv("RUN_REAL_PROVIDER_TESTS", "").strip() == "1"
 
 import main as main_app
 import api.main as api_main_app
@@ -137,10 +138,11 @@ class FakeSupabase:
 def test_settings():
     return SimpleNamespace(
         environment="development",
-        litellm_base_url="http://localhost:4000",
-        litellm_virtual_key="test-virtual-key",
-        litellm_master_key="",
-        litellm_timeout_seconds=60,
+        groq_api_key="gsk-test",
+        cerebras_api_key="cs-test",
+        gemini_api_key="gm-test",
+        openrouter_api_key="or-test",
+        llm_timeout_seconds=60,
         stream_max_seconds=5,
         stream_heartbeat_seconds=1,
         stream_start_timeout_seconds=1,
@@ -169,6 +171,7 @@ def test_settings():
         tavily_api_key="",
         serper_api_key="",
         exa_api_key="",
+        cerebras_daily_token_budget=100000,
         dodo_api_key="",
         dodo_webhook_secret="",
         dodo_webhook_endpoint="",
@@ -179,6 +182,10 @@ def test_settings():
 
 @pytest.fixture(autouse=True)
 def patch_settings(monkeypatch, test_settings):
+    if _RUN_REAL_PROVIDER_TESTS:
+        # Use real runtime configuration for sampled real-provider tests.
+        return config_module.get_settings()
+
     monkeypatch.setattr(config_module, "get_settings", lambda: test_settings)
     if hasattr(main_app, "get_settings"):
         monkeypatch.setattr(main_app, "get_settings", lambda: test_settings)
@@ -192,6 +199,9 @@ def patch_settings(monkeypatch, test_settings):
 
 @pytest.fixture(autouse=True)
 def patch_llm_client(monkeypatch):
+    if _RUN_REAL_PROVIDER_TESTS:
+        return
+
     class DummyChoice:
         def __init__(self, content: str):
             self.message = type("Msg", (), {"content": content})
