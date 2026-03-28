@@ -11,6 +11,7 @@ import {
   MessageCircle,
   Plus,
   Trash2,
+  Crown,
 } from "lucide-react";
 import type { Conversation } from "../../types/chat";
 import type { Workspace } from "../../lib/chatStoreUtils";
@@ -33,6 +34,7 @@ interface WorkspaceSidebarProps {
   onDeleteConversation: (id: string) => void;
   onSignIn: () => void;
   onSignOut: () => void;
+  isPro?: boolean;
 }
 
 interface WorkspaceOption {
@@ -81,6 +83,7 @@ export default function WorkspaceSidebar({
   onDeleteConversation,
   onSignIn,
   onSignOut,
+  isPro = false,
 }: WorkspaceSidebarProps): JSX.Element {
   const newThreadButtonRef = useRef<HTMLButtonElement>(null);
   const labelClassName = `max-w-[160px] overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-200 ${
@@ -316,8 +319,10 @@ export default function WorkspaceSidebar({
           </div>
         </div>
 
-        <div className="flex items-center gap-3 border-t border-slate-200 px-4 py-4 dark:border-white/10">
-          <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-teal-600 text-sm font-semibold text-white">
+        <div className={`flex border-t border-slate-200 px-4 py-4 dark:border-white/10 transition-all duration-200 ${
+          isCollapsed ? "flex-col items-center gap-4" : "items-center gap-3"
+        }`}>
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-teal-600 text-sm font-semibold text-white">
             {avatarUrl ? (
               <img
                 src={avatarUrl}
@@ -332,9 +337,15 @@ export default function WorkspaceSidebar({
             <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">
               {userName}
             </p>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Workspace chat
-            </p>
+            {isPro ? (
+              <span className="flex items-center gap-1 text-[11px] font-bold text-cyan-600 dark:text-cyan-400">
+                <Crown size={12} className="fill-cyan-400/20" /> Pro Account
+              </span>
+            ) : (
+              <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                Free Account
+              </span>
+            )}
           </div>
           {!isCollapsed && (
             <button
@@ -359,7 +370,7 @@ export default function WorkspaceSidebar({
             <button
               type="button"
               onClick={isAuthenticated ? onSignOut : onSignIn}
-              className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-200 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-slate-100"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-200 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-slate-100"
               aria-label={isAuthenticated ? "Sign out" : "Sign in"}
               title={isAuthenticated ? "Sign out" : "Sign in"}
             >
