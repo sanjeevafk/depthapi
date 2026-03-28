@@ -1,3 +1,4 @@
+import base64
 import os
 import types
 from types import SimpleNamespace
@@ -173,10 +174,13 @@ def test_settings():
         exa_api_key="",
         cerebras_daily_token_budget=100000,
         dodo_api_key="",
-        dodo_webhook_secret="",
+        dodo_webhook_secret="whsec_"
+        + base64.b64encode(b"knowbear-test-webhook-secret-1").decode("ascii"),
         dodo_webhook_endpoint="",
         dodo_webhook_url="",
-        dodo_payment_link_id="pay_123"
+        dodo_payment_link_id="pay_123",
+        dodo_environment="test_mode",
+        checkout_rate_limit_per_minute=10,
     )
 
 

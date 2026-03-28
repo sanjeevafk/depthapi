@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     dodo_webhook_endpoint: str = ""
     dodo_webhook_url: str = ""
     dodo_payment_link_id: str = ""
+    # test_mode or live_mode (Dodo API / future SDK usage)
+    dodo_environment: str = "test_mode"
+    checkout_rate_limit_per_minute: int = 10
 
     class Config:
         env_file = (".env", "../.env")

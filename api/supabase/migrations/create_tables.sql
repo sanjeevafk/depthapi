@@ -5,6 +5,10 @@ create table if not exists public.users (
   full_name text,
   avatar_url text,
   is_pro boolean default false,
+  dodo_customer_id text,
+  dodo_subscription_id text,
+  subscription_status text,
+  current_period_end timestamptz,
   created_at timestamptz default now(),
   primary key (id)
 );
