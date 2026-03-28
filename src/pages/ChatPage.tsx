@@ -195,7 +195,7 @@ export default function ChatPage(): JSX.Element {
     (user.user_metadata?.avatar_url as string | undefined) ?? null;
 
   return (
-    <div className="h-screen overflow-hidden bg-slate-100 text-slate-900 dark:bg-dark-900 dark:text-slate-100">
+    <div className="h-[100dvh] min-h-[100dvh] overflow-hidden bg-slate-100 text-slate-900 dark:bg-dark-900 dark:text-slate-100">
       <div className="flex h-full">
         <WorkspaceSidebar
           workspace={workspace}

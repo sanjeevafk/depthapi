@@ -29,9 +29,9 @@ export default function LandingPage(): JSX.Element {
       </div>
 
       {/* Navigation */}
-      <nav className="relative z-50 flex items-center justify-between px-4 py-4 sm:px-6 sm:py-6 max-w-7xl mx-auto">
+      <nav className="relative z-50 flex flex-wrap items-center gap-3 px-4 py-4 sm:flex-nowrap sm:justify-between sm:px-6 sm:py-6 max-w-7xl mx-auto">
         <div
-          className="flex items-center gap-2 group cursor-pointer"
+          className="flex min-w-0 items-center gap-2 group cursor-pointer"
           onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
         >
           <img
@@ -39,12 +39,9 @@ export default function LandingPage(): JSX.Element {
             alt="Logo"
             className="w-9 h-9 sm:w-10 sm:h-10 drop-shadow-[0_0_8px_rgba(6,182,212,0.8)]"
           />
-          <div className="flex flex-col">
-            <span className="text-xl sm:text-2xl font-black tracking-tighter leading-none">
+          <div className="flex flex-col min-w-0">
+            <span className="text-lg sm:text-2xl font-black tracking-tighter leading-none whitespace-nowrap">
               Know<span className="text-cyan-500">Bear</span>
-            </span>
-            <span className="text-[10px] font-mono font-medium text-cyan-500/80 animate-pulse tracking-wide">
-              v2.0.1-beta
             </span>
           </div>
         </div>
@@ -61,8 +58,8 @@ export default function LandingPage(): JSX.Element {
           </a>
         </div>
         {/* Login button — visible on all screen sizes */}
-        <div className="flex items-center">
-          <LoginButton className="!px-4 !py-2 !text-xs md:!px-6 md:!py-2.5 md:!text-sm font-bold bg-white text-black hover:bg-gray-200 border-none rounded-full shadow-[0_0_20px_rgba(255,255,255,0.4)] hover:shadow-[0_0_25px_rgba(255,255,255,0.6)] transition-all transform hover:scale-105" />
+        <div className="ml-auto flex items-center shrink-0">
+          <LoginButton className="!px-3.5 !py-2 !text-xs md:!px-6 md:!py-2.5 md:!text-sm font-bold bg-white text-black hover:bg-gray-200 border-none rounded-full shadow-[0_0_20px_rgba(255,255,255,0.4)] hover:shadow-[0_0_25px_rgba(255,255,255,0.6)] transition-all transform hover:scale-105" />
         </div>
       </nav>
 

@@ -30,7 +30,7 @@ export default function WelcomeEmptyState({
 
   return (
     <section
-      className="flex min-h-0 flex-1 items-center justify-center px-3 py-6 sm:px-6 sm:py-10"
+      className="flex min-h-0 flex-1 items-start justify-center overflow-y-auto px-3 pb-32 pt-4 sm:px-6 sm:pb-40 sm:pt-8 lg:items-center lg:py-10"
       aria-labelledby="welcome-title"
     >
       <div className="w-full max-w-4xl">

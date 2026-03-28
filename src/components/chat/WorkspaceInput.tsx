@@ -84,9 +84,9 @@ export default function WorkspaceInput({
   }, [value]);
 
   return (
-    <div className="sticky bottom-0 z-20 bg-gradient-to-t from-slate-100/95 via-slate-100/70 to-transparent px-4 pb-4 pt-8 dark:from-dark-900/95 dark:via-dark-900/70 sm:px-6 sm:pb-6">
+    <div className="sticky bottom-0 z-20 bg-gradient-to-t from-slate-100/95 via-slate-100/70 to-transparent px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-4 dark:from-dark-900/95 dark:via-dark-900/70 sm:px-6 sm:pb-6 sm:pt-8">
       <div className="mx-auto w-full max-w-3xl">
-        <div className="rounded-3xl border border-slate-300 bg-white/90 p-4 shadow-[0_20px_45px_rgba(15,23,42,0.08)] backdrop-blur dark:border-white/10 dark:bg-dark-800/85 dark:shadow-[0_20px_60px_rgba(0,0,0,0.45)]">
+        <div className="rounded-3xl border border-slate-300 bg-white/90 p-3 shadow-[0_20px_45px_rgba(15,23,42,0.08)] backdrop-blur dark:border-white/10 dark:bg-dark-800/85 dark:shadow-[0_20px_60px_rgba(0,0,0,0.45)] sm:p-4">
           <textarea
             ref={textareaRef}
             value={value}
@@ -104,14 +104,14 @@ export default function WorkspaceInput({
             className="w-full resize-none bg-transparent text-base text-slate-700 placeholder:text-slate-400 focus:outline-none dark:text-slate-200 dark:placeholder:text-slate-500"
           />
 
-          <div className="mt-3 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <div className="flex min-w-0 flex-1 items-center gap-2">
               <div className="group relative">
                 <button
                   type="button"
                   aria-label="Attach file"
                   disabled
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-400 dark:border-white/10 dark:bg-dark-700 dark:text-slate-500"
+                  className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-slate-300 bg-white text-slate-400 dark:border-white/10 dark:bg-dark-700 dark:text-slate-500"
                 >
                   <Paperclip className="h-4 w-4" />
                 </button>
@@ -130,7 +130,7 @@ export default function WorkspaceInput({
               aria-label="Send message"
               onClick={() => void handleSend()}
               disabled={isSendDisabled}
-              className={`inline-flex h-11 w-11 items-center justify-center rounded-2xl transition ${
+              className={`ml-auto inline-flex h-11 w-11 items-center justify-center rounded-2xl transition ${
                 isSendDisabled
                   ? "cursor-not-allowed bg-slate-300 text-slate-500 dark:bg-white/10 dark:text-slate-500"
                   : "bg-teal-600 text-white hover:bg-teal-500"
