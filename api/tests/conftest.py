@@ -5,6 +5,7 @@ import pytest
 import httpx
 
 os.environ.setdefault("LOG_USER_HASH_SALT", "test-log-salt")
+_RUN_REAL_PROVIDER_TESTS = os.getenv("RUN_REAL_PROVIDER_TESTS", "").strip() == "1"
 
 import main as main_app
 import api.main as api_main_app
@@ -181,6 +182,10 @@ def test_settings():
 
 @pytest.fixture(autouse=True)
 def patch_settings(monkeypatch, test_settings):
+    if _RUN_REAL_PROVIDER_TESTS:
+        # Use real runtime configuration for sampled real-provider tests.
+        return config_module.get_settings()
+
     monkeypatch.setattr(config_module, "get_settings", lambda: test_settings)
     if hasattr(main_app, "get_settings"):
         monkeypatch.setattr(main_app, "get_settings", lambda: test_settings)
@@ -194,6 +199,9 @@ def patch_settings(monkeypatch, test_settings):
 
 @pytest.fixture(autouse=True)
 def patch_llm_client(monkeypatch):
+    if _RUN_REAL_PROVIDER_TESTS:
+        return
+
     class DummyChoice:
         def __init__(self, content: str):
             self.message = type("Msg", (), {"content": content})
