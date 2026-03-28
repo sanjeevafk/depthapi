@@ -60,7 +60,7 @@ jobs:
           fi
 
           rc=0
-          rg -n --pcre2 --glob '*.py' --glob '!api/tests/**' 'logger\.(?:debug|info|warning|error|critical)\([^\n]*\buser_id\s*=' api || rc=$?
+          rg -n --pcre2 --glob '*.py' --glob '!api/tests/**' 'logger\.(?:debug|info|warning|error|critical|exception)\([^\n]*\buser_id\s*=' api || rc=$?
           if [ "$rc" -eq 0 ]; then
             echo "Raw user_id structured logger fields are not allowed. Use user_id_hash."
             exit 1
@@ -70,7 +70,7 @@ jobs:
           fi
 
           rc=0
-          rg -n -U --pcre2 --glob '*.py' --glob '!api/tests/**' 'logger\.(?:debug|info|warning|error|critical)\([^\n]*\n\s*user_id\s*=' api || rc=$?
+          rg -n -U --pcre2 --glob '*.py' --glob '!api/tests/**' 'logger\.(?:debug|info|warning|error|critical|exception)\((?:[^)]*\n)*[^)]*\buser_id\s*=' api || rc=$?
           if [ "$rc" -eq 0 ]; then
             echo "Raw user_id structured logger fields are not allowed. Use user_id_hash."
             exit 1

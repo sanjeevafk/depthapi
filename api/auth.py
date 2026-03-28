@@ -107,11 +107,12 @@ async def ensure_user_exists(user):
     
     try:
         def _upsert():
+            metadata = user.user_metadata or {}
             return supabase.table("users").upsert({
                 "id": user.id,
                 "email": user.email,
-                "full_name": user.user_metadata.get("full_name"),
-                "avatar_url": user.user_metadata.get("avatar_url")
+                "full_name": metadata.get("full_name"),
+                "avatar_url": metadata.get("avatar_url")
             }).execute()
         
         await asyncio.to_thread(_upsert)

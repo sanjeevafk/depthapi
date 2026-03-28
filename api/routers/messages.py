@@ -530,6 +530,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 pass
             pending_chunk_task = None
 
+        stream = None
         try:
             meta_payload = {
                 "assistant_message_id": assistant_message_id,
@@ -612,7 +613,9 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
 
                 try:
                     if pending_chunk_task is None:
-                        pending_chunk_task = asyncio.create_task(anext(stream_iter))
+                        async def get_next_chunk():
+                            return await anext(stream_iter)
+                        pending_chunk_task = asyncio.create_task(get_next_chunk())
                     chunk = await asyncio.wait_for(asyncio.shield(pending_chunk_task), timeout=timeout)
                     pending_chunk_task = None
                 except asyncio.TimeoutError:
@@ -841,6 +844,8 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             yield emit("done", "[DONE]")
         finally:
             await cancel_pending_chunk_task()
+            if stream is not None:
+                await close_stream(stream)
             total_ms = (time.perf_counter() - start_time) * 1000
             avg_chunk_interval_ms = None
             if chunk_count > 1:
