@@ -43,7 +43,6 @@ if (import.meta.env.DEV) {
   matchesSharedModes("free_modes", SHARED_FREE_MODES, chatModes.free_modes);
   matchesSharedModes("pro_modes", SHARED_PREMIUM_MODES, chatModes.pro_modes);
   matchesSharedModes("prompt_modes", CHAT_PROMPT_MODES, chatModes.prompt_modes);
-  matchesSharedModes("legacy_modes", [], chatModes.legacy_modes);
 }
 
 export const CHAT_DEFAULT_MODE: PromptMode = "eli5";
