@@ -20,11 +20,11 @@ class Settings(BaseSettings):
     stream_max_seconds: int = 20
     technical_stream_max_seconds: int = 22
     stream_heartbeat_seconds: int = 2
-    stream_start_timeout_seconds: int = 2
-    technical_stream_start_timeout_seconds: float = 6.0
+    stream_start_timeout_seconds: int = 3
+    technical_stream_start_timeout_seconds: float = 8.0
     stream_idempotency_ttl_seconds: int = 90
     stream_idempotency_stale_seconds: int = 20
-    stream_fallback_budget_seconds: int = 4
+    stream_fallback_budget_seconds: int = 8
     vercel_function_max_duration_seconds: int = 25
     trusted_proxies: str = ""
 
