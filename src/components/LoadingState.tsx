@@ -153,7 +153,7 @@ export function LoadingState({
   }, [mode, level, topic]);
 
   return (
-    <div className="flex flex-col items-center justify-center p-12 min-h-[400px] animate-in fade-in duration-700">
+    <div className="flex flex-col items-center justify-center p-6 sm:p-12 min-h-[300px] sm:min-h-[400px] animate-in fade-in duration-700">
       <div className="relative mb-8">
         <div className="absolute inset-0 bg-cyan-500/20 blur-3xl rounded-full scale-150 animate-pulse"></div>
         <Loader2 className="w-16 h-16 text-cyan-500 animate-spin relative z-10" />
