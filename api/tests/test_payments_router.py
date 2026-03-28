@@ -1,5 +1,10 @@
-import pytest
+import base64
+import hashlib
 import json
+from datetime import datetime, timezone
+
+import pytest
+from standardwebhooks import Webhook
 
 import auth as auth_module
 import routers.payments as payments_module
@@ -7,13 +12,22 @@ import services.cache as cache_module
 from logging_config import anonymize_user_id
 
 
-def _sign_payload(payload: dict, secret: str) -> str:
-    raw = json.dumps(payload).encode("utf-8")
-    return payments_module.hmac.new(
-        secret.encode("utf-8"),
-        raw,
-        payments_module.hashlib.sha256,
-    ).hexdigest()
+def _test_whsec_secret(label: str = "knowbear-test-webhook-secret") -> str:
+    return "whsec_" + base64.b64encode(label.encode()).decode("ascii")
+
+
+def _sign_webhook_payload(payload: dict, secret: str) -> tuple[bytes, dict[str, str]]:
+    body_str = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    wh = Webhook(secret)
+    msg_id = "evt-" + hashlib.sha256(body_str.encode()).hexdigest()[:32]
+    ts = datetime.now(tz=timezone.utc)
+    sig = wh.sign(msg_id, ts, body_str)
+    headers = {
+        "webhook-id": msg_id,
+        "webhook-timestamp": str(int(ts.timestamp())),
+        "webhook-signature": sig,
+    }
+    return body_str.encode("utf-8"), headers
 
 
 @pytest.mark.asyncio
@@ -32,7 +46,7 @@ async def test_create_checkout_session(app_client, monkeypatch, fake_user, test_
 
     resp = await app_client.post(
         "/api/payments/create-checkout",
-        json={"plan": "pro"}
+        json={"plan": "pro"},
     )
 
     assert resp.status_code == 200
@@ -49,13 +63,31 @@ async def test_create_checkout_session(app_client, monkeypatch, fake_user, test_
 
 
 @pytest.mark.asyncio
+async def test_create_checkout_accepts_full_payment_link_url(app_client, monkeypatch, fake_user, test_settings):
+    async def fake_auth():
+        return {"user": fake_user}
+
+    app_client.app.dependency_overrides[auth_module.verify_token] = fake_auth
+    test_settings.dodo_payment_link_id = "https://checkout.dodopayments.com/buy/pdt_test123?quantity=1"
+    monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
+
+    resp = await app_client.post("/api/payments/create-checkout", json={"plan": "pro"})
+    assert resp.status_code == 200
+    url = resp.json()["checkout_url"]
+    assert url.startswith("https://checkout.dodopayments.com/buy/pdt_test123")
+    assert "metadata%5Buser_id%5D" in url or "metadata[user_id]" in url
+
+
+@pytest.mark.asyncio
 async def test_verify_payment_status(app_client, monkeypatch, fake_user, test_settings, fake_supabase):
     monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
+
     async def fake_check_is_pro(_user_id, force_refresh=False):
         assert force_refresh is True
         return True
 
     monkeypatch.setattr(payments_module, "check_is_pro", fake_check_is_pro)
+
     async def fake_auth():
         return {"user": fake_user}
 
@@ -70,7 +102,8 @@ async def test_verify_payment_status(app_client, monkeypatch, fake_user, test_se
 
 @pytest.mark.asyncio
 async def test_webhook_success_flow(app_client, monkeypatch, test_settings, fake_supabase):
-    test_settings.dodo_webhook_secret = "secret"
+    secret = _test_whsec_secret()
+    test_settings.dodo_webhook_secret = secret
     monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
     monkeypatch.setattr(payments_module, "get_supabase_admin", lambda: fake_supabase)
     invalidated = []
@@ -84,26 +117,28 @@ async def test_webhook_success_flow(app_client, monkeypatch, test_settings, fake
             "metadata": {"user_id": "user-123", "plan": "pro"},
         },
     }
-    signature = _sign_payload(payload, test_settings.dodo_webhook_secret)
+    body, headers = _sign_webhook_payload(payload, secret)
+    headers["content-type"] = "application/json"
 
     resp = await app_client.post(
         "/api/payments/webhook/dodo",
-        data=json.dumps(payload),
-        headers={"x-dodo-signature": signature, "content-type": "application/json"},
+        content=body,
+        headers=headers,
     )
 
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["duplicate"] is False
-    assert body["state"] == "active"
-    assert body["user_id"] == "user-123"
+    body_json = resp.json()
+    assert body_json["duplicate"] is False
+    assert body_json["state"] == "active"
+    assert body_json["user_id"] == "user-123"
     assert fake_supabase.updates[0][1]["is_pro"] is True
     assert invalidated == ["user-123"]
 
 
 @pytest.mark.asyncio
-async def test_webhook_accepts_whitespace_padded_signature(app_client, monkeypatch, test_settings, fake_supabase):
-    test_settings.dodo_webhook_secret = "secret"
+async def test_webhook_accepts_whitespace_in_signature_header(app_client, monkeypatch, test_settings, fake_supabase):
+    secret = _test_whsec_secret()
+    test_settings.dodo_webhook_secret = secret
     monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
     monkeypatch.setattr(payments_module, "get_supabase_admin", lambda: fake_supabase)
     monkeypatch.setattr(payments_module, "invalidate_pro_cache", lambda user_id: None)
@@ -116,29 +151,27 @@ async def test_webhook_accepts_whitespace_padded_signature(app_client, monkeypat
             "metadata": {"user_id": "user-123", "plan": "pro"},
         },
     }
-    signature = _sign_payload(payload, test_settings.dodo_webhook_secret)
-    padded_signature = f"  {signature}  "
+    body, headers = _sign_webhook_payload(payload, secret)
+    headers["webhook-signature"] = f"  {headers['webhook-signature']}  "
 
     resp = await app_client.post(
         "/api/payments/webhook/dodo",
-        data=json.dumps(payload),
-        headers={"x-dodo-signature": padded_signature, "content-type": "application/json"},
+        content=body,
+        headers={**headers, "content-type": "application/json"},
     )
 
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["duplicate"] is False
-    assert body["state"] == "active"
+    assert resp.status_code == 401
 
 
 @pytest.mark.asyncio
-async def test_webhook_rejects_invalid_whitespace_padded_signature(
+async def test_webhook_rejects_invalid_signature(
     app_client,
     monkeypatch,
     test_settings,
     fake_supabase,
 ):
-    test_settings.dodo_webhook_secret = "secret"
+    secret = _test_whsec_secret()
+    test_settings.dodo_webhook_secret = secret
     monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
     monkeypatch.setattr(payments_module, "get_supabase_admin", lambda: fake_supabase)
 
@@ -150,12 +183,13 @@ async def test_webhook_rejects_invalid_whitespace_padded_signature(
             "metadata": {"user_id": "user-123", "plan": "pro"},
         },
     }
-    bad_signature = f"  {'0' * 64}  "
+    body, headers = _sign_webhook_payload(payload, secret)
+    headers["webhook-signature"] = "v1,invalidbase64!!!"
 
     resp = await app_client.post(
         "/api/payments/webhook/dodo",
-        data=json.dumps(payload),
-        headers={"x-dodo-signature": bad_signature, "content-type": "application/json"},
+        content=body,
+        headers={**headers, "content-type": "application/json"},
     )
 
     assert resp.status_code == 401
@@ -164,7 +198,8 @@ async def test_webhook_rejects_invalid_whitespace_padded_signature(
 
 @pytest.mark.asyncio
 async def test_webhook_duplicate_event_is_idempotent(app_client, monkeypatch, test_settings, fake_supabase):
-    test_settings.dodo_webhook_secret = "secret"
+    secret = _test_whsec_secret()
+    test_settings.dodo_webhook_secret = secret
     monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
     monkeypatch.setattr(payments_module, "get_supabase_admin", lambda: fake_supabase)
     monkeypatch.setattr(payments_module, "invalidate_pro_cache", lambda user_id: None)
@@ -176,18 +211,11 @@ async def test_webhook_duplicate_event_is_idempotent(app_client, monkeypatch, te
             "metadata": {"user_id": "user-123", "plan": "pro"},
         },
     }
-    signature = _sign_payload(payload, test_settings.dodo_webhook_secret)
+    body, headers = _sign_webhook_payload(payload, secret)
+    hdrs = {**headers, "content-type": "application/json"}
 
-    first = await app_client.post(
-        "/api/payments/webhook/dodo",
-        data=json.dumps(payload),
-        headers={"x-dodo-signature": signature, "content-type": "application/json"},
-    )
-    second = await app_client.post(
-        "/api/payments/webhook/dodo",
-        data=json.dumps(payload),
-        headers={"x-dodo-signature": signature, "content-type": "application/json"},
-    )
+    first = await app_client.post("/api/payments/webhook/dodo", content=body, headers=hdrs)
+    second = await app_client.post("/api/payments/webhook/dodo", content=body, headers=hdrs)
 
     assert first.status_code == 200
     assert second.status_code == 200
@@ -197,7 +225,8 @@ async def test_webhook_duplicate_event_is_idempotent(app_client, monkeypatch, te
 
 @pytest.mark.asyncio
 async def test_webhook_failed_payment_does_not_grant_pro(app_client, monkeypatch, test_settings, fake_supabase):
-    test_settings.dodo_webhook_secret = "secret"
+    secret = _test_whsec_secret()
+    test_settings.dodo_webhook_secret = secret
     monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
     monkeypatch.setattr(payments_module, "get_supabase_admin", lambda: fake_supabase)
 
@@ -209,17 +238,17 @@ async def test_webhook_failed_payment_does_not_grant_pro(app_client, monkeypatch
             "metadata": {"user_id": "user-123", "plan": "pro"},
         },
     }
-    signature = _sign_payload(payload, test_settings.dodo_webhook_secret)
+    body, headers = _sign_webhook_payload(payload, secret)
 
     resp = await app_client.post(
         "/api/payments/webhook/dodo",
-        data=json.dumps(payload),
-        headers={"x-dodo-signature": signature, "content-type": "application/json"},
+        content=body,
+        headers={**headers, "content-type": "application/json"},
     )
 
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["state"] == "payment_failed"
+    body_json = resp.json()
+    assert body_json["state"] == "payment_failed"
     assert fake_supabase.updates == []
 
 
@@ -232,7 +261,8 @@ async def test_webhook_revokes_pro_for_cancellation_or_renewal_failure(
     fake_supabase,
     event_name,
 ):
-    test_settings.dodo_webhook_secret = "secret"
+    secret = _test_whsec_secret()
+    test_settings.dodo_webhook_secret = secret
     monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
     monkeypatch.setattr(payments_module, "get_supabase_admin", lambda: fake_supabase)
 
@@ -244,17 +274,44 @@ async def test_webhook_revokes_pro_for_cancellation_or_renewal_failure(
             "metadata": {"user_id": "user-123", "plan": "pro"},
         },
     }
-    signature = _sign_payload(payload, test_settings.dodo_webhook_secret)
+    body, headers = _sign_webhook_payload(payload, secret)
 
     resp = await app_client.post(
         "/api/payments/webhook/dodo",
-        data=json.dumps(payload),
-        headers={"x-dodo-signature": signature, "content-type": "application/json"},
+        content=body,
+        headers={**headers, "content-type": "application/json"},
     )
 
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["state"] == "inactive"
+    body_json = resp.json()
+    assert body_json["state"] == "inactive"
+    assert fake_supabase.updates[-1][1]["is_pro"] is False
+
+
+@pytest.mark.asyncio
+async def test_webhook_on_hold_revokes_pro(app_client, monkeypatch, test_settings, fake_supabase):
+    secret = _test_whsec_secret()
+    test_settings.dodo_webhook_secret = secret
+    monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
+    monkeypatch.setattr(payments_module, "get_supabase_admin", lambda: fake_supabase)
+
+    payload = {
+        "event": "subscription.on_hold",
+        "data": {
+            "subscription_id": "sub-1",
+            "metadata": {"user_id": "user-123"},
+            "status": "on_hold",
+        },
+    }
+    body, headers = _sign_webhook_payload(payload, secret)
+
+    resp = await app_client.post(
+        "/api/payments/webhook/dodo",
+        content=body,
+        headers={**headers, "content-type": "application/json"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["state"] == "on_hold"
     assert fake_supabase.updates[-1][1]["is_pro"] is False
 
 
@@ -265,7 +322,8 @@ async def test_webhook_returns_503_when_idempotency_store_is_unavailable(
     test_settings,
     fake_supabase,
 ):
-    test_settings.dodo_webhook_secret = "secret"
+    secret = _test_whsec_secret()
+    test_settings.dodo_webhook_secret = secret
     monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
     monkeypatch.setattr(payments_module, "get_supabase_admin", lambda: fake_supabase)
 
@@ -282,12 +340,12 @@ async def test_webhook_returns_503_when_idempotency_store_is_unavailable(
             "metadata": {"user_id": "user-123", "plan": "pro"},
         },
     }
-    signature = _sign_payload(payload, test_settings.dodo_webhook_secret)
+    body, headers = _sign_webhook_payload(payload, secret)
 
     resp = await app_client.post(
         "/api/payments/webhook/dodo",
-        data=json.dumps(payload),
-        headers={"x-dodo-signature": signature, "content-type": "application/json"},
+        content=body,
+        headers={**headers, "content-type": "application/json"},
     )
 
     assert resp.status_code == 503
