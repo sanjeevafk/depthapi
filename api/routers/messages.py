@@ -117,6 +117,18 @@ def _build_replay_response(
     )
 
 
+def _final_fallback_message(mode: str) -> str:
+    mode_label = "response"
+    if mode == TECHNICAL_MODE:
+        mode_label = "technical response"
+    elif mode == SOCRATIC_MODE:
+        mode_label = "socratic response"
+    return (
+        f"Unable to generate a complete {mode_label} right now due to a transient timeout. "
+        "Please retry in a moment."
+    )
+
+
 @router.post("/messages")
 async def send_message(req: MessageRequest, request: Request, auth_data: dict = Depends(verify_token)):
     request_received = time.perf_counter()
@@ -674,14 +686,29 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     logger.error(
                         "messages_fallback_failed",
                         error=str(exc),
+                        error_type=type(exc).__name__,
                         request_id=request_id,
                         user_id_hash=user_id_hash,
                         conversation_id=req.conversation_id,
                         content_hash=content_hash,
+                        mode=selected_mode,
+                        fallback_timeout_seconds=fallback_timeout_seconds,
                         retry=bool(req.regenerate),
                         sampled=False,
                     )
-                    yield emit("error", {"error": "Streaming timed out. Please retry."})
+                    full_content = _final_fallback_message(selected_mode)
+                    yield emit("delta", {"delta": full_content, "assistant_message_id": assistant_message_id})
+                    await cache_set(
+                        idempotency_key,
+                        {
+                            "status": "completed",
+                            "response": full_content,
+                            "assistant_message_id": assistant_message_id,
+                            "mode": selected_mode,
+                            "prompt_mode": prompt_mode,
+                        },
+                        ttl=idempotency_ttl_seconds,
+                    )
                     yield emit("done", "[DONE]")
                     return
 
@@ -790,13 +817,31 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     logger.error(
                         "messages_exception_fallback_failed",
                         error=str(fallback_exc),
+                        error_type=type(fallback_exc).__name__,
                         request_id=request_id,
                         user_id_hash=user_id_hash,
                         conversation_id=req.conversation_id,
                         content_hash=content_hash,
+                        mode=selected_mode,
+                        fallback_timeout_seconds=fallback_timeout_seconds,
                         retry=bool(req.regenerate),
                         sampled=False,
                     )
+                    full_content = _final_fallback_message(selected_mode)
+                    yield emit("delta", {"delta": full_content, "assistant_message_id": assistant_message_id})
+                    await cache_set(
+                        idempotency_key,
+                        {
+                            "status": "completed",
+                            "response": full_content,
+                            "assistant_message_id": assistant_message_id,
+                            "mode": selected_mode,
+                            "prompt_mode": prompt_mode,
+                        },
+                        ttl=idempotency_ttl_seconds,
+                    )
+                    yield emit("done", "[DONE]")
+                    return
             if aborted:
                 await cache_set(
                     idempotency_key,
