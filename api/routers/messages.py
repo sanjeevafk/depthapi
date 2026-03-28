@@ -464,7 +464,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         generation_ms = None
         aborted = False
         abort_reason = None
-        tokens_after_abort = 0
+
         timed_out = False
         response_truncated = False
         fallback_used = False
@@ -856,7 +856,6 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     conversation_id=req.conversation_id,
                     message_id=client_message_id,
                     abort_confirmed=True,
-                    tokens_after_abort=tokens_after_abort,
                     reason=abort_reason,
                 )
             queue_time_ms = round((start_time - request_received) * 1000, 2)

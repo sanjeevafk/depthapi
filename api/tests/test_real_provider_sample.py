@@ -32,5 +32,7 @@ async def test_real_provider_client_sampled_smoke():
     )
 
     text = str(getattr(response.choices[0].message, "content", "") or "").strip().upper()
-    assert "KNOWBEAR_PROVIDER_OK" in text
-    await close_llm_client()
+    try:
+        assert "KNOWBEAR_PROVIDER_OK" in text
+    finally:
+        await close_llm_client()

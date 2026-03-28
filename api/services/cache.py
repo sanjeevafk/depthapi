@@ -78,17 +78,24 @@ class UpstashRedisCompat:
 
 
 _client: UpstashRedisCompat | None = None
+import asyncio
+import threading
+from typing import Any
+
+_client: UpstashRedisCompat | None = None
 _client_lock: asyncio.Lock | None = None
 _client_lock_loop: asyncio.AbstractEventLoop | None = None
+_thread_lock = threading.Lock()
 
 
 def _get_lock() -> asyncio.Lock:
     global _client_lock, _client_lock_loop
-    current_loop = asyncio.get_running_loop()
-    if _client_lock is None or _client_lock_loop is not current_loop:
-        _client_lock = asyncio.Lock()
-        _client_lock_loop = current_loop
-    return _client_lock
+    with _thread_lock:
+        current_loop = asyncio.get_running_loop()
+        if _client_lock is None or _client_lock_loop is not current_loop:
+            _client_lock = asyncio.Lock()
+            _client_lock_loop = current_loop
+        return _client_lock
 
 
 def _strip_env_quotes(value: str) -> str:

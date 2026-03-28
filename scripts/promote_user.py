@@ -2,10 +2,10 @@ import sys
 import os
 
 # Ensure we can import from the api folder
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'api'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 try:
-    from api.config import get_settings
+    from api.config import get_settings    
     from supabase import create_client
 except ImportError as e:
     print(f"Error importing required modules: {e}")
@@ -43,9 +43,12 @@ def promote_user(email: str):
         print("❌ Unexpected user data format.")
         return
     user_id = user.get('id')
+    user_id = user.get('id')
     current_status = user.get('is_pro', False)
     
-    print(f"✅ Found user: {user.get('full_name', 'Unknown')}")
+    if not user_id:
+        print("❌ User record is missing 'id' field.")
+        return    print(f"✅ Found user: {user.get('full_name', 'Unknown')}")
     print(f"   ID: {user_id}")
     print(f"   Current Status: {'🌟 PRO' if current_status else '👤 FREE'}")
     

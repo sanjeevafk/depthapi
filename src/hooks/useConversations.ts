@@ -149,9 +149,14 @@ export function useConversations(): UseConversationsResult {
       if (isCleanedUp) return;
       isCleanedUp = true;
 
-      // only remove if connection actually established
-      if (isSubscribed) {
+      // remove pending or established channels to avoid connection leaks
+      if (!isSubscribed) {
+        // subscription can still be in-flight; cleanup should still remove channel
+      }
+      try {
         supabase.removeChannel(channel);
+      } catch {
+        // ignore cleanup errors
       }
     };
   }, [user?.id, queryClient]);

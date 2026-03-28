@@ -71,7 +71,7 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Security(secu
     supabase = get_supabase()
     
     if not supabase:
-         raise HTTPException(status_code=500, detail="Server configuration error: Auth unavailable")
+        raise HTTPException(status_code=500, detail="Server configuration error: Auth unavailable")
 
     try:
         # Verify token by getting the user
