@@ -317,10 +317,23 @@ export async function queryTopicStream(
 
       // Flush remaining buffer if stream ended without [DONE]
       if (buffer.trim()) {
-        console.warn(
-          "Stream ended with incomplete data in buffer:",
-          buffer.substring(0, 100),
-        );
+        const trimmed = buffer.trim();
+        if (trimmed.startsWith("data: ")) {
+          const data = trimmed.slice(6).trim();
+          if (data !== "[DONE]") {
+            try {
+              const parsed = JSON.parse(data);
+              const validated = LegacyStreamChunkSchema.safeParse(parsed);
+              if (validated.success && validated.data.chunk) {
+                onChunk(validated.data.chunk);
+              }
+            } catch {
+              console.warn("Stream ended with incomplete data in buffer:", trimmed.substring(0, 100));
+            }
+          }
+        } else {
+          console.warn("Stream ended with incomplete data in buffer:", trimmed.substring(0, 100));
+        }
       }
       // Stream ended without [DONE], still notify completion
       onDone({});

@@ -70,15 +70,18 @@ async def test_provider_state_mark_failure_is_atomic(monkeypatch):
     class FakeRedis:
         def __init__(self):
             self.store = {}
+            self._lock = asyncio.Lock()
 
         async def get(self, key):
             await asyncio.sleep(0.001)
-            return self.store.get(key)
+            async with self._lock:
+                return self.store.get(key)
 
         async def setex(self, key, _ttl, value):
             await asyncio.sleep(0.001)
-            self.store[key] = value
-            return True
+            async with self._lock:
+                self.store[key] = value
+                return True
 
     fake_redis = FakeRedis()
 
