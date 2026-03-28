@@ -1,6 +1,5 @@
-"""Upstash Redis REST cache service with a Redis-like async interface."""
-
 import asyncio
+import threading
 from typing import Any
 
 import httpx
@@ -17,7 +16,7 @@ class UpstashRedisCompat:
         self._client = httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
             headers={"Authorization": f"Bearer {token}"},
-            timeout=httpx.Timeout(3.0, connect=2.0),
+            timeout=httpx.Timeout(1.5, connect=0.75),
         )
 
     async def _execute(self, *command: Any) -> Any:
@@ -78,9 +77,7 @@ class UpstashRedisCompat:
 
 
 _client: UpstashRedisCompat | None = None
-import asyncio
-import threading
-from typing import Any
+
 
 _client: UpstashRedisCompat | None = None
 _client_lock: asyncio.Lock | None = None
