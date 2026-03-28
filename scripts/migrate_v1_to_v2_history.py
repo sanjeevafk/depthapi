@@ -83,7 +83,9 @@ def main() -> int:
         title = row.get("title")
         mode = row.get("mode")
         if user_id and title:
-            conversation_map[build_conversation_key(user_id, title, mode)] = row.get("id")
+            conversation_id = row.get("id")
+            if isinstance(conversation_id, str) and conversation_id.strip() != "":
+                conversation_map[build_conversation_key(user_id, title, mode)] = conversation_id
 
     logging.info("Fetching history rows...")
     history_rows = fetch_all_rows(
@@ -153,9 +155,15 @@ def main() -> int:
                 skipped_rows += 1
                 continue
 
-            conversation_id = data[0]["id"]
-            conversation_map[conversation_key] = conversation_id
-            inserted_conversations += 1
+            first_row = data[0] if isinstance(data, list) and data else None
+            if isinstance(first_row, dict) and "id" in first_row:
+                conversation_id = first_row["id"]
+                conversation_map[conversation_key] = str(conversation_id)
+                inserted_conversations += 1
+            else:
+                logging.error("Unexpected insert response format for conversation: %s", data)
+                skipped_rows += 1
+                continue
 
         user_content = pick_first(
             row.get("prompt"),
