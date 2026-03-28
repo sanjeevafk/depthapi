@@ -93,6 +93,12 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       // On startup/login with no active selection, stay in a fresh Learn thread
       // instead of auto-opening the most recent conversation.
       if (state.currentConversationId === null) {
+        // If we're currently loading (e.g. sendMessage is mid-flight), 
+        // don't reset to the empty state.
+        if (state.isLoading) {
+          return { conversations };
+        }
+        
         return {
           conversations,
           currentConversationId: null,
