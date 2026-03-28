@@ -2,7 +2,7 @@
 
 import os
 from functools import lru_cache
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -11,22 +11,21 @@ class Settings(BaseSettings):
 
     environment: str = "development"
     log_user_hash_salt: str = ""
-    litellm_base_url: str = ""
-    litellm_virtual_key: str = ""
-    litellm_master_key: str = ""
-    litellm_timeout_seconds: int = 60
     groq_api_key: SecretStr = SecretStr("")
-    groq_base_url: str = "https://api.groq.com/openai/v1"
-    groq_direct_enabled: bool = False
+    cerebras_api_key: SecretStr = SecretStr("")
+    gemini_api_key: SecretStr = SecretStr("")
+    openrouter_api_key: SecretStr = SecretStr("")
+    llm_timeout_seconds: int = 60
 
-    stream_max_seconds: int = 25
-    technical_stream_max_seconds: int = 45
+    stream_max_seconds: int = 20
+    technical_stream_max_seconds: int = 22
     stream_heartbeat_seconds: int = 2
     stream_start_timeout_seconds: int = 2
     technical_stream_start_timeout_seconds: float = 6.0
     stream_idempotency_ttl_seconds: int = 90
     stream_idempotency_stale_seconds: int = 20
-    stream_fallback_budget_seconds: int = 6
+    stream_fallback_budget_seconds: int = 4
+    vercel_function_max_duration_seconds: int = 25
     trusted_proxies: str = ""
 
     redis_url: str = "redis://localhost:6379"
@@ -57,6 +56,7 @@ class Settings(BaseSettings):
     tavily_api_key: str = ""
     serper_api_key: str = ""
     exa_api_key: str = ""
+    cerebras_daily_token_budget: int = 100000
 
     sentry_dsn: str = ""
     sentry_enabled: bool = True
@@ -76,6 +76,37 @@ class Settings(BaseSettings):
 
         env_file_encoding = "utf-8"
         extra = "ignore"
+
+    @field_validator(
+        "groq_api_key",
+        "cerebras_api_key",
+        "gemini_api_key",
+        "openrouter_api_key",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_provider_key(cls, value: object) -> SecretStr:
+        if value is None:
+            return SecretStr("")
+        if isinstance(value, SecretStr):
+            return SecretStr(value.get_secret_value().strip())
+        if not isinstance(value, str):
+            raise TypeError("Provider API keys must be strings.")
+        return SecretStr(value.strip())
+
+    @field_validator("llm_timeout_seconds")
+    @classmethod
+    def _validate_llm_timeout(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("LLM timeout must be at least 1 second.")
+        return value
+
+    @field_validator("stream_max_seconds", "technical_stream_max_seconds", "vercel_function_max_duration_seconds")
+    @classmethod
+    def _validate_stream_caps(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("Stream duration settings must be at least 1 second.")
+        return value
 
 
 @lru_cache
