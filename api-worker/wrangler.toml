@@ -1,8 +1,0 @@
-name = "backend-api"
-main = "src/index.ts"
-compatibility_date = "2026-03-20"
-
-[[containers]]
-name = "backend"
-image = "./api"
-binding = "BACKEND"
