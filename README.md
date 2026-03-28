@@ -112,7 +112,11 @@ Primary app-level MoE aliases are defined in `api/services/inference.py` and map
 ```json
 {
   "status": "ok|degraded|down",
-  "provider": { "status": "ok|degraded|down", "latency_ms": 0 },
+  "provider": {
+    "status": "ok|degraded|down",
+    "reachable": true,
+    "key_valid": true
+  },
   "rate_limit": { "status": "ok|degraded|down" },
   "db": { "status": "ok|degraded|down" }
 }
@@ -146,7 +150,7 @@ Primary app-level MoE aliases are defined in `api/services/inference.py` and map
 | AI Inference | Native AsyncOpenAI clients, Groq, Gemini, Cerebras, OpenRouter |
 | Auth | Supabase Auth (JWT + OAuth) |
 | Cache | Redis (Upstash) |
-| Deployment | Vercel (frontend + serverless backend), Render/Railway (optional) |
+| Deployment | Vercel (frontend + serverless backend) |
 | Testing | pytest, vitest, Playwright |
 | License | Apache License 2.0 |
 
