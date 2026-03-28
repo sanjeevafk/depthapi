@@ -379,6 +379,7 @@ def route_model_aliases(
     is_programming = _looks_programming_query(query)
     is_math = _looks_math_query(query)
     is_reasoning = _looks_reasoning_query(query)
+    prefers_low_latency = latency_priority >= 0.72 or query_tokens < 10
 
     aliases: list[str]
 
@@ -392,7 +393,16 @@ def route_model_aliases(
         else:
             aliases = [LEARN_GEMINI_FLASH_ALIAS, LEARN_GROQ_FAST_ALIAS, LEARN_OPENROUTER_FALLBACK_ALIAS]
     elif mode == TECHNICAL_MODE:
-        if is_math and complexity >= 0.6:
+        if prefers_low_latency and complexity < 0.85:
+            aliases = [
+                TECH_GROQ_FAST_ALIAS,
+                TECH_GEMINI_FLASH_ALIAS,
+                TECH_GEMINI_PRO_ALIAS,
+                TECH_OPENROUTER_ALIAS,
+            ]
+            if is_pro and complexity >= 0.8:
+                aliases.append(TECH_CEREBRAS_GLM_ALIAS)
+        elif is_math and complexity >= 0.6:
             aliases = [TECH_GEMINI_PRO_ALIAS]
             if is_pro and complexity >= 0.8:
                 aliases.append(TECH_CEREBRAS_GLM_ALIAS)
@@ -400,15 +410,27 @@ def route_model_aliases(
         elif is_math and complexity < 0.4:
             aliases = [TECH_GEMINI_FLASH_ALIAS, TECH_GROQ_FAST_ALIAS, TECH_OPENROUTER_ALIAS]
         elif is_programming or search_api_used:
-            aliases = [TECH_GEMINI_PRO_ALIAS, TECH_GROQ_FAST_ALIAS, TECH_OPENROUTER_ALIAS]
+            if complexity < 0.7:
+                aliases = [TECH_GROQ_FAST_ALIAS, TECH_GEMINI_FLASH_ALIAS, TECH_GEMINI_PRO_ALIAS, TECH_OPENROUTER_ALIAS]
+            else:
+                aliases = [TECH_GEMINI_PRO_ALIAS, TECH_GROQ_FAST_ALIAS, TECH_OPENROUTER_ALIAS]
             if is_pro and complexity >= 0.8:
                 aliases.append(TECH_CEREBRAS_GLM_ALIAS)
         else:
-            aliases = [TECH_GEMINI_PRO_ALIAS, TECH_GROQ_FAST_ALIAS, TECH_OPENROUTER_ALIAS]
+            if complexity < 0.65:
+                aliases = [TECH_GROQ_FAST_ALIAS, TECH_GEMINI_FLASH_ALIAS, TECH_GEMINI_PRO_ALIAS, TECH_OPENROUTER_ALIAS]
+            else:
+                aliases = [TECH_GEMINI_PRO_ALIAS, TECH_GROQ_FAST_ALIAS, TECH_OPENROUTER_ALIAS]
             if is_pro and complexity >= 0.8:
-                aliases.insert(1, TECH_CEREBRAS_GLM_ALIAS)
+                if aliases[0] == TECH_GEMINI_PRO_ALIAS:
+                    aliases.insert(1, TECH_CEREBRAS_GLM_ALIAS)
+                else:
+                    aliases.append(TECH_CEREBRAS_GLM_ALIAS)
     else:
-        aliases = [SOCRATIC_GEMINI_ALIAS, SOCRATIC_GROQ_ALIAS, SOCRATIC_OPENROUTER_ALIAS]
+        if prefers_low_latency and complexity < 0.8:
+            aliases = [SOCRATIC_GROQ_ALIAS, SOCRATIC_GEMINI_ALIAS, SOCRATIC_OPENROUTER_ALIAS]
+        else:
+            aliases = [SOCRATIC_GEMINI_ALIAS, SOCRATIC_GROQ_ALIAS, SOCRATIC_OPENROUTER_ALIAS]
         if is_reasoning and complexity >= 0.8 and is_pro:
             aliases.insert(0, SOCRATIC_CEREBRAS_ALIAS)
 

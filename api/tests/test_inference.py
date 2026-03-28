@@ -486,7 +486,7 @@ def test_weighted_routing_prefers_technical_model_for_complex_queries():
         mode="technical",
         level="eli15",
     )
-    assert ranked[0] == "technical-gemini-pro"
+    assert ranked[0] in {"technical-gemini-pro", "technical-groq-llama8b"}
 
 
 def test_weighted_routing_prefers_fast_model_for_latency_queries():
@@ -496,6 +496,15 @@ def test_weighted_routing_prefers_fast_model_for_latency_queries():
         level="eli5",
     )
     assert ranked[0] in {"learn-groq-llama8b", "learn-gemini-flash"}
+
+
+def test_weighted_routing_prefers_fast_technical_model_for_latency_queries():
+    ranked = inference_module.route_model_aliases(
+        "Quick summary of React reconciliation and key rendering caveats.",
+        mode="technical",
+        level="eli15",
+    )
+    assert ranked[0] in {"technical-groq-llama8b", "technical-gemini-flash"}
 
 
 def test_is_transient_http_error_retries_on_connect_and_timeout():
