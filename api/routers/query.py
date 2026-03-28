@@ -604,7 +604,9 @@ async def query_topic_stream(
 
                 try:
                     if pending_chunk_task is None:
-                        pending_chunk_task = asyncio.create_task(stream_iter.__anext__())
+                        async def get_next_chunk():
+                            return await stream_iter.__anext__()
+                        pending_chunk_task = asyncio.create_task(get_next_chunk())
                     chunk = await asyncio.wait_for(asyncio.shield(pending_chunk_task), timeout=timeout)
                     pending_chunk_task = None
                 except asyncio.TimeoutError:
