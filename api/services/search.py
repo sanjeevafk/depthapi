@@ -14,11 +14,28 @@ ProviderName = Literal["tavily", "serper", "exa"]
 
 
 class SearchManager:
+    _shared_client: httpx.AsyncClient | None = None
+
     def __init__(self):
         self.visual_keywords = {"diagram", "flowchart", "image", "photo", "visual", "graph", "chart"}
 
     def _settings(self):
         return config_module.get_settings()
+
+    @classmethod
+    def _get_client(cls) -> httpx.AsyncClient:
+        if cls._shared_client is None:
+            cls._shared_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(5.0),
+                limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+            )
+        return cls._shared_client
+
+    async def close(self) -> None:
+        if SearchManager._shared_client is None:
+            return
+        await SearchManager._shared_client.aclose()
+        SearchManager._shared_client = None
 
     @staticmethod
     def _secret_to_str(value: object) -> str:
@@ -175,10 +192,9 @@ class SearchManager:
             "include_answer": True,
             "max_results": 5,
         }
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.post("https://api.tavily.com/search", json=payload)
-            resp.raise_for_status()
-            data = self._json_dict(resp)
+        resp = await self._get_client().post("https://api.tavily.com/search", json=payload, timeout=5.0)
+        resp.raise_for_status()
+        data = self._json_dict(resp)
 
         answer = self._safe_text(data.get("answer"), "")
         raw_results = data.get("results")
@@ -214,14 +230,14 @@ class SearchManager:
             "X-API-KEY": api_key,
             "Content-Type": "application/json",
         }
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.post(
-                "https://google.serper.dev/search",
-                headers=headers,
-                json={"q": query},
-            )
-            resp.raise_for_status()
-            data = self._json_dict(resp)
+        resp = await self._get_client().post(
+            "https://google.serper.dev/search",
+            headers=headers,
+            json={"q": query},
+            timeout=5.0,
+        )
+        resp.raise_for_status()
+        data = self._json_dict(resp)
 
         raw_organic = data.get("organic")
         organic: list[dict[str, Any]] = (
@@ -249,14 +265,14 @@ class SearchManager:
             "x-api-key": api_key,
             "Content-Type": "application/json",
         }
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.post(
-                "https://api.exa.ai/search",
-                headers=headers,
-                json={"query": query, "numResults": 5, "contents": {"text": True}},
-            )
-            resp.raise_for_status()
-            data = self._json_dict(resp)
+        resp = await self._get_client().post(
+            "https://api.exa.ai/search",
+            headers=headers,
+            json={"query": query, "numResults": 5, "contents": {"text": True}},
+            timeout=5.0,
+        )
+        resp.raise_for_status()
+        data = self._json_dict(resp)
 
         raw_results = data.get("results")
         results: list[dict[str, Any]] = (
@@ -344,27 +360,27 @@ class SearchManager:
             "Content-Type": "application/json",
         }
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.post(
-                    "https://google.serper.dev/images",
-                    headers=headers,
-                    json={"q": query},
-                )
-                resp.raise_for_status()
-                data = self._json_dict(resp)
-                raw_images = data.get("images")
-                images: list[dict[str, Any]] = (
-                    [item for item in raw_images if isinstance(item, dict)]
-                    if isinstance(raw_images, list)
-                    else []
-                )
-                output: list[dict[str, str]] = []
-                for image in images[:3]:
-                    image_url = self._safe_text(image.get("imageUrl"), "")
-                    title = self._safe_text(image.get("title"), "Image")
-                    if image_url:
-                        output.append({"url": image_url, "title": title})
-                return output
+            resp = await self._get_client().post(
+                "https://google.serper.dev/images",
+                headers=headers,
+                json={"q": query},
+                timeout=5.0,
+            )
+            resp.raise_for_status()
+            data = self._json_dict(resp)
+            raw_images = data.get("images")
+            images: list[dict[str, Any]] = (
+                [item for item in raw_images if isinstance(item, dict)]
+                if isinstance(raw_images, list)
+                else []
+            )
+            output: list[dict[str, str]] = []
+            for image in images[:3]:
+                image_url = self._safe_text(image.get("imageUrl"), "")
+                title = self._safe_text(image.get("title"), "Image")
+                if image_url:
+                    output.append({"url": image_url, "title": title})
+            return output
         except Exception as exc:
             logger.error("image_search_failed", error=str(exc), query_hash=self._query_hash(query))
             return []
@@ -373,14 +389,16 @@ class SearchManager:
         # Simple quote for loading messages
         tags = "education|knowledge|learning|science|wisdom|research|effort|creativity"
         try:
-            async with httpx.AsyncClient(timeout=3.0) as client:
-                resp = await client.get(f"https://api.quotable.io/random?tags={tags}&maxLength=100")
-                if resp.status_code == 200:
-                    data = resp.json() if isinstance(resp.json(), dict) else {}
-                    content = self._safe_text(data.get("content"), "")
-                    author = self._safe_text(data.get("author"), "Unknown")
-                    if content:
-                        return f"«{content}» — {author}"
+            resp = await self._get_client().get(
+                f"https://api.quotable.io/random?tags={tags}&maxLength=100",
+                timeout=3.0,
+            )
+            if resp.status_code == 200:
+                data = resp.json() if isinstance(resp.json(), dict) else {}
+                content = self._safe_text(data.get("content"), "")
+                author = self._safe_text(data.get("author"), "Unknown")
+                if content:
+                    return f"«{content}» — {author}"
         except Exception:
             pass
 
@@ -448,26 +466,28 @@ class SearchManager:
         quote_data = None
         attempts = 0
 
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            while attempts < 2:
-                attempts += 1
-                try:
-                    # minLength=50, maxLength=120 as requested
-                    resp = await client.get(f"https://api.quotable.io/random?tags={tags}&minLength=50&maxLength=120")
-                    if resp.status_code == 200:
-                        data = resp.json() if isinstance(resp.json(), dict) else {}
-                        author = self._safe_text(data.get("author"), "")
-                        content = self._safe_text(data.get("content"), "")
-                        if not author or not content:
-                            continue
-                        # Avoid overused authors if possible
-                        overused = ["Albert Einstein", "Plutarch", "Marcus Aurelius", "Socrates", "Benjamin Franklin"]
-                        if author == state.get("last_author") or (author in overused and attempts == 1):
-                            continue
-                        quote_data = {"author": author, "content": content}
-                        break
-                except Exception:
+        while attempts < 2:
+            attempts += 1
+            try:
+                # minLength=50, maxLength=120 as requested
+                resp = await self._get_client().get(
+                    f"https://api.quotable.io/random?tags={tags}&minLength=50&maxLength=120",
+                    timeout=4.0,
+                )
+                if resp.status_code == 200:
+                    data = resp.json() if isinstance(resp.json(), dict) else {}
+                    author = self._safe_text(data.get("author"), "")
+                    content = self._safe_text(data.get("content"), "")
+                    if not author or not content:
+                        continue
+                    # Avoid overused authors if possible
+                    overused = ["Albert Einstein", "Plutarch", "Marcus Aurelius", "Socrates", "Benjamin Franklin"]
+                    if author == state.get("last_author") or (author in overused and attempts == 1):
+                        continue
+                    quote_data = {"author": author, "content": content}
                     break
+            except Exception:
+                break
 
         if not quote_data:
             # Fallback rotation
@@ -495,3 +515,7 @@ class SearchManager:
 
 
 search_service = SearchManager()
+
+
+async def close_search_client() -> None:
+    await search_service.close()

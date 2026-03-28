@@ -12,6 +12,7 @@ from routers import pinned, query, export, history, webhooks, payments, messages
 from auth import get_supabase_admin
 from services.cache import close_redis, get_redis
 from services.inference import close_client
+from services.search import close_search_client
 from services.llm_client import get_provider_config_state
 from services.llm_errors import LLMError, LLMBadRequest, LLMInvalidAPIKey, LLMUnavailable
 from logging_config import (
@@ -79,7 +80,7 @@ async def lifespan(app: FastAPI):
     logger.info("startup")
     
     yield
-    await asyncio.gather(close_redis(), close_client())
+    await asyncio.gather(close_redis(), close_client(), close_search_client())
 
 
 app = FastAPI(
