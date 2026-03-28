@@ -15,6 +15,7 @@ ProviderName = Literal["tavily", "serper", "exa"]
 
 class SearchManager:
     _shared_client: httpx.AsyncClient | None = None
+    _client_init_lock: asyncio.Lock | None = None
 
     def __init__(self):
         self.visual_keywords = {"diagram", "flowchart", "image", "photo", "visual", "graph", "chart"}
@@ -23,19 +24,29 @@ class SearchManager:
         return config_module.get_settings()
 
     @classmethod
-    def _get_client(cls) -> httpx.AsyncClient:
-        if cls._shared_client is None:
-            cls._shared_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(5.0),
-                limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
-            )
-        return cls._shared_client
+    async def _get_client(cls) -> httpx.AsyncClient:
+        if cls._shared_client is not None:
+            return cls._shared_client
+
+        if cls._client_init_lock is None:
+            cls._client_init_lock = asyncio.Lock()
+
+        async with cls._client_init_lock:
+            if cls._shared_client is None:
+                cls._shared_client = httpx.AsyncClient(
+                    timeout=httpx.Timeout(5.0),
+                    limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+                )
+            return cls._shared_client
 
     async def close(self) -> None:
-        if SearchManager._shared_client is None:
-            return
-        await SearchManager._shared_client.aclose()
-        SearchManager._shared_client = None
+        if SearchManager._client_init_lock is None:
+            SearchManager._client_init_lock = asyncio.Lock()
+        async with SearchManager._client_init_lock:
+            if SearchManager._shared_client is None:
+                return
+            await SearchManager._shared_client.aclose()
+            SearchManager._shared_client = None
 
     @staticmethod
     def _secret_to_str(value: object) -> str:
@@ -192,7 +203,8 @@ class SearchManager:
             "include_answer": True,
             "max_results": 5,
         }
-        resp = await self._get_client().post("https://api.tavily.com/search", json=payload, timeout=5.0)
+        client = await self._get_client()
+        resp = await client.post("https://api.tavily.com/search", json=payload, timeout=5.0)
         resp.raise_for_status()
         data = self._json_dict(resp)
 
@@ -230,7 +242,8 @@ class SearchManager:
             "X-API-KEY": api_key,
             "Content-Type": "application/json",
         }
-        resp = await self._get_client().post(
+        client = await self._get_client()
+        resp = await client.post(
             "https://google.serper.dev/search",
             headers=headers,
             json={"q": query},
@@ -265,7 +278,8 @@ class SearchManager:
             "x-api-key": api_key,
             "Content-Type": "application/json",
         }
-        resp = await self._get_client().post(
+        client = await self._get_client()
+        resp = await client.post(
             "https://api.exa.ai/search",
             headers=headers,
             json={"query": query, "numResults": 5, "contents": {"text": True}},
@@ -360,7 +374,8 @@ class SearchManager:
             "Content-Type": "application/json",
         }
         try:
-            resp = await self._get_client().post(
+            client = await self._get_client()
+            resp = await client.post(
                 "https://google.serper.dev/images",
                 headers=headers,
                 json={"q": query},
@@ -389,12 +404,14 @@ class SearchManager:
         # Simple quote for loading messages
         tags = "education|knowledge|learning|science|wisdom|research|effort|creativity"
         try:
-            resp = await self._get_client().get(
+            client = await self._get_client()
+            resp = await client.get(
                 f"https://api.quotable.io/random?tags={tags}&maxLength=100",
                 timeout=3.0,
             )
             if resp.status_code == 200:
-                data = resp.json() if isinstance(resp.json(), dict) else {}
+                payload = resp.json()
+                data = payload if isinstance(payload, dict) else {}
                 content = self._safe_text(data.get("content"), "")
                 author = self._safe_text(data.get("author"), "Unknown")
                 if content:
@@ -470,12 +487,14 @@ class SearchManager:
             attempts += 1
             try:
                 # minLength=50, maxLength=120 as requested
-                resp = await self._get_client().get(
+                client = await self._get_client()
+                resp = await client.get(
                     f"https://api.quotable.io/random?tags={tags}&minLength=50&maxLength=120",
                     timeout=4.0,
                 )
                 if resp.status_code == 200:
-                    data = resp.json() if isinstance(resp.json(), dict) else {}
+                    parsed = resp.json()
+                    data = parsed if isinstance(parsed, dict) else {}
                     author = self._safe_text(data.get("author"), "")
                     content = self._safe_text(data.get("content"), "")
                     if not author or not content:
