@@ -401,21 +401,6 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         "settings": {**(conversation.get("settings") or {}), "mode": selected_mode, "prompt_mode": prompt_mode},
         "updated_at": now_iso,
     }
-    try:
-        await asyncio.to_thread(
-            supabase.table("conversations").update(update_payload).eq("id", conversation.get("id")).execute
-        )
-    except Exception as exc:
-        logger.warning(
-            "messages_conversation_update_failed",
-            error=str(exc),
-            request_id=request_id,
-            user_id_hash=user_id_hash,
-            conversation_id=req.conversation_id,
-            retry=bool(req.regenerate),
-            sampled=False,
-        )
-
     assistant_metadata = {
         "assistant_client_id": assistant_client_id,
         "mode": selected_mode,
@@ -423,18 +408,40 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     }
 
     try:
-        assistant_resp = await asyncio.to_thread(
-            supabase.table("messages")
-            .insert(
-                {
-                    "conversation_id": conversation.get("id"),
-                    "role": "assistant",
-                    "content": "",
-                    "metadata": assistant_metadata,
-                }
-            )
-            .execute
+        assistant_result, conversation_update_result = await asyncio.gather(
+            asyncio.to_thread(
+                supabase.table("messages")
+                .insert(
+                    {
+                        "conversation_id": conversation.get("id"),
+                        "role": "assistant",
+                        "content": "",
+                        "metadata": assistant_metadata,
+                    }
+                )
+                .execute
+            ),
+            asyncio.to_thread(
+                supabase.table("conversations").update(update_payload).eq("id", conversation.get("id")).execute
+            ),
+            return_exceptions=True,
         )
+
+        if isinstance(conversation_update_result, Exception):
+            logger.warning(
+                "messages_conversation_update_failed",
+                error=str(conversation_update_result),
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+                conversation_id=req.conversation_id,
+                retry=bool(req.regenerate),
+                sampled=False,
+            )
+
+        if isinstance(assistant_result, Exception):
+            raise assistant_result
+
+        assistant_resp = assistant_result
         assistant_data = cast(list[Dict[str, Any]], assistant_resp.data) if assistant_resp.data else []
         assistant_message_id = assistant_data[0]["id"] if assistant_data else None
         await cache_set(
