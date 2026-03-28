@@ -179,6 +179,8 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         1.0,
         min(float(getattr(config_settings, "stream_fallback_budget_seconds", 6)), float(stream_max_seconds)),
     )
+    if is_prod:
+        fallback_budget_seconds = max(fallback_budget_seconds, 8.0)
     fallback_timeout_seconds = max(fallback_budget_seconds, 3.0)
     close_timeout_seconds = 0.25
     heartbeat_seconds = min(
@@ -295,7 +297,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         fallback_budget_seconds = max(fallback_budget_seconds, 4.0)
         fallback_timeout_seconds = max(fallback_budget_seconds, 4.0)
     else:
-        cap = 8.0 if is_prod else 15.0
+        cap = 10.0 if is_prod else 15.0
         stream_start_timeout_seconds = min(max(raw_start_timeout, 0.1), cap)
 
     requested_prompt_mode = PROMPT_MODE_ALIASES.get(req.prompt_mode or "", req.prompt_mode or "")
