@@ -45,18 +45,6 @@ export default function LandingPage(): JSX.Element {
             </span>
           </div>
         </div>
-        {/* Desktop-only nav links — hidden on mobile by design */}
-        <div className="hidden md:flex items-center gap-8 text-sm font-medium text-gray-400">
-          <a href="#features" className="hover:text-cyan-400 transition-colors">
-            Features
-          </a>
-          <a href="#models" className="hover:text-cyan-400 transition-colors">
-            Intelligence
-          </a>
-          <a href="#export" className="hover:text-cyan-400 transition-colors">
-            Tools
-          </a>
-        </div>
         {/* Login button — visible on all screen sizes */}
         <div className="ml-auto flex items-center shrink-0">
           <LoginButton className="!px-3.5 !py-2 !text-xs md:!px-6 md:!py-2.5 md:!text-sm font-bold bg-white text-black hover:bg-gray-200 border-none rounded-full shadow-[0_0_20px_rgba(255,255,255,0.4)] hover:shadow-[0_0_25px_rgba(255,255,255,0.6)] transition-all transform hover:scale-105" />
