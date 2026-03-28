@@ -15,16 +15,12 @@ export type ChatUiSlice = Pick<
   | "isPro"
   | "gatedModes"
   | "upgradeModalOpen"
-  | "regenerationModalOpen"
-  | "regenerationTargetId"
   | "setTheme"
   | "toggleTheme"
   | "setIsSidebarOpen"
   | "setIsPro"
   | "openUpgradeModal"
   | "closeUpgradeModal"
-  | "openRegenerationModal"
-  | "closeRegenerationModal"
 >;
 
 export const createChatUiSlice: StateCreator<ChatState, [], [], ChatUiSlice> = (
@@ -36,8 +32,6 @@ export const createChatUiSlice: StateCreator<ChatState, [], [], ChatUiSlice> = (
   isPro: defaultIsPro,
   gatedModes: [...CHAT_PREMIUM_MODES],
   upgradeModalOpen: false,
-  regenerationModalOpen: false,
-  regenerationTargetId: null,
 
   setTheme: (theme: ThemeMode) => {
     applyThemeClass(theme);
@@ -52,8 +46,4 @@ export const createChatUiSlice: StateCreator<ChatState, [], [], ChatUiSlice> = (
   setIsPro: (isPro) => set({ isPro }),
   openUpgradeModal: () => set({ upgradeModalOpen: true }),
   closeUpgradeModal: () => set({ upgradeModalOpen: false }),
-  openRegenerationModal: (messageId) =>
-    set({ regenerationModalOpen: true, regenerationTargetId: messageId }),
-  closeRegenerationModal: () =>
-    set({ regenerationModalOpen: false, regenerationTargetId: null }),
 });

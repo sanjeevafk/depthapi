@@ -857,6 +857,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     message_id=client_message_id,
                     abort_confirmed=True,
                     reason=abort_reason,
+                    tokens_after_abort=0,
                 )
             queue_time_ms = round((start_time - request_received) * 1000, 2)
             model_inference_ms = telemetry_sink.get("model_inference_ms")

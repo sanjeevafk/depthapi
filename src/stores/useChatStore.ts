@@ -95,7 +95,7 @@ applyThemeClass(initialTheme);
 
 // ─── Store interface ────────────────────────────────────────────────────────
 
-interface ChatState {
+export interface ChatState {
   // UI state
   theme: ThemeMode;
   isSidebarOpen: boolean;
@@ -250,6 +250,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   // ── Workspace/mode actions ────────────────────────────────────────────────
 
   setMode: (mode: ChatMode) => {
+    if (Object.keys(get().streamControllers).length > 0) {
+      get().abortAllStreams();
+    }
+
     const convStore = useConversationStore.getState();
     const {
       currentConversationId,
@@ -809,11 +813,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const originalTemp =
       typeof target?.metadata?.temperature === "number" ? target.metadata.temperature : 0.7;
     const nextTemperature = Math.min(originalTemp + 0.1, 1.0);
-    const originalClientId =
-      typeof userMessage.metadata?.client_id === "string"
-        ? userMessage.metadata.client_id
-        : makeClientId();
-
     set({ regeneratingMessageId: messageId });
     try {
       await get().sendMessage(userMessage.content, {
@@ -821,7 +820,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         promptMode: nextPromptMode,
         isRegeneration: true,
         temperature: nextTemperature,
-        clientMessageId: originalClientId,
+        clientMessageId: makeClientId(),
         assistantClientId: makeClientId(),
         skipUserMessage: true,
         replaceMessageId: messageId,
