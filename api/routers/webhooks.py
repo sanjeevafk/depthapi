@@ -1,21 +1,19 @@
 """Webhook compatibility routes for payment processing."""
 
-from typing import Optional
-
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from auth import get_supabase_admin
 from config import get_settings
 from routers.payments import dodo_webhook as payments_dodo_webhook
-from routers.payments import process_dodo_webhook_payload, verify_dodo_signature
+from routers.payments import process_dodo_webhook_payload
 
 router = APIRouter(tags=["webhooks"])
 
 
 @router.post("/webhooks/dodo")
-async def dodo_webhook(request: Request, x_dodo_signature: Optional[str] = Header(default=None)):
+async def dodo_webhook(request: Request):
     """Backward-compatible webhook endpoint that delegates to `/api/payments/webhook/dodo`."""
-    return await payments_dodo_webhook(request=request, x_dodo_signature=x_dodo_signature)
+    return await payments_dodo_webhook(request=request)
 
 
 @router.post("/webhooks/dodo/dev-replay")
