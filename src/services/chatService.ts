@@ -93,7 +93,10 @@ const handlePayload = (
   const payload = parsed.data;
   const chunk = payload?.[chunkKey] ?? payload?.delta ?? payload?.chunk;
   if (chunk) {
-    onChunk(chunk);
+    const fragments = chunk.match(/\S+\s*|\s+/g) ?? [chunk];
+    for (const fragment of fragments) {
+      onChunk(fragment);
+    }
   }
 
   const serverMessageId = payload?.assistant_message_id || payload?.message_id;
