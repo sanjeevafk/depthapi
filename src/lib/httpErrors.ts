@@ -13,10 +13,22 @@ export type ApiError = Error & {
 
 const messageFromDetail = (detail: ApiErrorDetail): string => {
   if (detail.type === "quota_exceeded") {
-    return "Daily quota exceeded. Please try again after your quota resets.";
+    return "Rate limited for today. Please try again after your quota resets.";
   }
   if (detail.type === "rate_limit_exceeded") {
-    return "You are sending requests too quickly. Please wait a moment.";
+    return "Rate limited. Please wait a moment before retrying.";
+  }
+  if (detail.type === "invalid_api_key") {
+    return "Authentication failed. Please verify provider credentials.";
+  }
+  if (detail.type === "service_degraded") {
+    return "Model service is temporarily unavailable. Please try again shortly.";
+  }
+  if (detail.type === "bad_request") {
+    return "Request could not be processed. Please review the prompt and retry.";
+  }
+  if (detail.type === "llm_error") {
+    return "API error from the model provider. Please retry.";
   }
   return "";
 };
@@ -43,7 +55,7 @@ export const buildApiError = async (response: Response): Promise<ApiError> => {
   }
 
   const err = new Error(
-    message || `API error: ${response.status}`,
+    message || `Request failed (${response.status}). Please try again.`,
   ) as ApiError;
   err.status = response.status;
   if (detail) {

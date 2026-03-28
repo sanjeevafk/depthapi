@@ -1,8 +1,9 @@
+import { useMemo } from "react";
 import type { Workspace } from "../../lib/chatStoreUtils";
 import {
   WORKSPACE_CONTENT,
   WORKSPACE_ICONS,
-  WORKSPACE_PROMPTS,
+  getCachedWorkspacePrompts,
 } from "./welcomeEmptyStateConstants";
 
 interface WelcomeEmptyStateProps {
@@ -22,25 +23,28 @@ export default function WelcomeEmptyState({
 }: WelcomeEmptyStateProps): JSX.Element {
   const content = WORKSPACE_CONTENT[workspace];
   const Icon = WORKSPACE_ICONS[workspace];
-  const prompts = WORKSPACE_PROMPTS[workspace];
+  const prompts = useMemo(
+    () => getCachedWorkspacePrompts()[workspace],
+    [workspace],
+  );
 
   return (
     <section
-      className="flex min-h-0 flex-1 items-center justify-center px-6 py-10"
+      className="flex min-h-0 flex-1 items-start justify-center overflow-y-auto px-3 pb-32 pt-4 sm:px-6 sm:pb-40 sm:pt-8 lg:items-center lg:py-10"
       aria-labelledby="welcome-title"
     >
       <div className="w-full max-w-4xl">
-        <div className="rounded-3xl border border-slate-200 bg-white/80 p-8 text-center shadow-[0_20px_45px_rgba(15,23,42,0.08)] dark:border-white/10 dark:bg-dark-800/70 dark:shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
+        <div className="rounded-3xl border border-slate-200 bg-white/80 p-5 sm:p-8 text-center shadow-[0_20px_45px_rgba(15,23,42,0.08)] dark:border-white/10 dark:bg-dark-800/70 dark:shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
           <div className="mx-auto mb-6 inline-flex h-16 w-16 items-center justify-center rounded-2xl border border-teal-200 bg-teal-50 dark:border-teal-500/30 dark:bg-teal-500/10">
             <Icon className="h-7 w-7 text-teal-600 dark:text-teal-300" />
           </div>
           <h2
             id="welcome-title"
-            className="text-3xl font-semibold text-slate-900 dark:text-slate-100"
+            className="text-2xl sm:text-3xl font-semibold text-slate-900 dark:text-slate-100"
           >
             {content.title}
           </h2>
-          <p className="mt-3 text-lg text-slate-500 dark:text-slate-400">
+          <p className="mt-3 text-base sm:text-lg text-slate-500 dark:text-slate-400">
             {content.description}
           </p>
           {userName && (

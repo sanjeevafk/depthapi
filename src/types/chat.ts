@@ -29,20 +29,9 @@ export const CHAT_PROMPT_MODES = [
   "meme",
 ] as const;
 
-export const LEGACY_CHAT_MODES = [
-  "fast",
-  "ensemble",
-  "default",
-  "balanced",
-  "technical-depth",
-  "technical_depth",
-  "meme-style",
-] as const;
-
 export type ChatMode = (typeof CHAT_MODES)[number];
 export type PromptMode = (typeof CHAT_PROMPT_MODES)[number];
-export type LegacyChatMode = (typeof LEGACY_CHAT_MODES)[number];
-export type ConversationMode = ChatMode | LegacyChatMode;
+export type ConversationMode = ChatMode;
 
 export interface Conversation {
   id: string;
