@@ -303,26 +303,27 @@ app.include_router(payments.router, prefix="/api")
 
 @app.get("/api/health", tags=["health"])
 async def health():
-    """Lightweight dependency health checks with degraded state semantics."""
+    """Lightweight dependency checks with config-derived provider status semantics."""
     settings = get_settings()
     config_state = get_provider_config_state()
 
     async def check_provider_stack() -> dict[str, object]:
-        if not bool(config_state.get("chat_enabled", False)):
+        """Return provider health from validated config state (no active network probe)."""
+        chat_enabled = bool(config_state.get("chat_enabled", False))
+        has_api_key = bool(config_state.get("has_api_key", False))
+        if not chat_enabled:
             return {
                 "status": "degraded",
-                "latency_ms": 0,
                 "reachable": False,
-                "key_valid": False,
-                "chat_enabled": False,
+                "key_valid": has_api_key,
+                "chat_enabled": chat_enabled,
             }
 
         return {
             "status": "ok",
-            "latency_ms": 0,
-            "reachable": True,
-            "key_valid": True,
-            "chat_enabled": True,
+            "reachable": chat_enabled,
+            "key_valid": has_api_key,
+            "chat_enabled": chat_enabled,
         }
 
     async def check_rate_limit() -> dict[str, str]:
@@ -363,7 +364,11 @@ async def health():
 
     return {
         "status": overall,
-        "provider": {"status": provider["status"], "latency_ms": provider["latency_ms"]},
+        "provider": {
+            "status": provider["status"],
+            "reachable": bool(provider.get("reachable", False)),
+            "key_valid": bool(provider.get("key_valid", False)),
+        },
         "rate_limit": {"status": rate_limit["status"]},
         "db": {"status": db["status"]},
         "chat_enabled": bool(provider.get("chat_enabled", False)),

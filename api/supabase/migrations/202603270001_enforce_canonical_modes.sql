@@ -45,3 +45,10 @@ alter table public.conversations
 alter table public.conversations
   add constraint conversations_mode_check
   check (mode in ('learning', 'technical', 'socratic'));
+
+alter table public.history
+  drop constraint if exists history_mode_check;
+
+alter table public.history
+  add constraint history_mode_check
+  check (mode in ('learning', 'technical', 'socratic'));

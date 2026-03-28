@@ -20,7 +20,11 @@ import { supabase } from "./lib/supabase";
 
 export interface HealthResponse {
   status: "ok" | "degraded" | "down";
-  provider: { status: "ok" | "degraded" | "down"; latency_ms: number };
+  provider: {
+    status: "ok" | "degraded" | "down";
+    reachable: boolean;
+    key_valid: boolean;
+  };
   rate_limit: { status: "ok" | "degraded" | "down" };
   db: { status: "ok" | "degraded" | "down" };
   chat_enabled?: boolean;
@@ -327,10 +331,13 @@ export async function queryTopicStream(
       }
 
       const error = normalizeError(err);
-      const apiError = err as ApiError;
-      const retryAllowed = apiError.detail?.retry_allowed !== false;
+      const isApiError = (e: unknown): e is ApiError =>
+        typeof e === "object" && e !== null && "statusCode" in e;
+      const retryAllowed = isApiError(err)
+        ? err.detail?.retry_allowed !== false
+        : true;
       if (!retryAllowed) {
-        onError(apiError);
+        onError(error);
         return;
       }
 

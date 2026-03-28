@@ -64,7 +64,9 @@ const loadPendingSyncs = (): PendingSyncEntry[] => {
         typeof item === "object" &&
         item !== null &&
         typeof item.id === "string" &&
-        typeof item.content === "string",
+        typeof item.content === "string" &&
+        typeof item.mode === "string" &&
+        typeof item.createdAt === "string",
     );
   } catch {
     return [];
@@ -249,8 +251,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setMode: (mode: ChatMode) => {
     const convStore = useConversationStore.getState();
-    const { currentConversationId, conversations, depthLevel } = convStore;
+    const {
+      currentConversationId,
+      conversations,
+      depthLevel,
+      workspace: previousWorkspace,
+      currentMode: previousMode,
+      currentPromptMode: previousPromptMode,
+      selectedLevel: previousSelectedLevel,
+    } = convStore;
     const conversation = conversations.find((c) => c.id === currentConversationId);
+    const previousConversationMode = conversation?.mode;
+    const previousConversationSettings = conversation?.settings;
     const nextPromptMode = isPromptMode(mode) ? mode : convStore.currentPromptMode;
     const nextDepthLevel = resolveDepthLevel(nextPromptMode, depthLevel);
     const nextWorkspace = resolveWorkspaceFromMode(mode);
@@ -276,18 +288,58 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }));
 
       if (supabaseConfigured && !currentConversationId.startsWith("local-")) {
-        void supabase
-          .from("conversations")
-          .update({ mode, settings: nextSettings })
-          .eq("id", currentConversationId);
+        const targetConversationId = currentConversationId;
+        const rollbackConversationMode = previousConversationMode;
+        const rollbackConversationSettings = previousConversationSettings;
+        void (async () => {
+          try {
+            const { error } = await supabase
+              .from("conversations")
+              .update({ mode, settings: nextSettings })
+              .eq("id", targetConversationId);
+            if (error) throw error;
+          } catch (error) {
+            console.error("Failed to update conversation mode:", {
+              conversationId: targetConversationId,
+              mode,
+              nextSettings,
+              error,
+            });
+            useConversationStore.setState((state) => ({
+              conversations: state.conversations.map((c) =>
+                c.id === targetConversationId
+                  ? {
+                      ...c,
+                      mode: rollbackConversationMode ?? c.mode,
+                      settings: rollbackConversationSettings ?? c.settings,
+                    }
+                  : c,
+              ),
+              workspace: previousWorkspace,
+              currentMode: previousMode,
+              currentPromptMode: previousPromptMode,
+              depthLevel,
+              selectedLevel: previousSelectedLevel,
+            }));
+          }
+        })();
       }
     }
   },
 
   setPromptMode: (mode: PromptMode) => {
     const convStore = useConversationStore.getState();
-    const { currentConversationId, conversations, depthLevel, workspace, currentMode } = convStore;
+    const {
+      currentConversationId,
+      conversations,
+      depthLevel,
+      workspace,
+      currentMode,
+      currentPromptMode: previousPromptMode,
+      selectedLevel: previousSelectedLevel,
+    } = convStore;
     const conversation = conversations.find((c) => c.id === currentConversationId);
+    const previousConversationSettings = conversation?.settings;
     const nextDepthLevel = resolveDepthLevel(mode, depthLevel);
     const nextSettings = conversation?.settings
       ? { ...conversation.settings, prompt_mode: mode }
@@ -307,10 +359,37 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }));
 
       if (supabaseConfigured && !currentConversationId.startsWith("local-")) {
-        void supabase
-          .from("conversations")
-          .update({ settings: nextSettings })
-          .eq("id", currentConversationId);
+        const targetConversationId = currentConversationId;
+        const rollbackConversationSettings = previousConversationSettings;
+        void (async () => {
+          try {
+            const { error } = await supabase
+              .from("conversations")
+              .update({ settings: nextSettings })
+              .eq("id", targetConversationId);
+            if (error) throw error;
+          } catch (error) {
+            console.error("Failed to update conversation prompt mode:", {
+              conversationId: targetConversationId,
+              promptMode: mode,
+              nextSettings,
+              error,
+            });
+            useConversationStore.setState((state) => ({
+              conversations: state.conversations.map((c) =>
+                c.id === targetConversationId
+                  ? {
+                      ...c,
+                      settings: rollbackConversationSettings ?? c.settings,
+                    }
+                  : c,
+              ),
+              currentPromptMode: previousPromptMode,
+              depthLevel,
+              selectedLevel: previousSelectedLevel,
+            }));
+          }
+        })();
       }
     }
   },

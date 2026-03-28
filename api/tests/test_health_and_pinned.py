@@ -22,7 +22,8 @@ async def test_health_ok(app_client, monkeypatch):
     assert data["status"] in {"ok", "degraded"}
     assert set(data.keys()) >= {"status", "provider", "rate_limit", "db"}
     assert data["provider"]["status"] == "ok"
-    assert isinstance(data["provider"]["latency_ms"], int)
+    assert isinstance(data["provider"]["reachable"], bool)
+    assert isinstance(data["provider"]["key_valid"], bool)
     assert data["rate_limit"]["status"] == "ok"
     assert data["db"]["status"] == "ok"
 
