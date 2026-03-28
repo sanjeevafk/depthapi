@@ -26,7 +26,7 @@ const WORKSPACE_LABELS: Record<Workspace, string> = {
 const SIDEBAR_COLLAPSE_KEY = "kb_sidebar_collapsed_v1";
 
 export default function ChatPage(): JSX.Element {
-  const { user, signInWithGoogle, signOut } = useAuth();
+  const { user, signInWithGoogle, signOut, profile } = useAuth();
   const navigate = useNavigate();
   const { conversations } = useConversations();
 
@@ -215,6 +215,7 @@ export default function ChatPage(): JSX.Element {
           onDeleteConversation={(id) => void handleDeleteConversation(id)}
           onSignIn={() => void signInWithGoogle()}
           onSignOut={() => void signOut()}
+          isPro={profile?.is_pro}
         />
 
         {isSidebarOpen && (
