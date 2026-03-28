@@ -13,11 +13,10 @@ import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from auth import check_is_pro, invalidate_pro_cache, verify_token
+from auth import check_is_pro, get_supabase_admin, invalidate_pro_cache, verify_token
 from config import get_settings
 from logging_config import anonymize_user_id
 from monitoring import capture_telemetry_event
-from supabase import create_client
 
 logger = structlog.get_logger()
 
@@ -318,13 +317,12 @@ async def dodo_webhook(
             message="Duplicate event ignored",
         )
 
-    if not settings.supabase_url or not settings.supabase_service_role_key:
+    supabase = get_supabase_admin()
+    if not supabase:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Supabase configuration missing",
         )
-
-    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
     result = process_dodo_webhook_payload(payload, supabase)
     capture_telemetry_event(
         "payment_webhook_processed",

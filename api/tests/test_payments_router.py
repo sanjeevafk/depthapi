@@ -72,7 +72,7 @@ async def test_verify_payment_status(app_client, monkeypatch, fake_user, test_se
 async def test_webhook_success_flow(app_client, monkeypatch, test_settings, fake_supabase):
     test_settings.dodo_webhook_secret = "secret"
     monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
-    monkeypatch.setattr(payments_module, "create_client", lambda *_args, **_kwargs: fake_supabase)
+    monkeypatch.setattr(payments_module, "get_supabase_admin", lambda: fake_supabase)
     invalidated = []
     monkeypatch.setattr(payments_module, "invalidate_pro_cache", lambda user_id: invalidated.append(user_id))
 
@@ -105,7 +105,7 @@ async def test_webhook_success_flow(app_client, monkeypatch, test_settings, fake
 async def test_webhook_accepts_whitespace_padded_signature(app_client, monkeypatch, test_settings, fake_supabase):
     test_settings.dodo_webhook_secret = "secret"
     monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
-    monkeypatch.setattr(payments_module, "create_client", lambda *_args, **_kwargs: fake_supabase)
+    monkeypatch.setattr(payments_module, "get_supabase_admin", lambda: fake_supabase)
     monkeypatch.setattr(payments_module, "invalidate_pro_cache", lambda user_id: None)
 
     payload = {
@@ -140,7 +140,7 @@ async def test_webhook_rejects_invalid_whitespace_padded_signature(
 ):
     test_settings.dodo_webhook_secret = "secret"
     monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
-    monkeypatch.setattr(payments_module, "create_client", lambda *_args, **_kwargs: fake_supabase)
+    monkeypatch.setattr(payments_module, "get_supabase_admin", lambda: fake_supabase)
 
     payload = {
         "id": "evt-invalid-signature-1",
@@ -166,7 +166,7 @@ async def test_webhook_rejects_invalid_whitespace_padded_signature(
 async def test_webhook_duplicate_event_is_idempotent(app_client, monkeypatch, test_settings, fake_supabase):
     test_settings.dodo_webhook_secret = "secret"
     monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
-    monkeypatch.setattr(payments_module, "create_client", lambda *_args, **_kwargs: fake_supabase)
+    monkeypatch.setattr(payments_module, "get_supabase_admin", lambda: fake_supabase)
     monkeypatch.setattr(payments_module, "invalidate_pro_cache", lambda user_id: None)
     payload = {
         "id": "evt-duplicate-1",
@@ -199,7 +199,7 @@ async def test_webhook_duplicate_event_is_idempotent(app_client, monkeypatch, te
 async def test_webhook_failed_payment_does_not_grant_pro(app_client, monkeypatch, test_settings, fake_supabase):
     test_settings.dodo_webhook_secret = "secret"
     monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
-    monkeypatch.setattr(payments_module, "create_client", lambda *_args, **_kwargs: fake_supabase)
+    monkeypatch.setattr(payments_module, "get_supabase_admin", lambda: fake_supabase)
 
     payload = {
         "id": "evt-failed-1",
@@ -234,7 +234,7 @@ async def test_webhook_revokes_pro_for_cancellation_or_renewal_failure(
 ):
     test_settings.dodo_webhook_secret = "secret"
     monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
-    monkeypatch.setattr(payments_module, "create_client", lambda *_args, **_kwargs: fake_supabase)
+    monkeypatch.setattr(payments_module, "get_supabase_admin", lambda: fake_supabase)
 
     payload = {
         "id": f"evt-revoke-{event_name}",
@@ -267,7 +267,7 @@ async def test_webhook_returns_503_when_idempotency_store_is_unavailable(
 ):
     test_settings.dodo_webhook_secret = "secret"
     monkeypatch.setattr(payments_module, "get_settings", lambda: test_settings)
-    monkeypatch.setattr(payments_module, "create_client", lambda *_args, **_kwargs: fake_supabase)
+    monkeypatch.setattr(payments_module, "get_supabase_admin", lambda: fake_supabase)
 
     async def broken_get_redis():
         raise RuntimeError("redis unavailable")
