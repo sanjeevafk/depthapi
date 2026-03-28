@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { supabase } from "../lib/supabase";
 import { useChatStore } from "../stores/useChatStore";
+import { useConversationStore } from "../stores/useConversationStore";
 import type { Message } from "../types/chat";
 
 const supabaseConfigured =
@@ -26,7 +27,7 @@ const mapMessage = (record: MessageRecord): Message => ({
 });
 
 export function useMessages(): void {
-  const currentConversationId = useChatStore(
+  const currentConversationId = useConversationStore(
     (state) => state.currentConversationId,
   );
   const selectConversation = useChatStore((state) => state.selectConversation);
@@ -34,10 +35,16 @@ export function useMessages(): void {
   const loadedConversationId = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!currentConversationId || !supabaseConfigured) return;
+    if (!supabaseConfigured) return;
+    if (!currentConversationId) {
+      loadedConversationId.current = null;
+      return;
+    }
     if (loadedConversationId.current === currentConversationId) return;
     loadedConversationId.current = currentConversationId;
-    void selectConversation(currentConversationId);
+    // Avoid force-reloading here: a hard reload clears optimistic placeholder
+    // messages and can drop live stream updates before they are rendered.
+    void selectConversation(currentConversationId, { forceReload: false });
   }, [currentConversationId, selectConversation]);
 
   useEffect(() => {
@@ -72,7 +79,9 @@ export function useMessages(): void {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel).catch(() => {
+        // Ignore realtime teardown races during rapid conversation switches.
+      });
     };
   }, [currentConversationId, addMessage]);
 }

@@ -1,4 +1,4 @@
-"""LiteLLM adapter error types."""
+"""Native AsyncOpenAI adapter error types."""
 
 
 class LLMError(Exception):
@@ -23,7 +23,7 @@ class LLMBadRequest(LLMError):
 
 
 class LLMInvalidAPIKey(LLMError):
-    """Raised when LiteLLM authentication fails due to invalid credentials."""
+    """Raised when provider authentication fails due to invalid credentials."""
 
     error_type = "invalid_api_key"
     retryable = False

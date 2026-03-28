@@ -97,10 +97,12 @@ export default function DepthDropdown({
             setOpen(true);
           }
         }}
-        className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-300 bg-teal-50 px-3 text-sm font-semibold text-slate-700 transition hover:bg-teal-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/50 dark:border-white/10 dark:bg-dark-700 dark:text-slate-200 dark:hover:bg-dark-600"
+        className="inline-flex h-11 max-w-full items-center gap-2 rounded-xl border border-slate-300 bg-teal-50 px-3 text-sm font-semibold text-slate-700 transition hover:bg-teal-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/50 dark:border-white/10 dark:bg-dark-700 dark:text-slate-200 dark:hover:bg-dark-600"
       >
         <Bolt className="h-3.5 w-3.5 text-teal-600 dark:text-cyan-300" />
-        {selectedOption.label}
+        <span className="max-w-[7.5rem] truncate sm:max-w-none">
+          {selectedOption.label}
+        </span>
         <ChevronDown
           className={`h-3.5 w-3.5 transition ${open ? "rotate-180" : ""}`}
         />
@@ -111,7 +113,7 @@ export default function DepthDropdown({
           id={listboxId}
           role="listbox"
           aria-label="Depth levels"
-          className="absolute bottom-full left-0 mb-2 w-52 rounded-2xl border border-slate-300 bg-white p-2 shadow-xl dark:border-white/10 dark:bg-dark-800"
+          className="absolute bottom-full left-0 mb-2 w-[min(20rem,calc(100vw-2rem))] rounded-2xl border border-slate-300 bg-white p-2 shadow-xl dark:border-white/10 dark:bg-dark-800"
         >
           {DEPTH_OPTIONS.map((option, index) => {
             const isSelected = option.id === value;

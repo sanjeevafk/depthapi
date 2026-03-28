@@ -7,6 +7,8 @@ import Mermaid from "../Mermaid";
 import SafeImage from "../SafeImage";
 import MessageActionToolbar from "./MessageActionToolbar";
 import { useChatStore } from "../../stores/useChatStore";
+import { useConversationStore } from "../../stores/useConversationStore";
+import { useMessageStore } from "../../stores/useMessageStore";
 import { formatModeLabel } from "../../lib/chatModes";
 
 const markdownComponents: Components = {
@@ -51,15 +53,14 @@ const markdownComponents: Components = {
 };
 
 export default function MessageList(): JSX.Element {
-  const messageIds = useChatStore((state) => state.messageIds);
-  const isLoading = useChatStore((state) => state.isLoading);
+  const messageIds = useMessageStore((state) => state.messageIds);
+  const isLoading = useConversationStore((state) => state.isLoading);
+  const messagesById = useMessageStore((state) => state.messagesById);
   const scrollRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
 
   const lastMessageId = messageIds[messageIds.length - 1];
-  const lastContent = useChatStore((state) =>
-    lastMessageId ? state.messagesById[lastMessageId]?.content : undefined,
-  );
+  const lastContent = lastMessageId ? messagesById[lastMessageId]?.content : undefined;
   const handleScroll = () => {
     const container = scrollRef.current;
     if (!container) return;
@@ -81,7 +82,7 @@ export default function MessageList(): JSX.Element {
     <div
       ref={scrollRef}
       onScroll={handleScroll}
-      className="flex-1 min-h-0 overflow-y-auto px-6 py-6"
+      className="flex-1 min-h-0 overflow-y-auto px-3 py-4 sm:px-6 sm:py-6"
     >
       <div className="mx-auto flex w-full max-w-3xl flex-col space-y-4">
         {messageIds.length === 0 ? (
@@ -105,10 +106,8 @@ export default function MessageList(): JSX.Element {
 }
 
 function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
-  const message = useChatStore((state) => state.messagesById[messageId]);
-  const openRegenerationModal = useChatStore(
-    (state) => state.openRegenerationModal,
-  );
+  const message = useMessageStore((state) => state.messagesById[messageId]);
+  const regenerateMessage = useChatStore((state) => state.regenerateMessage);
   const retrySync = useChatStore((state) => state.retrySync);
 
   if (!message) return null;
@@ -128,7 +127,7 @@ function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
       className={`flex ${isUser ? "justify-end" : "justify-start"}`}
     >
       <div
-        className={`max-w-[75%] break-words rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-lg border relative ${!isUser ? "group" : ""} ${
+        className={`max-w-[90%] sm:max-w-[75%] break-words rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-lg border relative ${!isUser ? "group" : ""} ${
           isUser
             ? "bg-accent-primary text-white border-accent-primary/30"
             : "bg-dark-700 text-gray-100 border-white/5"
@@ -138,7 +137,7 @@ function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
           <MessageActionToolbar
             content={message.content}
             disabled={message.isStreaming || message.isRegenerating}
-            onRegenerate={() => openRegenerationModal(messageId)}
+            onRegenerate={() => void regenerateMessage(messageId)}
           />
         )}
         {assistantLabel && (
