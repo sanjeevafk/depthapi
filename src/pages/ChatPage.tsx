@@ -233,7 +233,7 @@ export default function ChatPage(): JSX.Element {
                 type="button"
                 onClick={() => setIsSidebarOpen(true)}
                 aria-label="Open sidebar"
-                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/50 md:hidden dark:border-white/10 dark:bg-dark-800 dark:text-slate-300 dark:hover:bg-dark-700"
+                className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/50 md:hidden dark:border-white/10 dark:bg-dark-800 dark:text-slate-300 dark:hover:bg-dark-700"
               >
                 <Menu className="h-4 w-4" />
               </button>
@@ -249,7 +249,7 @@ export default function ChatPage(): JSX.Element {
 
           <main className="flex min-h-0 flex-1 flex-col">
             {healthMessage && (
-              <div className="mx-auto mt-4 w-full max-w-3xl rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100">
+              <div className="mx-3 mt-3 sm:mx-auto sm:mt-4 w-auto sm:w-full max-w-3xl rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100">
                 {healthMessage}
               </div>
             )}

@@ -82,17 +82,17 @@ export function LivePreviewCard(): JSX.Element {
           <div className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
             <User className="w-5 h-5 text-gray-400" />
           </div>
-          <div className="flex-1 pt-2">
+          <div className="flex-1 pt-2 min-w-0">
             <TypingText
               text={queryText}
               start={step >= 1}
-              className="text-lg sm:text-xl font-medium text-white/90 leading-relaxed"
+              className="text-base sm:text-xl font-medium text-white/90 leading-relaxed break-words"
             />
           </div>
         </div>
 
         {/* Answer Section */}
-        <div className="flex gap-4 items-start min-h-[160px]">
+        <div className="flex gap-4 items-start min-h-[120px] sm:min-h-[160px]">
           <div className="w-10 h-10 rounded-full bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center shrink-0">
             <Sparkles className="w-5 h-5 text-cyan-400" />
           </div>
@@ -192,7 +192,7 @@ function ResponseLine({
       initial={{ opacity: 0, y: 5 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5 }}
-      className="text-gray-300 leading-relaxed text-base sm:text-lg"
+      className="text-gray-300 leading-relaxed text-sm sm:text-base md:text-lg"
     >
       {tokens.map((token, i) => (
         <span
