@@ -296,6 +296,7 @@ async def test_webhook_on_hold_revokes_pro(app_client, monkeypatch, test_setting
     monkeypatch.setattr(payments_module, "get_supabase_admin", lambda: fake_supabase)
 
     payload = {
+        "id": "evt-on-hold-1",
         "event": "subscription.on_hold",
         "data": {
             "subscription_id": "sub-1",
