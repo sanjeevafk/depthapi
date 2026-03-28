@@ -1,31 +1,450 @@
-"""LiteLLM-backed inference service."""
+"""Native multi-provider inference service."""
 
+import asyncio
+import hashlib
+import json
 import re
 import time
-from prompts import PROMPTS
-from logging_config import anonymize_user_id, log_sampled_success
+from typing import TypedDict
+import httpx
+import structlog
+from openai import APIConnectionError, APIStatusError, APITimeoutError
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
+from config import get_settings
+from prompts import (
+    PROMPTS,
+    TECHNICAL_DEPTH_PROMPT,
+    TECHNICAL_STRUCTURED_PROMPT,
+    TECHNICAL_COMPARE_PROMPT,
+    TECHNICAL_BRAINSTORM_PROMPT,
+    _TECHNICAL_DEEPER_LAYER,
+    _TECHNICAL_DIAGRAM_INSTRUCTION,
+)
+from logging_config import logger, anonymize_user_id, log_sampled_success
+from services.search import search_service
+from services.intent import (
+    detect_intent_and_depth,
+    detect_diagram_type,
+    validate_technical_response,
+)
 from utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE, normalize_mode
-from services.llm_client import close_llm_client, stream_chat_completion, create_chat_completion
-from services.model_runner import call_model as _call_model, stream_model
-from services import technical_mode as _technical_mode
-from services.intent import detect_intent_and_depth, detect_diagram_type, validate_technical_response
+from services.llm_client import close_llm_client, create_chat_completion, stream_chat_completion
+
+_tech_logger = structlog.get_logger(__name__)
+
+TECHNICAL_MODEL_PRIMARY = "technical-primary"
+TECHNICAL_MODEL_FALLBACK = "technical-fallback"
+TECHNICAL_TEMPERATURE = 0.4
+TECHNICAL_MAX_TOKENS = 2048
 
 LEARNING_MODEL_SIMPLE = "default-fast"
 LEARNING_MODEL_DETAILED = "learning-detailed"
 LEARNING_DETAILED_LEVELS = {"eli15", "meme"}
 
-TECHNICAL_MODEL_PRIMARY = _technical_mode.TECHNICAL_MODEL_PRIMARY
-TECHNICAL_MODEL_FALLBACK = _technical_mode.TECHNICAL_MODEL_FALLBACK
-TECHNICAL_TEMPERATURE = _technical_mode.TECHNICAL_TEMPERATURE
-TECHNICAL_MAX_TOKENS = _technical_mode.TECHNICAL_MAX_TOKENS
-TECHNICAL_LAST_RESORT_RESPONSE = _technical_mode.TECHNICAL_LAST_RESORT_RESPONSE
-TECHNICAL_MINIMAL_PROMPT = _technical_mode.TECHNICAL_MINIMAL_PROMPT
+LEARN_GEMINI_FLASH_ALIAS = "learn-gemini-flash"
+LEARN_GROQ_FAST_ALIAS = "learn-groq-llama8b"
+LEARN_OPENROUTER_FALLBACK_ALIAS = "learn-openrouter-free"
+TECH_GEMINI_FLASH_ALIAS = "technical-gemini-flash"
+TECH_OPENROUTER_ALIAS = "technical-openrouter-free"
+TECH_GROQ_FAST_ALIAS = "technical-groq-llama8b"
+TECH_GEMINI_PRO_ALIAS = "technical-gemini-pro"
+TECH_CEREBRAS_GLM_ALIAS = "technical-cerebras-glm"
+SOCRATIC_OPENROUTER_ALIAS = "socratic-openrouter-free"
+SOCRATIC_CEREBRAS_ALIAS = "socratic-cerebras-glm"
+SOCRATIC_GEMINI_ALIAS = "socratic-gemini-pro"
+SOCRATIC_GROQ_ALIAS = "socratic-groq-llama8b"
+
+TECHNICAL_LAST_RESORT_RESPONSE = (
+    "## Core Idea\n"
+    "Unable to generate a response at this time. Please retry in a moment.\n\n"
+    "## First Principles Breakdown\n"
+    "The model service may be temporarily unavailable.\n\n"
+    "## Intuition\n"
+    "Retrying often resolves transient issues.\n\n"
+    "## Edge Cases / Limitations\n"
+    "If this persists, check service status or try a different query.\n\n"
+    "## Connections\n"
+    "No connections available - response generation failed."
+)
+
+TECHNICAL_MINIMAL_PROMPT = "Explain the topic with concise technical clarity."
+
+MODEL_PROFILES: dict[str, dict[str, float]] = {
+    LEARNING_MODEL_SIMPLE: {
+        "complexity": 0.45,
+        "reasoning": 0.45,
+        "explanation": 0.60,
+        "latency_priority": 0.95,
+    },
+    LEARNING_MODEL_DETAILED: {
+        "complexity": 0.70,
+        "reasoning": 0.78,
+        "explanation": 0.72,
+        "latency_priority": 0.70,
+    },
+    TECHNICAL_MODEL_PRIMARY: {
+        "complexity": 0.95,
+        "reasoning": 0.95,
+        "explanation": 0.88,
+        "latency_priority": 0.40,
+    },
+    TECHNICAL_MODEL_FALLBACK: {
+        "complexity": 0.60,
+        "reasoning": 0.62,
+        "explanation": 0.65,
+        "latency_priority": 0.80,
+    },
+}
+
+COST_PENALTY: dict[str, float] = {
+    LEARNING_MODEL_SIMPLE: 0.08,
+    LEARNING_MODEL_DETAILED: 0.16,
+    TECHNICAL_MODEL_PRIMARY: 0.24,
+    TECHNICAL_MODEL_FALLBACK: 0.12,
+}
+
+SEARCH_CONTEXT_MAX_CHARS = 1800
+SEARCH_CONTEXT_TIMEOUT_SECONDS = 3.5
+
+LATENCY_KEYWORDS = (
+    r"\bquick\b",
+    r"\bbrief\b",
+    r"\bsummary\b",
+    r"\btldr\b",
+    r"\bshort\b",
+    r"\bfast\b",
+)
+COMPLEXITY_KEYWORDS = (
+    r"\boptimi[sz]e\b",
+    r"\bdistributed\b",
+    r"\bconcurrency\b",
+    r"\btrade[ -]?offs?\b",
+    r"\barchitecture\b",
+    r"\bscal\w+\b",
+    r"\bproof\b",
+    r"\bderive\b",
+)
+REASONING_KEYWORDS = (
+    r"\bwhy\b",
+    r"\bcompare\b",
+    r"\bversus\b",
+    r"\bshould\b",
+    r"\bpros?\b",
+    r"\bcons?\b",
+    r"\bdecision\b",
+)
+EXPLANATION_KEYWORDS = (
+    r"\bexplain\b",
+    r"\bhow\b",
+    r"\bwalk me through\b",
+    r"\bintuition\b",
+    r"\bexample\b",
+)
+
+
+class IntentFeatures(TypedDict):
+    complexity: float
+    reasoning: float
+    explanation: float
+    latency_priority: float
+
+
+def _clamp_feature(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def _count_keyword_hits(text: str, patterns: tuple[str, ...]) -> int:
+    return sum(1 for pattern in patterns if re.search(pattern, text))
+
+
+def extract_features(
+    query: str,
+    *,
+    mode: str,
+    level: str,
+    intent: str | None = None,
+    depth: str | None = None,
+) -> IntentFeatures:
+    """
+    Build routing features from deterministic intent/depth + keyword signals.
+    """
+    lowered = (query or "").lower().strip()
+    resolved_intent = intent
+    resolved_depth = depth
+    if not resolved_intent or not resolved_depth:
+        try:
+            classification = detect_intent_and_depth(query)
+            resolved_intent = resolved_intent or classification.get("intent", "explain")
+            resolved_depth = resolved_depth or classification.get("depth", "medium")
+        except Exception:
+            resolved_intent = resolved_intent or "explain"
+            resolved_depth = resolved_depth or "medium"
+
+    complexity = 0.35
+    reasoning = 0.30
+    explanation = 0.45
+    latency_priority = 0.50
+
+    if resolved_depth == "deep":
+        complexity += 0.40
+        reasoning += 0.25
+        latency_priority -= 0.25
+    elif resolved_depth == "shallow":
+        complexity -= 0.10
+        latency_priority += 0.30
+        explanation += 0.08
+
+    if resolved_intent == "compare":
+        reasoning += 0.35
+        complexity += 0.10
+    elif resolved_intent == "brainstorm":
+        reasoning += 0.28
+        complexity += 0.16
+    else:
+        explanation += 0.22
+
+    complexity += 0.08 * _count_keyword_hits(lowered, COMPLEXITY_KEYWORDS)
+    reasoning += 0.07 * _count_keyword_hits(lowered, REASONING_KEYWORDS)
+    explanation += 0.06 * _count_keyword_hits(lowered, EXPLANATION_KEYWORDS)
+    latency_priority += 0.09 * _count_keyword_hits(lowered, LATENCY_KEYWORDS)
+
+    if level in LEARNING_DETAILED_LEVELS:
+        explanation += 0.08
+        complexity += 0.06
+        latency_priority -= 0.10
+
+    if mode == TECHNICAL_MODE:
+        complexity += 0.15
+        reasoning += 0.12
+        latency_priority -= 0.10
+    elif mode == SOCRATIC_MODE:
+        explanation += 0.06
+
+    return {
+        "complexity": _clamp_feature(complexity),
+        "reasoning": _clamp_feature(reasoning),
+        "explanation": _clamp_feature(explanation),
+        "latency_priority": _clamp_feature(latency_priority),
+    }
+
+
+def score_model(features: IntentFeatures, model_alias: str, *, mode: str) -> float:
+    """
+    Weighted model scoring with explicit cost offsets.
+    """
+    profile = MODEL_PROFILES.get(model_alias, MODEL_PROFILES[LEARNING_MODEL_SIMPLE])
+    score = 0.0
+    for feature_name, value in features.items():
+        score += float(value if isinstance(value, (int, float)) else 0.0) * profile.get(feature_name, 0.0)
+    score -= COST_PENALTY.get(model_alias, 0.0)
+
+    # Mode-specific tie-breakers to keep behavior intentional.
+    if mode == TECHNICAL_MODE and model_alias == TECHNICAL_MODEL_PRIMARY:
+        score += 0.15
+    if mode == LEARNING_MODE and model_alias == LEARNING_MODEL_SIMPLE:
+        score += 0.06
+
+    return score
+
+
+def _token_count(query: str) -> int:
+    return len((query or "").strip().split())
+
+
+def _looks_simple_explanation(query: str) -> bool:
+    lowered = (query or "").lower()
+    return any(marker in lowered for marker in ("what is", "explain", "define"))
+
+
+def _looks_freshness_query(query: str) -> bool:
+    lowered = (query or "").lower()
+    markers = ("latest", "today", "current", "recent", "news", "update")
+    return any(marker in lowered for marker in markers)
+
+
+def _looks_programming_query(query: str) -> bool:
+    lowered = (query or "").lower()
+    markers = (
+        "api",
+        "pagination",
+        "endpoint",
+        "database",
+        "sql",
+        "python",
+        "javascript",
+        "typescript",
+        "bug",
+        "algorithm",
+        "function",
+        "react",
+        "fastapi",
+        "code",
+    )
+    return any(marker in lowered for marker in markers)
+
+
+def _looks_math_query(query: str) -> bool:
+    lowered = (query or "").lower()
+    markers = (
+        "math",
+        "equation",
+        "solve",
+        "integral",
+        "derivative",
+        "calculus",
+        "algebra",
+        "proof",
+        "theorem",
+        "matrix",
+        "probability",
+    )
+    return any(marker in lowered for marker in markers)
+
+
+def _looks_reasoning_query(query: str) -> bool:
+    lowered = (query or "").lower()
+    return any(marker in lowered for marker in ("why", "how", "prove", "reason", "derive"))
+
+
+def is_low_quality(response: str) -> bool:
+    text = (response or "").strip()
+    return (
+        len(text.split()) < 40
+        or text.count("\n") < 2
+        or "not sure" in text.lower()
+    )
+
+
+def _is_cerebras_alias(alias: str) -> bool:
+    return "cerebras" in (alias or "").lower()
+
+
+def _effective_alias_chain(aliases: list[str], *, complexity: float) -> list[str]:
+    chain: list[str] = []
+    for alias in aliases:
+        if _is_cerebras_alias(alias) and complexity < 0.8:
+            continue
+        if alias not in chain:
+            chain.append(alias)
+    return chain
+
+
+async def _call_with_quality_escalation(
+    aliases: list[str],
+    prompt: str,
+    *,
+    complexity: float,
+    max_tokens: int = 1024,
+    **kwargs,
+) -> str:
+    chain = _effective_alias_chain(aliases, complexity=complexity)
+    if not chain:
+        raise RuntimeError("No eligible model aliases available for quality routing.")
+
+    primary_alias = chain[0]
+    primary_response = await call_model(primary_alias, prompt, max_tokens=max_tokens, **kwargs)
+    if not is_low_quality(primary_response):
+        return primary_response
+
+    if len(chain) < 2:
+        return primary_response
+
+    retry_alias = chain[1]
+    retry_response = await call_model(retry_alias, prompt, max_tokens=max_tokens, **kwargs)
+    return retry_response or primary_response
+
+
+def route_model_aliases(
+    query: str,
+    *,
+    mode: str,
+    level: str,
+    intent: str | None = None,
+    depth: str | None = None,
+    is_pro: bool = False,
+    search_api_used: bool = False,
+) -> list[str]:
+    features = extract_features(
+        query,
+        mode=mode,
+        level=level,
+        intent=intent,
+        depth=depth,
+    )
+    complexity = float(features.get("complexity", 0.0) or 0.0)
+    latency_priority = float(features.get("latency_priority", 0.0) or 0.0)
+    query_tokens = _token_count(query)
+    is_simple_explain = _looks_simple_explanation(query)
+    is_freshness = _looks_freshness_query(query)
+    is_programming = _looks_programming_query(query)
+    is_math = _looks_math_query(query)
+    is_reasoning = _looks_reasoning_query(query)
+
+    aliases: list[str]
+
+    if mode == LEARNING_MODE:
+        if is_freshness:
+            aliases = [LEARN_GEMINI_FLASH_ALIAS, LEARN_GROQ_FAST_ALIAS, LEARN_OPENROUTER_FALLBACK_ALIAS]
+        elif query_tokens < 8 or latency_priority >= 0.8 or complexity < 0.3:
+            aliases = [LEARN_GROQ_FAST_ALIAS, LEARN_GEMINI_FLASH_ALIAS, LEARN_OPENROUTER_FALLBACK_ALIAS]
+        elif is_simple_explain and complexity < 0.5:
+            aliases = [LEARN_GEMINI_FLASH_ALIAS, LEARN_GROQ_FAST_ALIAS, LEARN_OPENROUTER_FALLBACK_ALIAS]
+        else:
+            aliases = [LEARN_GEMINI_FLASH_ALIAS, LEARN_GROQ_FAST_ALIAS, LEARN_OPENROUTER_FALLBACK_ALIAS]
+    elif mode == TECHNICAL_MODE:
+        if is_math and complexity >= 0.6:
+            aliases = [TECH_GEMINI_PRO_ALIAS]
+            if is_pro and complexity >= 0.8:
+                aliases.append(TECH_CEREBRAS_GLM_ALIAS)
+            aliases.extend([TECH_GROQ_FAST_ALIAS, TECH_OPENROUTER_ALIAS])
+        elif is_math and complexity < 0.4:
+            aliases = [TECH_GEMINI_FLASH_ALIAS, TECH_GROQ_FAST_ALIAS, TECH_OPENROUTER_ALIAS]
+        elif is_programming or search_api_used:
+            aliases = [TECH_GEMINI_PRO_ALIAS, TECH_GROQ_FAST_ALIAS, TECH_OPENROUTER_ALIAS]
+            if is_pro and complexity >= 0.8:
+                aliases.append(TECH_CEREBRAS_GLM_ALIAS)
+        else:
+            aliases = [TECH_GEMINI_PRO_ALIAS, TECH_GROQ_FAST_ALIAS, TECH_OPENROUTER_ALIAS]
+            if is_pro and complexity >= 0.8:
+                aliases.insert(1, TECH_CEREBRAS_GLM_ALIAS)
+    else:
+        aliases = [SOCRATIC_GEMINI_ALIAS, SOCRATIC_GROQ_ALIAS, SOCRATIC_OPENROUTER_ALIAS]
+        if is_reasoning and complexity >= 0.8 and is_pro:
+            aliases.insert(0, SOCRATIC_CEREBRAS_ALIAS)
+
+    deduped: list[str] = []
+    for alias in aliases:
+        if alias not in deduped:
+            deduped.append(alias)
+    return deduped
+
+
+def _technical_route(
+    topic: str,
+    *,
+    intent: str,
+    depth: str,
+    is_pro: bool = False,
+    search_api_used: bool = False,
+) -> tuple[str, str]:
+    ranked = route_model_aliases(
+        topic,
+        mode=TECHNICAL_MODE,
+        level="technical",
+        intent=intent,
+        depth=depth,
+        is_pro=is_pro,
+        search_api_used=search_api_used,
+    )
+    primary = ranked[0] if ranked else TECHNICAL_MODEL_PRIMARY
+    fallback = next((alias for alias in ranked if alias != primary), TECHNICAL_MODEL_FALLBACK)
+    return primary, fallback
 
 
 def _learning_model_for_level(level: str) -> str:
     if level in LEARNING_DETAILED_LEVELS:
-        return LEARNING_MODEL_DETAILED
-    return LEARNING_MODEL_SIMPLE
+        return LEARN_GEMINI_FLASH_ALIAS
+    return LEARN_GEMINI_FLASH_ALIAS
 
 
 def build_technical_prompt(
@@ -34,30 +453,227 @@ def build_technical_prompt(
     depth: str,
     diagram_type: str | None,
 ) -> str:
-    return _technical_mode.build_technical_prompt(topic, intent, depth, diagram_type)
+    """
+    Assembles the final prompt string from components.
+    No LLM calls. Pure string construction.
+    """
+    diagram_instruction = (
+        _TECHNICAL_DIAGRAM_INSTRUCTION.format(diagram_type=diagram_type)
+        if diagram_type and intent != "compare"
+        else ""
+    )
 
+    if intent == "brainstorm":
+        return TECHNICAL_BRAINSTORM_PROMPT.format(
+            topic=topic,
+            diagram_instruction=diagram_instruction,
+        )
 
-async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **kwargs) -> str:
-    return await _call_model(
-        model,
-        prompt,
-        max_tokens=max_tokens,
-        create_chat_completion_fn=create_chat_completion,
-        log_sampled_success_fn=log_sampled_success,
-        **kwargs,
+    if intent == "compare":
+        return TECHNICAL_COMPARE_PROMPT.format(topic=topic)
+
+    deeper_layer_instruction = _TECHNICAL_DEEPER_LAYER if depth == "deep" else ""
+
+    return TECHNICAL_STRUCTURED_PROMPT.format(
+        topic=topic,
+        deeper_layer_instruction=deeper_layer_instruction,
+        diagram_instruction=diagram_instruction,
     )
 
 
-async def technical_mode_handler(topic: str, **kwargs) -> str:
-    return await _technical_mode.technical_mode_handler(
-        topic,
-        build_prompt=build_technical_prompt,
-        call_model=call_model,
-        detect_intent_and_depth_fn=detect_intent_and_depth,
-        detect_diagram_type_fn=detect_diagram_type,
-        validate_response_fn=validate_technical_response,
-        **kwargs,
+async def technical_mode_handler(
+    topic: str,
+    **kwargs,
+) -> str:
+    """
+    Single entry point for technical mode. Handles:
+    - Intent + depth detection
+    - Diagram type detection
+    - Prompt assembly
+    - Primary model call with one retry
+    - Fallback to secondary model on failure
+    - Output validation with one retry on invalid output
+    - Guaranteed non-empty return (last resort response if all else fails)
+
+    kwargs are passed through to call_model for telemetry/request_id/etc.
+    Never raises. Always returns a non-empty string.
+    """
+    intent = "unknown"
+    depth = "shallow"
+    diagram_type = "generic"
+    try:
+        classification = detect_intent_and_depth(topic)
+        intent = classification["intent"]
+        depth = classification["depth"]
+        diagram_type = detect_diagram_type(topic)
+    except Exception as exc:
+        _tech_logger.warning(
+            "technical_classification_failed",
+            error=str(exc),
+            intent=intent,
+            depth=depth,
+            diagram_type=diagram_type,
+        )
+
+    prefetched_search_context = kwargs.pop("_search_context", None)
+    search_context = (
+        _truncate_search_context(prefetched_search_context)
+        if isinstance(prefetched_search_context, str)
+        else await _load_search_context(topic, mode=TECHNICAL_MODE)
     )
+    prompt = build_technical_prompt(topic, intent, depth, diagram_type)
+    if not prompt or not prompt.strip():
+        _tech_logger.warning(
+            "technical_prompt_empty",
+            intent=intent,
+            depth=depth,
+            diagram_type=diagram_type,
+        )
+        prompt = TECHNICAL_MINIMAL_PROMPT
+    prompt = _append_search_context(prompt, search_context)
+
+    fallback_triggered = False
+    fallback_reason: str | None = None
+    best_effort_response: str | None = None
+    is_pro = bool(kwargs.get("is_pro", False))
+    technical_complexity = float(
+        extract_features(
+            topic,
+            mode=TECHNICAL_MODE,
+            level="technical",
+            intent=intent,
+            depth=depth,
+        ).get("complexity", 0.0)
+        or 0.0
+    )
+    ranked_aliases = _effective_alias_chain(
+        route_model_aliases(
+            topic,
+            mode=TECHNICAL_MODE,
+            level="technical",
+            intent=intent,
+            depth=depth,
+            is_pro=is_pro,
+            search_api_used=bool(search_context),
+        ),
+        complexity=technical_complexity,
+    )
+    primary_alias = ranked_aliases[0] if ranked_aliases else TECHNICAL_MODEL_PRIMARY
+    fallback_alias = next((alias for alias in ranked_aliases if alias != primary_alias), TECHNICAL_MODEL_FALLBACK)
+
+    def _ensure_terminal_char(value: str) -> str:
+        trimmed = value.rstrip()
+        if not trimmed:
+            return value
+        if trimmed[-1] in {".", "?", "!", "`"}:
+            return trimmed
+        return f"{trimmed}."
+
+    async def _call(model_alias: str) -> str | None:
+        """Single model call. Returns content string or None on any failure."""
+        try:
+            call_kwargs = dict(kwargs)
+            call_kwargs["temperature"] = TECHNICAL_TEMPERATURE
+            call_kwargs.pop("max_tokens", None)
+            result = await call_model(
+                model_alias,
+                prompt,
+                max_tokens=TECHNICAL_MAX_TOKENS,
+                **call_kwargs,
+            )
+            if not result or not result.strip():
+                _tech_logger.warning(
+                    "technical_model_empty_response",
+                    model=model_alias,
+                    intent=intent,
+                    depth=depth,
+                )
+                return None
+            nonlocal best_effort_response
+            best_effort_response = str(result)
+            return result
+        except Exception as exc:
+            _tech_logger.warning(
+                "technical_model_call_failed",
+                model=model_alias,
+                error=str(exc),
+                intent=intent,
+                depth=depth,
+            )
+            return None
+
+    async def _call_and_validate(model_alias: str) -> str | None:
+        """Call model and validate output. Returns valid content or None."""
+        response = await _call(model_alias)
+        if response is None:
+            return None
+        is_valid, reason = validate_technical_response(response, intent)
+        if not is_valid:
+            _tech_logger.warning(
+                "technical_response_invalid",
+                model=model_alias,
+                validation_failure=reason,
+                intent=intent,
+                depth=depth,
+                response_length=len(response),
+            )
+            return None
+        return response
+
+    response_alias = primary_alias
+    response = await _call_and_validate(primary_alias)
+
+    if response is None:
+        _tech_logger.info("technical_primary_retry", intent=intent, depth=depth)
+        response = await _call_and_validate(primary_alias)
+        response_alias = primary_alias
+
+    if response is None:
+        fallback_triggered = True
+        fallback_reason = "primary_exhausted"
+        _tech_logger.info(
+            "technical_fallback_triggered",
+            reason=fallback_reason,
+            intent=intent,
+            depth=depth,
+        )
+        response = await _call_and_validate(fallback_alias)
+        response_alias = fallback_alias
+
+    if response is not None and is_low_quality(response):
+        quality_retry_alias: str | None = None
+        if response_alias in ranked_aliases:
+            current_index = ranked_aliases.index(response_alias)
+            if current_index + 1 < len(ranked_aliases):
+                quality_retry_alias = ranked_aliases[current_index + 1]
+        if quality_retry_alias is not None:
+            quality_retry_response = await _call_and_validate(quality_retry_alias)
+            if quality_retry_response:
+                response = quality_retry_response
+                fallback_triggered = True
+                fallback_reason = "quality_escalation"
+                response_alias = quality_retry_alias
+
+    if response is None:
+        fallback_triggered = True
+        if best_effort_response and best_effort_response.strip():
+            fallback_reason = "best_effort_unvalidated"
+            response = _ensure_terminal_char(best_effort_response)
+        else:
+            fallback_reason = "all_models_failed"
+            response = TECHNICAL_LAST_RESORT_RESPONSE
+
+    _tech_logger.info(
+        "technical_mode_complete",
+        intent=intent,
+        depth=depth,
+        diagram_type=diagram_type,
+        fallback_triggered=fallback_triggered,
+        fallback_reason=fallback_reason,
+        response_length=len(response),
+    )
+
+    return response
 
 
 async def close_client():
@@ -99,7 +715,164 @@ def _enforce_socratic_response_constraints(response: str) -> str:
     return f"{constrained}\n\nShare your answer, and I will guide the next step."
 
 
- 
+def _extract_usage_dict(usage_obj) -> dict[str, int] | None:
+    if usage_obj is None:
+        return None
+    if hasattr(usage_obj, "model_dump"):
+        usage_obj = usage_obj.model_dump()
+    elif hasattr(usage_obj, "dict"):
+        usage_obj = usage_obj.dict()
+    if not isinstance(usage_obj, dict):
+        return None
+
+    prompt_tokens = usage_obj.get("prompt_tokens")
+    completion_tokens = usage_obj.get("completion_tokens")
+    total_tokens = usage_obj.get("total_tokens")
+    try:
+        return {
+            "prompt_tokens": int(prompt_tokens or 0),
+            "completion_tokens": int(completion_tokens or 0),
+            "total_tokens": int(total_tokens or 0),
+        }
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_estimated_cost(result, usage: dict[str, int] | None) -> float | None:
+    direct_cost = getattr(result, "response_cost", None)
+    if isinstance(direct_cost, (int, float)):
+        return float(direct_cost)
+
+    hidden_params = getattr(result, "_hidden_params", None)
+    if isinstance(hidden_params, dict):
+        hidden_cost = hidden_params.get("response_cost")
+        if isinstance(hidden_cost, (int, float)):
+            return float(hidden_cost)
+
+    if isinstance(usage, dict):
+        usage_cost = usage.get("cost")
+        if isinstance(usage_cost, (int, float)):
+            return float(usage_cost)
+
+    return None
+
+
+def _hash_topic(topic: str) -> str:
+    return hashlib.sha256((topic or "").strip().lower().encode("utf-8")).hexdigest()
+
+
+def _truncate_search_context(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if len(text) <= SEARCH_CONTEXT_MAX_CHARS:
+        return text
+    return f"{text[:SEARCH_CONTEXT_MAX_CHARS].rstrip()}..."
+
+
+def _append_search_context(prompt: str, context: str) -> str:
+    if not context:
+        return prompt
+    return (
+        f"{prompt}\n\n"
+        "External web context (supplemental, may be incomplete):\n"
+        f"{context}\n\n"
+        "Use this context only when relevant and do not fabricate details."
+    )
+
+
+async def _load_search_context(topic: str, *, mode: str) -> str:
+    normalized_topic = " ".join((topic or "").strip().split())
+    if not normalized_topic:
+        return ""
+
+    try:
+        context = await asyncio.wait_for(
+            search_service.get_search_context(normalized_topic),
+            timeout=SEARCH_CONTEXT_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        logger.warning(
+            "search_context_unavailable",
+            mode=mode,
+            topic_hash=_hash_topic(normalized_topic),
+            error=str(exc),
+        )
+        return ""
+
+    return _truncate_search_context(str(context or ""))
+
+
+def is_transient_http_error(exc: BaseException) -> bool:
+    if isinstance(exc, (httpx.ConnectError, httpx.TimeoutException, APIConnectionError, APITimeoutError)):
+        return True
+    if isinstance(exc, APIStatusError):
+        status_code = int(getattr(exc, "status_code", 0) or 0)
+        return status_code in {408, 409, 425, 429, 500, 502, 503, 504}
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500
+    return False
+
+
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception(is_transient_http_error),
+    reraise=True
+)
+async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **kwargs) -> str:
+    """Call API with given model and prompt."""
+            
+    try:
+        alias = model or "default-fast"
+        request_id = kwargs.get("request_id")
+        retry_flag = bool(kwargs.get("regenerate", False))
+        anonymized_user_id = anonymize_user_id(str(kwargs.get("user_id") or "") or None)
+        telemetry_sink = kwargs.get("telemetry_sink") if isinstance(kwargs.get("telemetry_sink"), dict) else None
+        model_start = time.perf_counter()
+        result = await create_chat_completion(
+            model=alias,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=max_tokens,
+            temperature=kwargs.get("temperature", 0.7),
+            request_id=request_id,
+        )
+        model_inference_ms = round((time.perf_counter() - model_start) * 1000, 2)
+        usage = _extract_usage_dict(getattr(result, "usage", None))
+        estimated_cost_usd = _extract_estimated_cost(result, usage)
+        model_name = getattr(result, "model", None)
+        if telemetry_sink is not None:
+            telemetry_sink["token_usage"] = usage
+            telemetry_sink["estimated_cost_usd"] = estimated_cost_usd
+            telemetry_sink["model_inference_ms"] = model_inference_ms
+            telemetry_sink["model_alias"] = alias
+
+        log_sampled_success(
+            "llm_completion_observed",
+            request_id=request_id,
+            user_id_hash=anonymized_user_id,
+            model_alias=alias,
+            model=model_name,
+            latency_ms=model_inference_ms,
+            token_usage=usage,
+            estimated_cost_usd=estimated_cost_usd,
+            retry=retry_flag,
+            sampled=True,
+        )
+        if not result.choices:
+            raise RuntimeError("LLM response missing choices.")
+        return result.choices[0].message.content or ""
+    except Exception as e:
+        logger.error(
+            "inference_failed",
+            error=str(e),
+            model_alias=model or "default-fast",
+            request_id=kwargs.get("request_id"),
+            user_id_hash=anonymize_user_id(str(kwargs.get("user_id") or "") or None),
+            retry=bool(kwargs.get("regenerate", False)),
+            sampled=False,
+        )
+        raise
 
 
 
@@ -116,21 +889,64 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
         template = PROMPTS.get("socratic")
         if not template:
             raise ValueError("Unknown mode template: socratic")
+        search_context = await _load_search_context(topic, mode=SOCRATIC_MODE)
         prompt = template.format(
             topic=topic,
             conversation_context=kwargs.get("conversation_context", "No prior context."),
         )
-        response = await call_model(model or "socratic", prompt, **kwargs)
+        prompt = _append_search_context(prompt, search_context)
+        routed_aliases = route_model_aliases(
+            topic,
+            mode=mode,
+            level=level,
+            is_pro=bool(kwargs.get("is_pro", False)),
+            search_api_used=bool(search_context),
+        )
+        socratic_complexity = float(
+            extract_features(
+                topic,
+                mode=mode,
+                level=level,
+            ).get("complexity", 0.0)
+            or 0.0
+        )
+        response = await _call_with_quality_escalation(
+            [model] if model else routed_aliases,
+            prompt,
+            complexity=socratic_complexity,
+            **kwargs,
+        )
         return _enforce_socratic_response_constraints(response)
 
     template = PROMPTS.get(level)
     if not template:
         raise ValueError(f"Unknown level: {level}")
         
+    search_context = await _load_search_context(topic, mode=LEARNING_MODE)
     prompt = template.format(topic=topic)
+    prompt = _append_search_context(prompt, search_context)
         
-    model_alias = model or _learning_model_for_level(level)
-    return await call_model(model_alias, prompt, **kwargs)
+    routed_aliases = route_model_aliases(
+        topic,
+        mode=mode,
+        level=level,
+        is_pro=bool(kwargs.get("is_pro", False)),
+        search_api_used=bool(search_context),
+    )
+    learning_complexity = float(
+        extract_features(
+            topic,
+            mode=mode,
+            level=level,
+        ).get("complexity", 0.0)
+        or 0.0
+    )
+    return await _call_with_quality_escalation(
+        [model] if model else routed_aliases,
+        prompt,
+        complexity=learning_complexity,
+        **kwargs,
+    )
 async def generate_stream_explanation(topic: str, level: str, model: str | None = None, **kwargs):
     """Stream explanation for topic at given level."""
     mode = normalize_mode(kwargs.get("mode", LEARNING_MODE))
@@ -141,74 +957,245 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
     prompt = ""
 
     if mode == TECHNICAL_MODE:
-        passthrough_kwargs = dict(kwargs)
-        # technical_stream_explanation receives request_id/model/telemetry_sink
-        # explicitly below, so remove duplicates from passthrough kwargs.
-        passthrough_kwargs.pop("telemetry_sink", None)
-        passthrough_kwargs.pop("request_id", None)
-        passthrough_kwargs.pop("model", None)
-        async for chunk in _technical_mode.technical_stream_explanation(
+        intent = "unknown"
+        depth = "shallow"
+        diagram_type = "generic"
+        try:
+            classification = detect_intent_and_depth(topic)
+            intent = classification["intent"]
+            depth = classification["depth"]
+            diagram_type = detect_diagram_type(topic)
+        except Exception as exc:
+            _tech_logger.warning(
+                "technical_stream_classification_failed",
+                error=str(exc),
+                intent=intent,
+                depth=depth,
+                diagram_type=diagram_type,
+            )
+
+        search_context = await _load_search_context(topic, mode=TECHNICAL_MODE)
+        prompt = build_technical_prompt(topic, intent, depth, diagram_type)
+        if not prompt or not prompt.strip():
+            prompt = TECHNICAL_MINIMAL_PROMPT
+        prompt = _append_search_context(prompt, search_context)
+
+        primary_alias, _fallback_alias = _technical_route(
             topic,
-            build_prompt=build_technical_prompt,
-            stream_chat_completion=stream_chat_completion,
-            call_model=call_model,
-            technical_mode_handler_fn=technical_mode_handler,
-            request_id=request_id,
-            user_id_hash=anonymized_user_id,
-            retry=retry_flag,
-            telemetry_sink=route_telemetry_sink,
-            detect_intent_and_depth_fn=detect_intent_and_depth,
-            detect_diagram_type_fn=detect_diagram_type,
-            model=model,
-            **passthrough_kwargs,
-        ):
-            yield chunk
+            intent=intent,
+            depth=depth,
+            is_pro=bool(kwargs.get("is_pro", False)),
+            search_api_used=bool(search_context),
+        )
+        alias = model or primary_alias
+        stream_telemetry: dict[str, object] = {}
+        stream_start = time.perf_counter()
+        streamed_chunks = 0
+        stream_completed = True
+        partial_failure = False
+
+        try:
+            async for chunk in stream_chat_completion(
+                model=alias,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=TECHNICAL_MAX_TOKENS,
+                temperature=TECHNICAL_TEMPERATURE,
+                request_id=request_id,
+                telemetry_sink=stream_telemetry,
+            ):
+                streamed_chunks += 1
+                yield chunk
+        except Exception as exc:
+            _tech_logger.warning(
+                "technical_stream_failed",
+                error=str(exc),
+                streamed_chunks=streamed_chunks,
+                model_alias=alias,
+            )
+            if streamed_chunks == 0:
+                full_response = await technical_mode_handler(topic, _search_context=search_context, **kwargs)
+                for index in range(0, len(full_response), 400):
+                    yield full_response[index : index + 400]
+            else:
+                stream_completed = False
+                partial_failure = True
+                _tech_logger.warning(
+                    "technical_stream_partial_failure",
+                    error=str(exc),
+                    streamed_chunks=streamed_chunks,
+                    model_alias=alias,
+                    partial_failure=True,
+                )
+                # Signal incomplete response to client
+                yield "\n\n---\n*Response incomplete due to a service interruption.*"
+        stream_duration_ms = round((time.perf_counter() - stream_start) * 1000, 2)
+        model_inference_ms = stream_telemetry.get("model_inference_ms")
+        token_usage = stream_telemetry.get("token_usage")
+        estimated_cost_usd = stream_telemetry.get("estimated_cost_usd")
+        model_name = stream_telemetry.get("model")
+
+        if route_telemetry_sink is not None:
+            route_telemetry_sink["token_usage"] = token_usage
+            route_telemetry_sink["estimated_cost_usd"] = estimated_cost_usd
+            route_telemetry_sink["model_inference_ms"] = model_inference_ms
+            route_telemetry_sink["stream_duration_ms"] = stream_duration_ms
+            route_telemetry_sink["model_alias"] = alias
+            route_telemetry_sink["model"] = model_name
+            route_telemetry_sink["stream_completed"] = stream_completed
+            route_telemetry_sink["partial_failure"] = partial_failure
+
+        if stream_completed:
+            log_sampled_success(
+                "llm_stream_observed",
+                request_id=request_id,
+                user_id_hash=anonymized_user_id,
+                model_alias=alias,
+                model=model_name,
+                latency_ms=model_inference_ms,
+                stream_duration_ms=stream_duration_ms,
+                token_usage=token_usage,
+                estimated_cost_usd=estimated_cost_usd,
+                retry=retry_flag,
+                sampled=True,
+            )
+        else:
+            _tech_logger.warning(
+                "llm_stream_observed_partial_failure",
+                request_id=request_id,
+                user_id_hash=anonymized_user_id,
+                model_alias=alias,
+                model=model_name,
+                latency_ms=model_inference_ms,
+                stream_duration_ms=stream_duration_ms,
+                token_usage=token_usage,
+                estimated_cost_usd=estimated_cost_usd,
+                retry=retry_flag,
+                streamed_chunks=streamed_chunks,
+                partial_failure=True,
+            )
         return
 
     if mode == SOCRATIC_MODE:
         template = PROMPTS.get("socratic")
         if not template:
             raise ValueError("Unknown mode template: socratic")
+        search_context = await _load_search_context(topic, mode=SOCRATIC_MODE)
         prompt = template.format(
             topic=topic,
             conversation_context=kwargs.get("conversation_context", "No prior context."),
         )
+        prompt = _append_search_context(prompt, search_context)
     else:
         template = PROMPTS.get(level)
         if not template:
             raise ValueError(f"Unknown level: {level}")
+        search_context = await _load_search_context(topic, mode=LEARNING_MODE)
         prompt = template.format(topic=topic)
+        prompt = _append_search_context(prompt, search_context)
     
-    alias = model or ("socratic" if mode == SOCRATIC_MODE else _learning_model_for_level(level))
+    if model:
+        alias = model
+    else:
+        ranked_aliases = route_model_aliases(
+            topic,
+            mode=mode,
+            level=level,
+            is_pro=bool(kwargs.get("is_pro", False)),
+            search_api_used=bool(search_context),
+        )
+        alias = ranked_aliases[0] if ranked_aliases else (
+            "socratic" if mode == SOCRATIC_MODE else _learning_model_for_level(level)
+        )
     stream_telemetry: dict[str, object] = {}
     stream_start = time.perf_counter()
     if mode == SOCRATIC_MODE:
-        socratic_chunks: list[str] = []
-        async for chunk in stream_chat_completion(
-            model=alias,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=kwargs.get("temperature", 0.7),
-            request_id=request_id,
-            telemetry_sink=stream_telemetry,
-        ):
-            socratic_chunks.append(chunk)
-        constrained_response = _enforce_socratic_response_constraints("".join(socratic_chunks))
-        for index in range(0, len(constrained_response), 400):
-            yield constrained_response[index : index + 400]
+        socratic_raw_chunks: list[str] = []
+        pending = ""
+        seen_signatures: set[str] = set()
+        emitted_questions = 0
+        socratic_error: Exception | None = None
+        try:
+            async for chunk in stream_chat_completion(
+                model=alias,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=kwargs.get("temperature", 0.7),
+                request_id=request_id,
+                telemetry_sink=stream_telemetry,
+            ):
+                text_chunk = str(chunk or "")
+                socratic_raw_chunks.append(text_chunk)
+                if emitted_questions >= 3:
+                    continue
+
+                pending += text_chunk
+                matches = list(re.finditer(r"[^?]*\?", pending))
+                if not matches:
+                    continue
+
+                consumed = 0
+                for match in matches:
+                    if emitted_questions >= 3:
+                        break
+                    candidate = match.group(0).strip()
+                    consumed = match.end()
+                    if not candidate:
+                        continue
+                    signature = _normalize_question_signature(candidate)
+                    if not signature or signature in seen_signatures:
+                        continue
+                    seen_signatures.add(signature)
+                    prefix = "" if emitted_questions == 0 else "\n"
+                    yield f"{prefix}{candidate}"
+                    emitted_questions += 1
+                pending = pending[consumed:]
+        except Exception as exc:
+            socratic_error = exc
+            stream_telemetry["stream_error"] = str(exc)
+            stream_telemetry["stream_error_type"] = type(exc).__name__
+            stream_telemetry["request_id"] = request_id
+            _tech_logger.warning(
+                "socratic_stream_failed",
+                request_id=request_id,
+                model_alias=alias,
+                error=str(exc),
+            )
+
+        if emitted_questions > 0:
+            yield "\n\nShare your answer, and I will guide the next step."
+        else:
+            constrained_response = _enforce_socratic_response_constraints("".join(socratic_raw_chunks))
+            fallback_response = constrained_response.strip()
+            if socratic_error is not None and not fallback_response:
+                fallback_response = "I hit a temporary issue while streaming. Please try again."
+            for index in range(0, len(fallback_response), 400):
+                yield fallback_response[index : index + 400]
     else:
-        async for chunk in stream_model(
-            model=alias,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=kwargs.get("temperature", 0.7),
-            request_id=request_id,
-            user_id_hash=anonymized_user_id,
-            retry=retry_flag,
-            telemetry_sink=stream_telemetry,
-            stream_chat_completion=stream_chat_completion,
-            route_telemetry_sink=route_telemetry_sink,
-        ):
-            yield chunk
-        return
+        streamed_chunks = 0
+        try:
+            async for chunk in stream_chat_completion(
+                model=alias,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=kwargs.get("temperature", 0.7),
+                request_id=request_id,
+                telemetry_sink=stream_telemetry,
+            ):
+                streamed_chunks += 1
+                yield chunk
+        except Exception as exc:
+            stream_telemetry["stream_error"] = str(exc)
+            stream_telemetry["stream_error_type"] = type(exc).__name__
+            stream_telemetry["request_id"] = request_id
+            _tech_logger.warning(
+                "learning_stream_failed",
+                request_id=request_id,
+                model_alias=alias,
+                streamed_chunks=streamed_chunks,
+                error=str(exc),
+            )
+            if streamed_chunks == 0:
+                yield "Unable to stream a response right now. Please try again."
+            else:
+                yield "\n\n---\n*Response incomplete due to a service interruption.*"
 
     stream_duration_ms = round((time.perf_counter() - stream_start) * 1000, 2)
     model_inference_ms = stream_telemetry.get("model_inference_ms")
@@ -223,6 +1210,10 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         route_telemetry_sink["stream_duration_ms"] = stream_duration_ms
         route_telemetry_sink["model_alias"] = alias
         route_telemetry_sink["model"] = model_name
+        if "stream_error" in stream_telemetry:
+            route_telemetry_sink["stream_error"] = stream_telemetry.get("stream_error")
+            route_telemetry_sink["stream_error_type"] = stream_telemetry.get("stream_error_type")
+            route_telemetry_sink["request_id"] = stream_telemetry.get("request_id")
 
     log_sampled_success(
         "llm_stream_observed",

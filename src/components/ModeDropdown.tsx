@@ -27,7 +27,7 @@ const MODES: {
   {
     id: "learning",
     label: "Learning",
-    description: "General learning with judged ensemble answers.",
+    description: "Optimized responses for general learning.",
     icon: BookOpen,
     color: "text-teal-400",
     premium: false,
@@ -35,8 +35,7 @@ const MODES: {
   {
     id: "technical",
     label: "Technical",
-    description:
-      "Search-aware technical analysis with gemini-2.5-pro and deepseek-ai/DeepSeek-R1 fallback.",
+    description: "Search-aware technical explanations with clear structure.",
     icon: Code2,
     color: "text-sky-400",
     premium: false,
@@ -44,7 +43,7 @@ const MODES: {
   {
     id: "socratic",
     label: "Socratic",
-    description: "Guided questioning instead of direct explanation.",
+    description: "Guided questions that help you reason step by step.",
     icon: CircleHelp,
     color: "text-violet-400",
     premium: false,

@@ -75,26 +75,33 @@ export function useConversations(): UseConversationsResult {
   const conversations = useChatStore((state) => state.conversations);
   const queryClient = useQueryClient();
 
+  // -------------------------
+  // Fetch conversations
+  // -------------------------
   const conversationsQuery = useQuery({
     queryKey: ["conversations", user?.id],
-    enabled: Boolean(user && supabaseConfigured),
+    enabled: Boolean(user?.id && supabaseConfigured),
     queryFn: fetchConversations,
     staleTime: 30_000,
   });
 
   useEffect(() => {
-    if (!user || !supabaseConfigured) {
+    if (!user?.id || !supabaseConfigured) {
       syncConversations([]);
       return;
     }
+
     if (conversationsQuery.data) {
       syncConversations(conversationsQuery.data);
     }
-  }, [user, syncConversations, conversationsQuery.data]);
+  }, [user?.id, conversationsQuery.data, syncConversations]);
 
+  // -------------------------
+  // Last messages
+  // -------------------------
   const conversationIds = useMemo(
-    () => (conversationsQuery.data ?? conversations).map((item) => item.id),
-    [conversations, conversationsQuery.data],
+    () => (conversationsQuery.data ?? conversations).map((c) => c.id),
+    [conversationsQuery.data, conversations],
   );
 
   const lastMessagesQuery = useQuery({
@@ -104,11 +111,19 @@ export function useConversations(): UseConversationsResult {
     staleTime: 15_000,
   });
 
+  // -------------------------
+  // Realtime subscription (FIXED)
+  // -------------------------
   useEffect(() => {
-    if (!user || !supabaseConfigured) return;
+    if (!user?.id || !supabaseConfigured) return;
 
-    const channel = supabase
-      .channel(`conversations:${user.id}`)
+    const channelName = `conversations:${user.id}`;
+    const channel = supabase.channel(channelName);
+
+    let isSubscribed = false;
+    let isCleanedUp = false;
+
+    channel
       .on(
         "postgres_changes",
         {
@@ -123,12 +138,28 @@ export function useConversations(): UseConversationsResult {
           });
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          isSubscribed = true;
+        }
+      });
 
     return () => {
-      supabase.removeChannel(channel);
+      // prevent double cleanup (React strict mode)
+      if (isCleanedUp) return;
+      isCleanedUp = true;
+
+      // remove pending or established channels to avoid connection leaks
+      if (!isSubscribed) {
+        // subscription can still be in-flight; cleanup should still remove channel
+      }
+      try {
+        supabase.removeChannel(channel);
+      } catch {
+        // ignore cleanup errors
+      }
     };
-  }, [user, queryClient]);
+  }, [user?.id, queryClient]);
 
   return {
     conversations,

@@ -89,3 +89,48 @@ async def test_quota_does_not_consume_tokens_on_reject(monkeypatch, test_setting
     allowed = await rate_limit_module.check_daily_quota(user_id="user-1", estimated_tokens=5)
     assert allowed.allowed is True
     assert allowed.consumed == 5
+
+
+@pytest.mark.asyncio
+async def test_quota_check_failed_log_uses_user_id_hash_only(monkeypatch, test_settings):
+    test_settings.rate_limit_per_user = 1
+    test_settings.rate_limit_burst = 1
+    test_settings.daily_token_quota_per_user = 100
+    test_settings.circuit_breaker_tokens_per_minute = 0
+
+    async def fake_check_daily_quota(*, user_id: str, estimated_tokens: int):
+        raise RuntimeError("quota backend error")
+
+    async def always_allow_rate_limit(**_kwargs):
+        return rate_limit_module.RateLimitResult(
+            allowed=True,
+            limit=1,
+            remaining=1,
+            retry_after=1,
+            reason="ok",
+        )
+
+    async def always_allow_breaker(*, estimated_tokens: int, fail_open: bool):
+        return rate_limit_module.CircuitBreakerResult(allowed=True, retry_after=0)
+
+    warnings: list[tuple[str, dict]] = []
+
+    def fake_warning(event, **kwargs):
+        warnings.append((event, kwargs))
+
+    monkeypatch.setattr(rate_limit_module, "get_settings", lambda: test_settings)
+    monkeypatch.setattr(rate_limit_module, "check_daily_quota", fake_check_daily_quota)
+    monkeypatch.setattr(rate_limit_module, "check_rate_limit", always_allow_rate_limit)
+    monkeypatch.setattr(rate_limit_module, "check_circuit_breaker", always_allow_breaker)
+    monkeypatch.setattr(rate_limit_module.logger, "warning", fake_warning)
+
+    await rate_limit_module.enforce_request_controls(
+        user_id="user-123",
+        client_ip="127.0.0.1",
+        estimated_tokens=100,
+    )
+
+    quota_warning_payload = next(payload for event, payload in warnings if event == "quota_check_failed")
+    assert "user_id" not in quota_warning_payload
+    assert "user_id_hash" in quota_warning_payload
+    assert quota_warning_payload["user_id_hash"] is not None

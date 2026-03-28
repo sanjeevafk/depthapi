@@ -37,13 +37,21 @@ export const useMessageStore = create<MessageState>((set) => ({
       const existingKey = directMatch || findExistingMessageKey(state, msg);
 
       if (existingKey) {
+        const existingMessage = state.messagesById[existingKey];
+        const incomingContent = typeof msg.content === "string" ? msg.content : "";
+        const keepExistingContent =
+          existingMessage.role === "assistant" &&
+          typeof existingMessage.content === "string" &&
+          existingMessage.content.length > 0 &&
+          incomingContent.length === 0;
         const nextMessagesById = {
           ...state.messagesById,
           [existingKey]: {
-            ...state.messagesById[existingKey],
+            ...existingMessage,
             ...msg,
+            content: keepExistingContent ? existingMessage.content : incomingContent,
             metadata: {
-              ...state.messagesById[existingKey].metadata,
+              ...existingMessage.metadata,
               ...msg.metadata,
             },
           },

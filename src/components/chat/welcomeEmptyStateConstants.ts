@@ -103,35 +103,95 @@ export const WORKSPACE_PROMPTS: Record<Workspace, PromptTile[]> = {
     {
       id: "technical-1",
       title: "Design a system",
-      description: "Build a scalable Redis rate limiter.",
-      prompt: "Design a scalable Redis rate limiter for an API.",
+      description:
+        "Explain scalable Redis rate limiter design, tradeoffs, and failures.",
+      prompt:
+        "Explain how to design a scalable Redis rate limiter, including tradeoffs and failure scenarios.",
     },
     {
       id: "technical-2",
       title: "Debug a frontend issue",
-      description: "Find why a React component keeps re-rendering.",
+      description:
+        "Explain why React components re-render unnecessarily and how to diagnose it.",
       prompt:
-        "Help me debug why a React component re-renders on every keystroke.",
+        "Explain common causes of unnecessary React re-renders and how to systematically identify them.",
     },
     {
       id: "technical-3",
       title: "Model data efficiently",
-      description: "Pick an index strategy for time-series data.",
-      prompt: "Explain an index strategy for time-series data.",
+      description:
+        "Explain index choices for time-series workloads and when each fits.",
+      prompt:
+        "Explain how to choose indexing strategies for time-series data and when to use each approach.",
     },
     {
       id: "technical-4",
       title: "Review architecture",
-      description: "Plan a multi-tenant SaaS setup.",
-      prompt: "Review an architecture for a multi-tenant SaaS application.",
+      description:
+        "Explain multi-tenant SaaS design with isolation and scaling tradeoffs.",
+      prompt:
+        "Explain how to design a multi-tenant SaaS architecture, including isolation strategies and scaling concerns.",
     },
     {
       id: "technical-5",
-      title: "Implement OAuth",
-      description: "Understand PKCE and secure login flows.",
-      prompt: "Explain how to implement OAuth PKCE securely.",
+      title: "Understand OAuth",
+      description:
+        "Explain OAuth PKCE step-by-step and why it improves security.",
+      prompt:
+        "Explain how OAuth PKCE works step-by-step and why it improves security over traditional flows.",
     },
   ],
+};
+
+const PROMPTS_CACHE_KEY = "kb_workspace_prompts_v2";
+
+const isPromptTile = (value: unknown): value is PromptTile => {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<PromptTile>;
+  return (
+    typeof candidate.id === "string" &&
+    typeof candidate.title === "string" &&
+    typeof candidate.description === "string" &&
+    typeof candidate.prompt === "string"
+  );
+};
+
+const isWorkspacePromptMap = (
+  value: unknown,
+): value is Record<Workspace, PromptTile[]> => {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<Record<Workspace, unknown>>;
+  const workspaces: Workspace[] = ["learn", "socratic", "technical"];
+  return workspaces.every((workspace) => {
+    const prompts = candidate[workspace];
+    return Array.isArray(prompts) && prompts.every(isPromptTile);
+  });
+};
+
+export const getCachedWorkspacePrompts = (): Record<Workspace, PromptTile[]> => {
+  if (typeof window === "undefined") return WORKSPACE_PROMPTS;
+
+  try {
+    const raw = window.localStorage.getItem(PROMPTS_CACHE_KEY);
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw);
+      if (isWorkspacePromptMap(parsed)) {
+        return parsed;
+      }
+    }
+  } catch {
+    // Fall back to bundled prompts below.
+  }
+
+  try {
+    window.localStorage.setItem(
+      PROMPTS_CACHE_KEY,
+      JSON.stringify(WORKSPACE_PROMPTS),
+    );
+  } catch {
+    // Ignore localStorage write failures.
+  }
+  return WORKSPACE_PROMPTS;
 };
 
 export type { PromptTile };

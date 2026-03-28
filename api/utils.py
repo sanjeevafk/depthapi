@@ -19,12 +19,6 @@ PREMIUM_LEVELS: list[str] = []
 PROMPT_LEVELS = FREE_LEVELS
 
 MODE_ALIASES = {
-    "fast": LEARNING_MODE,
-    "default": LEARNING_MODE,
-    "balanced": LEARNING_MODE,
-    "ensemble": LEARNING_MODE,
-    "technical-depth": TECHNICAL_MODE,
-    "technical_depth": TECHNICAL_MODE,
     "technical": TECHNICAL_MODE,
     "learn": LEARNING_MODE,
     "learning": LEARNING_MODE,
@@ -108,5 +102,4 @@ CHAT_INFERENCE_MODE_ALIASES = {
     SOCRATIC_MODE: SOCRATIC_MODE,
 }
 PROMPT_MODE_ALIASES = {
-    "meme-style": "meme",
 }
