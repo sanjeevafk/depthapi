@@ -25,6 +25,8 @@ jobs:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      SENTRY_RELEASE: ${{ github.sha }}
+      VITE_SENTRY_RELEASE: ${{ github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -77,7 +79,11 @@ jobs:
         run: vercel pull --yes --environment=${{ steps.target.outputs.pull_env }} --token="$VERCEL_TOKEN"
 
       - name: Build with Vercel
-        run: vercel build --token="$VERCEL_TOKEN"
+        run: |
+          vercel build \
+            --token="$VERCEL_TOKEN" \
+            --build-env SENTRY_RELEASE="$SENTRY_RELEASE" \
+            --build-env VITE_SENTRY_RELEASE="$VITE_SENTRY_RELEASE"
 
       - name: Deploy prebuilt artifacts
         id: deploy
