@@ -82,7 +82,7 @@ export default function MessageList(): JSX.Element {
     <div
       ref={scrollRef}
       onScroll={handleScroll}
-      className="flex-1 min-h-0 overflow-y-auto px-6 py-6"
+      className="flex-1 min-h-0 overflow-y-auto px-3 py-4 sm:px-6 sm:py-6"
     >
       <div className="mx-auto flex w-full max-w-3xl flex-col space-y-4">
         {messageIds.length === 0 ? (
@@ -127,7 +127,7 @@ function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
       className={`flex ${isUser ? "justify-end" : "justify-start"}`}
     >
       <div
-        className={`max-w-[75%] break-words rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-lg border relative ${!isUser ? "group" : ""} ${
+        className={`max-w-[90%] sm:max-w-[75%] break-words rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-lg border relative ${!isUser ? "group" : ""} ${
           isUser
             ? "bg-accent-primary text-white border-accent-primary/30"
             : "bg-dark-700 text-gray-100 border-white/5"

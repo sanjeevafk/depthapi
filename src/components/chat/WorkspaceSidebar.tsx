@@ -104,6 +104,20 @@ export default function WorkspaceSidebar({
     requestAnimationFrame(() => newThreadButtonRef.current?.focus());
   }, [isOpen]);
 
+  // Swipe-left-to-close on mobile
+  const touchStartXRef = useRef<number | null>(null);
+  const handleTouchStart = (event: React.TouchEvent) => {
+    touchStartXRef.current = event.touches[0].clientX;
+  };
+  const handleTouchEnd = (event: React.TouchEvent) => {
+    if (touchStartXRef.current === null) return;
+    const deltaX = event.changedTouches[0].clientX - touchStartXRef.current;
+    touchStartXRef.current = null;
+    if (deltaX < -60) {
+      onClose();
+    }
+  };
+
   const threadConversations = useMemo(() => conversations, [conversations]);
 
   return (
@@ -112,6 +126,8 @@ export default function WorkspaceSidebar({
         isCollapsed ? "md:w-20" : "md:w-72"
       } ${isOpen ? "translate-x-0" : "-translate-x-full"}`}
       aria-label="Sidebar"
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
     >
       <button
         type="button"
@@ -288,7 +304,7 @@ export default function WorkspaceSidebar({
                           if (!shouldDelete) return;
                           onDeleteConversation(conversation.id);
                         }}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-200 hover:text-red-500 dark:text-slate-500 dark:hover:bg-white/10 dark:hover:text-red-400"
+                        className="inline-flex h-10 w-10 sm:h-8 sm:w-8 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-200 hover:text-red-500 dark:text-slate-500 dark:hover:bg-white/10 dark:hover:text-red-400"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
