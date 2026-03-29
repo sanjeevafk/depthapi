@@ -114,9 +114,11 @@ function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
 
   const isUser = message.role === "user";
   const assistantMode = !isUser ? message.metadata?.mode : undefined;
-  const assistantLabel = assistantMode
-    ? formatModeLabel(assistantMode)
-    : undefined;
+  const assistantPromptMode = !isUser ? message.metadata?.prompt_mode : undefined;
+  let assistantLabel = assistantMode ? formatModeLabel(assistantMode) : undefined;
+  if (assistantLabel && assistantMode === "learning" && assistantPromptMode) {
+    assistantLabel = `${assistantLabel}-${assistantPromptMode.toUpperCase()}`;
+  }
 
   return (
     <motion.div
