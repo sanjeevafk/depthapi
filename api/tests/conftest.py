@@ -134,10 +134,19 @@ class FakeSupabaseQuery:
     def eq(self, *_args, **_kwargs):
         return self
 
+    def gte(self, *_args, **_kwargs):
+        return self
+
+    def lte(self, *_args, **_kwargs):
+        return self
+
     def order(self, *_args, **_kwargs):
         return self
 
     def limit(self, *_args, **_kwargs):
+        return self
+
+    def range(self, *_args, **_kwargs):
         return self
 
     def single(self):
@@ -158,6 +167,11 @@ class FakeSupabase:
 
     def table(self, table):
         return FakeSupabaseQuery(self, table)
+
+    def rpc(self, function_name, _params=None):
+        query = FakeSupabaseQuery(self, function_name)
+        query._response = self.responses.get(function_name, [])
+        return query
 
 
 @pytest.fixture(scope="session")

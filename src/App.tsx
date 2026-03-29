@@ -10,6 +10,7 @@ import { loadTheme } from "./lib/chatStoreUtils";
 const LandingPage = lazy(() => import("./pages/LandingPage"));
 const AppPage = lazy(() => import("./pages/AppPage"));
 const SuccessPage = lazy(() => import("./pages/SuccessPage"));
+const AdminAnalyticsPage = lazy(() => import("./pages/AdminAnalyticsPage"));
 
 function RouteMonitoringBridge(): null {
   const location = useLocation();
@@ -43,6 +44,7 @@ export default function App(): JSX.Element {
           <Route path="/" element={<LandingPage />} />
           <Route path="/app" element={<AppPage />} />
           <Route path="/success" element={<SuccessPage />} />
+          <Route path="/admin/analytics" element={<AdminAnalyticsPage />} />
         </Routes>
       </Suspense>
     </ErrorBoundary>
