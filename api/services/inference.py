@@ -11,15 +11,7 @@ import structlog
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from config import get_settings
-from prompts import (
-    PROMPTS,
-    TECHNICAL_DEPTH_PROMPT,
-    TECHNICAL_STRUCTURED_PROMPT,
-    TECHNICAL_COMPARE_PROMPT,
-    TECHNICAL_BRAINSTORM_PROMPT,
-    _TECHNICAL_DEEPER_LAYER,
-    _TECHNICAL_DIAGRAM_INSTRUCTION,
-)
+from prompts import SYSTEM_PROMPT, DiagramType, build_prompt
 from logging_config import logger, anonymize_user_id, log_sampled_success
 from services.search import search_service
 from services.intent import (
@@ -524,28 +516,27 @@ def build_technical_prompt(
     Assembles the final prompt string from components.
     No LLM calls. Pure string construction.
     """
-    diagram_instruction = (
-        _TECHNICAL_DIAGRAM_INSTRUCTION.format(diagram_type=diagram_type)
-        if diagram_type and intent != "compare"
-        else ""
-    )
-
+    mode_key = "technical_structured"
     if intent == "brainstorm":
-        return TECHNICAL_BRAINSTORM_PROMPT.format(
-            topic=topic,
-            diagram_instruction=diagram_instruction,
-        )
+        mode_key = "technical_brainstorm"
+    elif intent == "compare":
+        mode_key = "technical_compare"
 
-    if intent == "compare":
-        return TECHNICAL_COMPARE_PROMPT.format(topic=topic)
+    def _map_diagram(value: str | None) -> DiagramType:
+        normalized = (value or "").strip().lower()
+        mapping = {
+            "flowchart": DiagramType.FLOWCHART_TD,
+            "flowchart td": DiagramType.FLOWCHART_TD,
+            "flowchart lr": DiagramType.FLOWCHART,
+            "sequencediagram": DiagramType.SEQUENCE,
+            "classdiagram": DiagramType.CLASS,
+            "erdiagram": DiagramType.ER,
+            "statediagram-v2": DiagramType.STATE,
+        }
+        return mapping.get(normalized, DiagramType.FLOWCHART_TD)
 
-    deeper_layer_instruction = _TECHNICAL_DEEPER_LAYER if depth == "deep" else ""
-
-    return TECHNICAL_STRUCTURED_PROMPT.format(
-        topic=topic,
-        deeper_layer_instruction=deeper_layer_instruction,
-        diagram_instruction=diagram_instruction,
-    )
+    diagram = None if mode_key == "technical_compare" else _map_diagram(diagram_type)
+    return build_prompt(mode_key, topic, diagram_type=diagram)
 
 
 async def technical_mode_handler(
@@ -848,6 +839,16 @@ def _append_search_context(prompt: str, context: str) -> str:
     )
 
 
+def _build_messages(prompt: str) -> list[dict[str, str]]:
+    system_prompt = SYSTEM_PROMPT.strip()
+    if system_prompt:
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
+    return [{"role": "user", "content": prompt}]
+
+
 async def _load_search_context(topic: str, *, mode: str) -> str:
     normalized_topic = " ".join((topic or "").strip().split())
     if not normalized_topic:
@@ -889,7 +890,7 @@ def is_transient_http_error(exc: BaseException) -> bool:
 )
 async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **kwargs) -> str:
     """Call API with given model and prompt."""
-            
+
     try:
         alias = model or "default-fast"
         request_id = kwargs.get("request_id")
@@ -897,9 +898,10 @@ async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **k
         anonymized_user_id = anonymize_user_id(str(kwargs.get("user_id") or "") or None)
         telemetry_sink = kwargs.get("telemetry_sink") if isinstance(kwargs.get("telemetry_sink"), dict) else None
         model_start = time.perf_counter()
+        messages = _build_messages(prompt)
         result = await create_chat_completion(
             model=alias,
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             max_tokens=max_tokens,
             temperature=kwargs.get("temperature", 0.7),
             request_id=request_id,
@@ -954,13 +956,11 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
     # ────────────────────────────────────────────────────────────────────────
 
     if mode == SOCRATIC_MODE:
-        template = PROMPTS.get("socratic")
-        if not template:
-            raise ValueError("Unknown mode template: socratic")
         search_context = await _load_search_context(topic, mode=SOCRATIC_MODE)
-        prompt = template.format(
-            topic=topic,
-            conversation_context=kwargs.get("conversation_context", "No prior context."),
+        prompt = build_prompt(
+            "socratic",
+            topic,
+            conversation_context=kwargs.get("conversation_context", ""),
         )
         prompt = _append_search_context(prompt, search_context)
         routed_aliases = route_model_aliases(
@@ -988,12 +988,8 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
         )
         return _enforce_socratic_response_constraints(response)
 
-    template = PROMPTS.get(level)
-    if not template:
-        raise ValueError(f"Unknown level: {level}")
-        
     search_context = await _load_search_context(topic, mode=LEARNING_MODE)
-    prompt = template.format(topic=topic)
+    prompt = build_prompt(level, topic)
     prompt = _append_search_context(prompt, search_context)
     length_constraint = _extract_length_constraint(topic)
     prompt = _apply_length_constraint(prompt, length_constraint)
@@ -1055,6 +1051,7 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         if not prompt or not prompt.strip():
             prompt = TECHNICAL_MINIMAL_PROMPT
         prompt = _append_search_context(prompt, search_context)
+        messages = _build_messages(prompt)
 
         primary_alias, _fallback_alias = _technical_route(
             topic,
@@ -1073,7 +1070,7 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         try:
             async for chunk in stream_chat_completion(
                 model=alias,
-                messages=[{"role": "user", "content": prompt}],
+                messages=messages,
                 max_tokens=TECHNICAL_MAX_TOKENS,
                 temperature=TECHNICAL_TEMPERATURE,
                 request_id=request_id,
@@ -1151,24 +1148,21 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             )
         return
 
+    length_constraint: tuple[str, int] | None = None
     if mode == SOCRATIC_MODE:
-        template = PROMPTS.get("socratic")
-        if not template:
-            raise ValueError("Unknown mode template: socratic")
         search_context = await _load_search_context(topic, mode=SOCRATIC_MODE)
-        prompt = template.format(
-            topic=topic,
-            conversation_context=kwargs.get("conversation_context", "No prior context."),
+        prompt = build_prompt(
+            "socratic",
+            topic,
+            conversation_context=kwargs.get("conversation_context", ""),
         )
         prompt = _append_search_context(prompt, search_context)
     else:
-        template = PROMPTS.get(level)
-        if not template:
-            raise ValueError(f"Unknown level: {level}")
         search_context = await _load_search_context(topic, mode=LEARNING_MODE)
-        prompt = template.format(topic=topic)
+        prompt = build_prompt(level, topic)
         prompt = _append_search_context(prompt, search_context)
-        prompt = _apply_length_constraint(prompt, _extract_length_constraint(topic))
+        length_constraint = _extract_length_constraint(topic)
+        prompt = _apply_length_constraint(prompt, length_constraint)
     
     if model:
         alias = model
@@ -1195,7 +1189,7 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             max_tokens = int(getattr(settings, "max_output_tokens_socratic", 1024))
             async for chunk in stream_chat_completion(
                 model=alias,
-                messages=[{"role": "user", "content": prompt}],
+                messages=_build_messages(prompt),
                 temperature=kwargs.get("temperature", 0.7),
                 max_tokens=max_tokens,
                 request_id=request_id,
@@ -1264,7 +1258,7 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             max_tokens = int(getattr(settings, "max_output_tokens_learning", 1024))
             async for chunk in stream_chat_completion(
                 model=alias,
-                messages=[{"role": "user", "content": prompt}],
+                messages=_build_messages(prompt),
                 temperature=kwargs.get("temperature", 0.7),
                 max_tokens=max_tokens,
                 request_id=request_id,

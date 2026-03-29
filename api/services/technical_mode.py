@@ -7,13 +7,7 @@ import structlog
 from typing import Callable, Any, AsyncGenerator
 
 from logging_config import log_sampled_success
-from prompts import (
-    TECHNICAL_STRUCTURED_PROMPT,
-    TECHNICAL_COMPARE_PROMPT,
-    TECHNICAL_BRAINSTORM_PROMPT,
-    _TECHNICAL_DEEPER_LAYER,
-    _TECHNICAL_DIAGRAM_INSTRUCTION,
-)
+from prompts import SYSTEM_PROMPT, DiagramType, build_prompt
 from services.intent import (
     detect_intent_and_depth,
     detect_diagram_type,
@@ -50,28 +44,37 @@ def build_technical_prompt(
     diagram_type: str | None,
 ) -> str:
     """Assemble the final prompt string from components."""
-    diagram_instruction = (
-        _TECHNICAL_DIAGRAM_INSTRUCTION.format(diagram_type=diagram_type)
-        if diagram_type and intent != "compare"
-        else ""
-    )
-
+    mode_key = "technical_structured"
     if intent == "brainstorm":
-        return TECHNICAL_BRAINSTORM_PROMPT.format(
-            topic=topic,
-            diagram_instruction=diagram_instruction,
-        )
+        mode_key = "technical_brainstorm"
+    elif intent == "compare":
+        mode_key = "technical_compare"
 
-    if intent == "compare":
-        return TECHNICAL_COMPARE_PROMPT.format(topic=topic)
+    def _map_diagram(value: str | None) -> DiagramType:
+        normalized = (value or "").strip().lower()
+        mapping = {
+            "flowchart": DiagramType.FLOWCHART_TD,
+            "flowchart td": DiagramType.FLOWCHART_TD,
+            "flowchart lr": DiagramType.FLOWCHART,
+            "sequencediagram": DiagramType.SEQUENCE,
+            "classdiagram": DiagramType.CLASS,
+            "erdiagram": DiagramType.ER,
+            "statediagram-v2": DiagramType.STATE,
+        }
+        return mapping.get(normalized, DiagramType.FLOWCHART_TD)
 
-    deeper_layer_instruction = _TECHNICAL_DEEPER_LAYER if depth == "deep" else ""
+    diagram = None if mode_key == "technical_compare" else _map_diagram(diagram_type)
+    return build_prompt(mode_key, topic, diagram_type=diagram)
 
-    return TECHNICAL_STRUCTURED_PROMPT.format(
-        topic=topic,
-        deeper_layer_instruction=deeper_layer_instruction,
-        diagram_instruction=diagram_instruction,
-    )
+
+def _build_messages(prompt: str) -> list[dict[str, str]]:
+    system_prompt = SYSTEM_PROMPT.strip()
+    if system_prompt:
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
+    return [{"role": "user", "content": prompt}]
 
 
 async def technical_mode_handler(
@@ -264,7 +267,7 @@ async def technical_stream_explanation(
     try:
         async for chunk in stream_chat_completion(
             model=alias,
-            messages=[{"role": "user", "content": prompt}],
+            messages=_build_messages(prompt),
             max_tokens=TECHNICAL_MAX_TOKENS,
             temperature=TECHNICAL_TEMPERATURE,
             request_id=request_id,
