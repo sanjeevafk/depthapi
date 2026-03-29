@@ -37,7 +37,12 @@ async def get_history(auth_data: dict = Depends(verify_token)):
     
     try:
         response = await asyncio.to_thread(
-            supabase.table("history").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(50).execute
+            lambda: supabase.table("history")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(50)
+            .execute()
         )
         for item in response.data:
             item_dict: Dict[str, Any] = item  # type: ignore
@@ -62,12 +67,12 @@ async def add_history_item(data: HistoryCreate, auth_data: dict = Depends(verify
         normalized_mode = normalize_mode(data.mode)
         mode = normalized_mode if normalized_mode in SUPPORTED_CHAT_MODES else DEFAULT_CHAT_MODE
         response = await asyncio.to_thread(
-            supabase.table("history").insert({
+            lambda: supabase.table("history").insert({
                 "user_id": user_id,
                 "topic": data.topic,
                 "levels": data.levels,
                 "mode": mode
-            }).execute
+            }).execute()
         )
 
         
@@ -91,7 +96,11 @@ async def delete_history_item(item_id: str, auth_data: dict = Depends(verify_tok
     try:
         # Securely delete only if user_id matches
         await asyncio.to_thread(
-            supabase.table("history").delete().eq("id", item_id).eq("user_id", user_id).execute
+            lambda: supabase.table("history")
+            .delete()
+            .eq("id", item_id)
+            .eq("user_id", user_id)
+            .execute()
         )
         return {"status": "deleted"}
 
@@ -114,7 +123,7 @@ async def clear_history(auth_data: dict = Depends(verify_token)):
         
     try:
         await asyncio.to_thread(
-            supabase.table("history").delete().eq("user_id", user_id).execute
+            lambda: supabase.table("history").delete().eq("user_id", user_id).execute()
         )
         return {"status": "cleared"}
 
