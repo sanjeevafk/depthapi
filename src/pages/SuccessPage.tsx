@@ -19,11 +19,11 @@ export default function SuccessPage(): JSX.Element {
         await refreshProfile({ force: true });
 
         // Wait for webhook to process and upgrade user
-        const isPro = await waitForPaymentConfirmation();
+        const paymentStatus = await waitForPaymentConfirmation();
 
-        if (isPro) {
+        if (paymentStatus.isPro) {
           setStatus("success");
-          trackSubscriptionStarted("monthly");
+          trackSubscriptionStarted(paymentStatus.plan);
           await refreshProfile({ force: true });
         } else {
           setStatus("error");

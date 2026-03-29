@@ -78,9 +78,10 @@ describe("createCheckoutSession", () => {
         }),
     );
 
-    const isConfirmed = await waitForPaymentConfirmation(5, 1);
+    const status = await waitForPaymentConfirmation(5, 1);
 
-    expect(isConfirmed).toBe(true);
+    expect(status.isPro).toBe(true);
+    expect(status.plan).toBe("pro");
     expect(fetch).toHaveBeenCalledTimes(3);
   });
 
@@ -93,9 +94,10 @@ describe("createCheckoutSession", () => {
       }),
     );
 
-    const isConfirmed = await waitForPaymentConfirmation(5, 1);
+    const status = await waitForPaymentConfirmation(5, 1);
 
-    expect(isConfirmed).toBe(false);
+    expect(status.isPro).toBe(false);
+    expect(status.plan).toBeUndefined();
     expect(fetch).toHaveBeenCalledTimes(5);
   });
 });
