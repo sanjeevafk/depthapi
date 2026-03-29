@@ -13,8 +13,9 @@ from services.cache import cache_get, cache_set
 def _resolve_sentry_config() -> tuple[str, str, str]:
     settings = get_settings()
     token = (getattr(settings, "sentry_auth_token", "") or os.getenv("SENTRY_AUTH_TOKEN", "")).strip()
-    org_slug = os.getenv("SENTRY_ORG_SLUG", "sanjeev-je").strip() or "sanjeev-je"
-    project_slug = os.getenv("SENTRY_PROJECT_SLUG", "python-fastapi").strip() or "python-fastapi"
+    org_slug = os.getenv("SENTRY_ORG_SLUG", "").strip()
+    project_slug = os.getenv("SENTRY_PROJECT_SLUG", "").strip()
+    return token, org_slug, project_slug
     return token, org_slug, project_slug
 
 
@@ -61,5 +62,9 @@ async def fetch_sentry_issues(limit: int = 10, cache_ttl_seconds: int = 300) -> 
                 }
             )
 
-    await cache_set(cache_key, {"issues": issues}, ttl=cache_ttl_seconds)
+    try:
+        await cache_set(cache_key, {"issues": issues}, ttl=cache_ttl_seconds)
+    except Exception as exc:
+        logger.warning("sentry_cache_set_failed", error=str(exc))
+
     return issues

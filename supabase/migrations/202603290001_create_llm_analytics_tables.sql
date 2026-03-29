@@ -45,8 +45,8 @@ CREATE INDEX IF NOT EXISTS idx_llm_requests_status
 CREATE TABLE IF NOT EXISTS llm_aggregates (
   bucket_start timestamptz NOT NULL,
   bucket text NOT NULL,
-  model_alias text,
-  mode text,
+  model_alias text NOT NULL DEFAULT '__none__',
+  mode text NOT NULL DEFAULT '__none__',
   request_count integer NOT NULL DEFAULT 0,
   total_tokens integer NOT NULL DEFAULT 0,
   total_cost_usd numeric(12, 6) NOT NULL DEFAULT 0,
@@ -100,12 +100,39 @@ AS $$
 $$;
 
 -- Retention helper
-CREATE OR REPLACE FUNCTION llm_delete_old_requests(retention_days integer)
+CREATE OR REPLACE FUNCTION llm_delete_old_requests_batched(
+  retention_days integer,
+  batch_size integer DEFAULT 5000,
+  sleep_seconds numeric DEFAULT 0.05
+)
 RETURNS void
-LANGUAGE sql
+LANGUAGE plpgsql
 AS $$
-  DELETE FROM llm_requests
-  WHERE created_at < NOW() - (retention_days || ' days')::interval;
+DECLARE
+  cutoff_ts timestamptz := NOW() - (retention_days || ' days')::interval;
+  rows_deleted integer := 0;
+BEGIN
+  IF batch_size IS NULL OR batch_size < 1 THEN
+    batch_size := 5000;
+  END IF;
+
+  LOOP
+    DELETE FROM llm_requests
+    WHERE ctid IN (
+      SELECT ctid
+      FROM llm_requests
+      WHERE created_at < cutoff_ts
+      LIMIT batch_size
+    );
+
+    GET DIAGNOSTICS rows_deleted = ROW_COUNT;
+    EXIT WHEN rows_deleted = 0;
+
+    IF sleep_seconds IS NOT NULL AND sleep_seconds > 0 THEN
+      PERFORM pg_sleep(sleep_seconds);
+    END IF;
+  END LOOP;
+END;
 $$;
 
 -- Analytics RPC helpers
@@ -231,5 +258,5 @@ SELECT cron.schedule(
 SELECT cron.schedule(
   'llm_retention_30d',
   '20 3 * * *',
-  $$SELECT llm_delete_old_requests(30);$$
+  $$SELECT llm_delete_old_requests_batched(30, 5000, 0.05);$$
 );
