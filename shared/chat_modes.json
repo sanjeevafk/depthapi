@@ -5,8 +5,7 @@
     "socratic"
   ],
   "free_modes": [
-    "learning",
-    "socratic"
+    "learning"
   ],
   "prompt_modes": [
     "eli5",
@@ -16,6 +15,7 @@
     "meme"
   ],
   "pro_modes": [
-    "technical"
+    "technical",
+    "socratic"
   ],
   "default_mode": "learning"}
