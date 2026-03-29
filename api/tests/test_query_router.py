@@ -281,9 +281,8 @@ async def test_query_stream_emits_done(app_client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_query_anonymous_rate_limit_exceeded(app_client, monkeypatch, test_settings):
-    test_settings.anonymous_rate_limit_burst = 1
-    test_settings.anonymous_rate_limit_per_ip = 1
-    test_settings.daily_token_quota_per_user = 50000
+    test_settings.anon_rph = 1
+    test_settings.anon_daily_token_quota = 50000
     test_settings.circuit_breaker_tokens_per_minute = 300000
 
     async def fake_cache_get(_key):
@@ -316,10 +315,11 @@ async def test_query_anonymous_rate_limit_exceeded(app_client, monkeypatch, test
 
 @pytest.mark.asyncio
 async def test_query_quota_exhaustion_blocks_inference(app_client, monkeypatch, test_settings):
-    test_settings.daily_token_quota_per_user = 1
+    test_settings.free_daily_token_quota_learning = 1
+    test_settings.free_hourly_token_quota_learning = 1
     test_settings.circuit_breaker_tokens_per_minute = 300000
-    test_settings.rate_limit_burst = 100
-    test_settings.rate_limit_per_user = 100
+    test_settings.free_burst_learning = 100
+    test_settings.free_rpm_learning = 100
 
     async def fail_if_called(*_args, **_kwargs):
         pytest.fail("inference must not run when quota is exceeded")
@@ -355,9 +355,9 @@ async def test_query_quota_exhaustion_blocks_inference(app_client, monkeypatch, 
 @pytest.mark.asyncio
 async def test_query_circuit_breaker_trigger_rejects(app_client, monkeypatch, test_settings):
     test_settings.circuit_breaker_tokens_per_minute = 1
-    test_settings.daily_token_quota_per_user = 50000  # High enough to not trigger quota exceeded
-    test_settings.anonymous_rate_limit_burst = 100
-    test_settings.anonymous_rate_limit_per_ip = 100
+    test_settings.free_daily_token_quota_learning = 50000  # High enough to not trigger quota exceeded
+    test_settings.free_hourly_token_quota_learning = 50000
+    test_settings.anon_rph = 100
 
     async def fail_if_called(*_args, **_kwargs):
         pytest.fail("inference must not run when circuit breaker is open")

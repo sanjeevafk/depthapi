@@ -15,11 +15,12 @@ from auth import check_is_pro, ensure_user_exists, get_supabase_admin, verify_to
 from config import get_settings
 from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from services.cache import cache_get, cache_set, cache_set_if_absent
-from services.inference import generate_explanation, generate_stream_explanation
+from services.inference import TECHNICAL_MAX_TOKENS, generate_explanation, generate_stream_explanation
 from services.llm_client import get_provider_config_state
 from services.llm_errors import LLMError, LLMUnavailable
-from services.rate_limit import enforce_request_controls, estimate_tokens_for_text
+from services.rate_limit import enforce_request_controls, refund_tokens
 from services.streaming import SseEventBuilder, SSE_RESPONSE_HEADERS
+from services.token_count import count_prompt_tokens
 from utils import (
     DEFAULT_CHAT_MODE,
     FREE_LEVELS,
@@ -197,6 +198,16 @@ async def query_topic(
             raise HTTPException(status_code=401, detail="Authentication required for technical mode")
         if not is_verified_pro:
             raise HTTPException(status_code=403, detail="Technical mode is a Pro feature")
+    if mode == SOCRATIC_MODE:
+        if not auth_data:
+            raise HTTPException(status_code=401, detail="Authentication required for socratic mode")
+        if not is_verified_pro:
+            raise HTTPException(status_code=403, detail="Socratic mode is a Pro feature")
+    if mode == SOCRATIC_MODE:
+        if not auth_data:
+            raise HTTPException(status_code=401, detail="Authentication required for socratic mode")
+        if not is_verified_pro:
+            raise HTTPException(status_code=403, detail="Socratic mode is a Pro feature")
 
     allowed_levels = FREE_LEVELS
     levels = [level for level in _normalize_levels(req.levels) if level in allowed_levels]
@@ -206,11 +217,22 @@ async def query_topic(
     effective_user_id = auth_data["user"].id if auth_data else None
     user_id_raw = str(effective_user_id) if effective_user_id else None
     user_id_hash = anonymize_user_id(user_id_raw)
-    estimated_tokens = estimate_tokens_for_text(topic, output_buffer=900 * max(len(levels), 1))
-    await enforce_request_controls(
+
+    if mode == TECHNICAL_MODE:
+        max_output_tokens = TECHNICAL_MAX_TOKENS
+    elif mode == SOCRATIC_MODE:
+        max_output_tokens = int(getattr(get_settings(), "max_output_tokens_socratic", 1024))
+    else:
+        max_output_tokens = int(getattr(get_settings(), "max_output_tokens_learning", 1024))
+
+    prompt_tokens = count_prompt_tokens(topic)
+    level_count = max(len(levels), 1)
+    reserved_tokens = max(prompt_tokens + (max_output_tokens * level_count), 1)
+    quota_reservation = await enforce_request_controls(
         user_id=str(effective_user_id) if effective_user_id else None,
         client_ip=request.client.host if request.client else "unknown",
-        estimated_tokens=estimated_tokens,
+        reserved_tokens=reserved_tokens,
+        mode=mode,
         is_pro=is_verified_pro,
     )
 
@@ -310,6 +332,18 @@ async def query_topic(
         sampled=True,
     )
 
+    actual_tokens = int(token_usage.get("prompt_tokens") or 0) + int(token_usage.get("completion_tokens") or 0)
+    if actual_tokens > 0:
+        try:
+            await refund_tokens(quota_reservation, actual_tokens)
+        except Exception as exc:
+            logger.warning(
+                "query_quota_refund_failed",
+                error=str(exc),
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+            )
+
     return QueryResponse(topic=topic, explanations=explanations, cached=False)
 
 
@@ -353,11 +387,21 @@ async def query_topic_stream(
     effective_user_id = auth_data["user"].id if auth_data else None
     user_id_raw = str(effective_user_id) if effective_user_id else None
     user_id_hash = anonymize_user_id(user_id_raw)
-    estimated_tokens = estimate_tokens_for_text(topic)
-    await enforce_request_controls(
+
+    if mode == TECHNICAL_MODE:
+        max_output_tokens = TECHNICAL_MAX_TOKENS
+    elif mode == SOCRATIC_MODE:
+        max_output_tokens = int(getattr(get_settings(), "max_output_tokens_socratic", 1024))
+    else:
+        max_output_tokens = int(getattr(get_settings(), "max_output_tokens_learning", 1024))
+
+    prompt_tokens = count_prompt_tokens(topic)
+    reserved_tokens = max(prompt_tokens + max_output_tokens, 1)
+    quota_reservation = await enforce_request_controls(
         user_id=str(effective_user_id) if effective_user_id else None,
         client_ip=request.client.host if request.client else "unknown",
-        estimated_tokens=estimated_tokens,
+        reserved_tokens=reserved_tokens,
+        mode=mode,
         is_pro=is_verified_pro,
     )
 
@@ -863,6 +907,20 @@ async def query_topic_stream(
                 stream_max_seconds=stream_max_seconds,
                 sampled=True,
             )
+            if isinstance(token_usage, dict):
+                actual_tokens = int(token_usage.get("prompt_tokens") or 0) + int(
+                    token_usage.get("completion_tokens") or 0
+                )
+                if actual_tokens > 0:
+                    try:
+                        await refund_tokens(quota_reservation, actual_tokens)
+                    except Exception as exc:
+                        logger.warning(
+                            "query_stream_quota_refund_failed",
+                            error=str(exc),
+                            request_id=request_id,
+                            user_id_hash=user_id_hash,
+                        )
 
     return StreamingResponse(
         event_generator(),

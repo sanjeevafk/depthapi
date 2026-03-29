@@ -15,4 +15,4 @@ openai>=1.51.0
 sentry-sdk[fastapi]>=2.20.0
 dodopayments[webhooks]>=1.92.0,<2
 standardwebhooks>=1.0.0
-
+tiktoken>=0.7.0
