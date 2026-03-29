@@ -59,6 +59,12 @@ type ErrorItem = {
   request_count?: number;
 };
 
+type TopErrorItem = {
+  error_type: string;
+  error_message: string;
+  error_count: number;
+};
+
 type SentryIssue = {
   id?: string;
   short_id?: string;
@@ -156,7 +162,7 @@ export default function AdminAnalyticsPage(): JSX.Element {
   const errorQuery = useQuery({
     queryKey: ["analytics-errors", queryParams, token],
     queryFn: () =>
-      fetchWithAuth<{ items: ErrorItem[]; top_errors: any[] }>(
+      fetchWithAuth<{ items: ErrorItem[]; top_errors: TopErrorItem[] }>(
         `${API_BASE_URL}/api/analytics/errors?${queryParams}&bucket=day`,
         token,
       ),
