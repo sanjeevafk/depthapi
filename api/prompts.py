@@ -773,55 +773,9 @@ def build_prompt(
     raise NotImplementedError(f"No builder branch for mode '{mode}'")
 
 
-# ===========================================================================
-# USAGE EXAMPLE
-# ===========================================================================
-
-if __name__ == "__main__":
-    import json
-
-    # Always send SYSTEM_PROMPT as the `system` field in your API call.
-    # The build_prompt() return value goes in `messages[0].content`.
-
-    # Example 1 — ELI5
-    p = build_prompt("eli5", topic="black holes")
-    print("=== ELI5 ===")
-    print(p)
-
-    # Example 2 — Socratic (second turn)
-    p = build_prompt(
-        "socratic",
-        topic="natural selection",
-        conversation_context=(
-            "User said: 'I think evolution means animals choose to change "
-            "on purpose when their environment gets hard.'"
-        ),
-    )
-    print("\n=== SOCRATIC ===")
-    print(p)
-
-    # Example 3 — Technical depth with search results
-    p = build_prompt(
-        "technical_depth",
-        topic="transformer attention mechanism",
-        search_context="[Retrieved article: 'Attention Is All You Need', Vaswani et al. 2017 ...]",
-        quote_text="Attention is all you need.",
-        diagram_type=DiagramType.FLOWCHART_TD,
-    )
-    print("\n=== TECHNICAL DEPTH ===")
-    print(p)
-
-    # Example 4 — Technical compare (no diagram needed)
-    p = build_prompt(
-        "technical_compare",
-        topic="REST vs GraphQL",
-    )
-    print("\n=== TECHNICAL COMPARE ===")
-    print(p)
-
-    # Example 5 — Meme
-    p = build_prompt("meme", topic="recursion")
-    print("\n=== MEME ===")
-    print(p)
-
-    print("\nAll modes:", ALL_MODES)
+"""
+Note:
+Usage examples were removed to satisfy backend log hygiene checks that
+disallow direct console output in backend modules. If you need examples,
+add them to docs or tests instead.
+"""
