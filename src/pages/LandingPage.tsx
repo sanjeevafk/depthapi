@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useSearchParams } from "react-router-dom";
 import { ArrowRight, Search, Cpu, Layers, CheckCircle2 } from "lucide-react";
 import { LoginButton } from "../components/LoginButton";
@@ -200,7 +200,19 @@ export default function LandingPage(): JSX.Element {
                 Teaching-first AI workspace for clear, reliable explanations.
               </p>
             </div>
-            <div className="flex items-center gap-8 text-gray-400 text-sm font-medium">
+            <div className="flex items-center gap-6 text-gray-400 text-sm font-medium">
+              <Link
+                to="/terms"
+                className="hover:text-white transition-colors"
+              >
+                Terms
+              </Link>
+              <Link
+                to="/privacy"
+                className="hover:text-white transition-colors"
+              >
+                Privacy
+              </Link>
               <span>© 2026 KnowBear</span>
             </div>
           </div>

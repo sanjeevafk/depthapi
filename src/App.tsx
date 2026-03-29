@@ -11,6 +11,8 @@ const LandingPage = lazy(() => import("./pages/LandingPage"));
 const AppPage = lazy(() => import("./pages/AppPage"));
 const SuccessPage = lazy(() => import("./pages/SuccessPage"));
 const AdminAnalyticsPage = lazy(() => import("./pages/AdminAnalyticsPage"));
+const TermsPage = lazy(() => import("./pages/TermsPage"));
+const PrivacyPage = lazy(() => import("./pages/PrivacyPage"));
 
 function RouteMonitoringBridge(): null {
   const location = useLocation();
@@ -45,6 +47,8 @@ export default function App(): JSX.Element {
           <Route path="/app" element={<AppPage />} />
           <Route path="/success" element={<SuccessPage />} />
           <Route path="/admin/analytics" element={<AdminAnalyticsPage />} />
+          <Route path="/terms" element={<TermsPage />} />
+          <Route path="/privacy" element={<PrivacyPage />} />
         </Routes>
       </Suspense>
     </ErrorBoundary>

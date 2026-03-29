@@ -15,7 +15,7 @@ import {
   MessageSquare,
   AlertTriangle,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import type { Mode, Level, HistoryItem } from "../types";
 
 const isLevel = (value: string | undefined): value is Level => {
@@ -331,7 +331,7 @@ export default function Sidebar({
 
         {/* Footer / App Version + Cache Stats */}
         {isOpen && (
-          <div className="p-4 border-t border-dark-700 space-y-2">
+          <div className="p-4 border-t border-dark-700 space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-[10px] text-gray-600 font-mono">
                 v2.0.0-beta
@@ -347,6 +347,15 @@ export default function Sidebar({
               >
                 Clear Cache
               </button>
+            </div>
+            <div className="flex items-center gap-2 text-[10px] text-gray-600">
+              <Link to="/terms" className="hover:text-cyan-400 transition-colors">
+                Terms
+              </Link>
+              <span className="opacity-60">•</span>
+              <Link to="/privacy" className="hover:text-cyan-400 transition-colors">
+                Privacy
+              </Link>
             </div>
           </div>
         )}
