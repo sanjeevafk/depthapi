@@ -40,8 +40,7 @@ async def get_usage(
         query = supabase.table("llm_requests").select(
             "id, request_id, user_id, conversation_id, model_alias, model_name, provider, mode, status, "
             "tokens_prompt, tokens_completion, tokens_total, estimated_cost_usd, latency_ms, model_inference_ms, "
-            "stream_duration_ms, error_type, error_message, created_at",
-            count="exact",
+            "stream_duration_ms, error_type, error_message, created_at"
         )
         query = query.gte("created_at", start_ts.isoformat()).lte("created_at", end_ts.isoformat())
         if model:

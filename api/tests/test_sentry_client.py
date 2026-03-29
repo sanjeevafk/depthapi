@@ -11,7 +11,7 @@ import services.sentry_client as sentry_client
 async def test_sentry_issues_cached(monkeypatch, dummy_redis):
     if hasattr(config_module.get_settings, "cache_clear"):
         config_module.get_settings.cache_clear()
-    os.environ["SENTRY_AUTH_TOKEN"] = "token"
+    monkeypatch.setenv("SENTRY_AUTH_TOKEN", "token")
 
     async def _get_redis():
         return dummy_redis

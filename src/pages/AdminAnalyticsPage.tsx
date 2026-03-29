@@ -124,7 +124,7 @@ export default function AdminAnalyticsPage(): JSX.Element {
   const token = session?.access_token || null;
 
   const usageQuery = useQuery({
-    queryKey: ["analytics-usage", queryParams],
+    queryKey: ["analytics-usage", queryParams, token],
     queryFn: () =>
       fetchWithAuth<{ items: UsageItem[]; total: number }>(
         `${API_BASE_URL}/api/analytics/usage?${queryParams}&page=1&page_size=25`,
@@ -134,7 +134,7 @@ export default function AdminAnalyticsPage(): JSX.Element {
   });
 
   const costQuery = useQuery({
-    queryKey: ["analytics-cost", queryParams],
+    queryKey: ["analytics-cost", queryParams, token],
     queryFn: () =>
       fetchWithAuth<{ items: CostItem[] }>(
         `${API_BASE_URL}/api/analytics/cost?${queryParams}&bucket=day`,
@@ -144,7 +144,7 @@ export default function AdminAnalyticsPage(): JSX.Element {
   });
 
   const latencyQuery = useQuery({
-    queryKey: ["analytics-latency", queryParams],
+    queryKey: ["analytics-latency", queryParams, token],
     queryFn: () =>
       fetchWithAuth<{ items: LatencyItem[] }>(
         `${API_BASE_URL}/api/analytics/latency?${queryParams}&bucket=day`,
@@ -154,7 +154,7 @@ export default function AdminAnalyticsPage(): JSX.Element {
   });
 
   const errorQuery = useQuery({
-    queryKey: ["analytics-errors", queryParams],
+    queryKey: ["analytics-errors", queryParams, token],
     queryFn: () =>
       fetchWithAuth<{ items: ErrorItem[]; top_errors: any[] }>(
         `${API_BASE_URL}/api/analytics/errors?${queryParams}&bucket=day`,
@@ -164,7 +164,7 @@ export default function AdminAnalyticsPage(): JSX.Element {
   });
 
   const sentryQuery = useQuery({
-    queryKey: ["analytics-sentry"],
+    queryKey: ["analytics-sentry", token],
     queryFn: () =>
       fetchWithAuth<{ issues: SentryIssue[] }>(
         `${API_BASE_URL}/api/analytics/sentry/issues?limit=10`,

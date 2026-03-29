@@ -95,15 +95,13 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Security(secu
 
 
 def _is_admin_user(user: object) -> bool:
-    role = None
     app_metadata = getattr(user, "app_metadata", None)
-    if isinstance(app_metadata, dict):
-        role = app_metadata.get("role")
-    if not role:
-        user_metadata = getattr(user, "user_metadata", None)
-        if isinstance(user_metadata, dict):
-            role = user_metadata.get("role")
-    return str(role or "").lower() == "admin"
+    if not isinstance(app_metadata, dict):
+        return False
+    role = app_metadata.get("role")
+    if not isinstance(role, str):
+        return False
+    return role.lower() == "admin"
 
 
 async def require_admin(auth_data: dict = Depends(verify_token)):
