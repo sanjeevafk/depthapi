@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_anon_key: str = ""
     supabase_service_role_key: str = ""
+    supabase_auth_webhook_secret: str = ""
     tavily_api_key: str = ""
     serper_api_key: str = ""
     exa_api_key: str = ""
@@ -76,6 +77,13 @@ class Settings(BaseSettings):
     sentry_profiles_sample_rate: float = 0.0
     sentry_release: str = ""
     sentry_auth_token: str = ""
+
+    # Email / Resend
+    resend_api_key: str = ""
+    resend_from: str = ""
+    support_email: str = "support@knowbear.app"
+    site_name: str = "KnowBear"
+    public_base_url: str = "https://yourdomain.com"
     
     # Dodo Payments Configuration
     dodo_api_key: str = ""
@@ -86,6 +94,7 @@ class Settings(BaseSettings):
     # test_mode or live_mode (Dodo API / future SDK usage)
     dodo_environment: str = "test_mode"
     checkout_rate_limit_per_minute: int = 10
+    email_rate_limit_per_minute: int = 5
 
     class Config:
         env_file = (".env", "../.env")
