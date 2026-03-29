@@ -64,8 +64,8 @@ class Settings(BaseSettings):
     max_output_tokens_socratic: int = 1024
     supabase_url: str = ""
     supabase_anon_key: str = ""
-    supabase_service_role_key: str = ""
-    supabase_auth_webhook_secret: str = ""
+    supabase_service_role_key: SecretStr = SecretStr("")
+    supabase_auth_webhook_secret: SecretStr = SecretStr("")    
     tavily_api_key: str = ""
     serper_api_key: str = ""
     exa_api_key: str = ""
@@ -79,11 +79,11 @@ class Settings(BaseSettings):
     sentry_auth_token: str = ""
 
     # Email / Resend
-    resend_api_key: str = ""
+    resend_api_key: SecretStr = SecretStr("")
     resend_from: str = ""
     support_email: str = "support@knowbear.app"
     site_name: str = "KnowBear"
-    public_base_url: str = "https://yourdomain.com"
+    public_base_url: str = "https://knowbear.app"
     
     # Dodo Payments Configuration
     dodo_api_key: str = ""

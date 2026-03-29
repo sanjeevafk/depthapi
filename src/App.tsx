@@ -22,7 +22,10 @@ function RouteMonitoringBridge(): null {
 
   useEffect(() => {
     setMonitoringRoute(`${location.pathname}${location.search}`);
-    trackPageView(`${location.pathname}${location.search}`, document.title);
+    const handle = window.setTimeout(() => {
+      trackPageView(`${location.pathname}${location.search}`, document.title);
+    }, 0);
+    return () => window.clearTimeout(handle);
   }, [location.pathname, location.search]);
 
   return null;

@@ -121,7 +121,12 @@ export default function TermsPage(): JSX.Element {
         <p>
           Questions about these Terms can be sent to
           {" "}
-          <span className="font-semibold">contact@knowbear.app</span>.
+          <a
+            href="mailto:contact@knowbear.app"
+            className="font-semibold text-blue-600 hover:underline dark:text-blue-400"
+          >
+            contact@knowbear.app
+          </a>.
         </p>
       </section>
     </LegalPageLayout>
