@@ -1,16 +1,59 @@
 import { Helmet } from "react-helmet-async";
 import LegalPageLayout from "../components/LegalPageLayout";
+import {
+  buildTitle,
+  getBaseUrl,
+  getOgImageUrl,
+  getSiteName,
+} from "../lib/seo";
 
 export default function PricingPage(): JSX.Element {
   return (
     <LegalPageLayout title="Pricing" lastUpdated="March 30, 2026">
       <Helmet>
-        <title>KnowBear Pricing | AI Learning Workspace Plans</title>
+        <title>{buildTitle("Pricing for AI Learning Workspace Plans")}</title>
         <meta
           name="description"
           content="Compare KnowBear pricing plans for our AI learning workspace. Choose the right plan for layered explanations, study workflows, and team learning."
         />
-        <meta property="og:title" content="KnowBear Pricing" />
+        <meta property="og:title" content={`${getSiteName()} Pricing`} />
+        <meta
+          property="og:description"
+          content="Simple monthly pricing for layered AI explanations, learning modes, and exportable notes."
+        />
+        <meta property="og:image" content={getOgImageUrl()} />
+        <meta property="og:url" content={`${getBaseUrl()}/pricing`} />
+        <meta property="og:type" content="website" />
+        <script type="application/ld+json">
+          {JSON.stringify({
+            "@context": "https://schema.org",
+            "@type": "SoftwareApplication",
+            name: getSiteName(),
+            applicationCategory: "EducationalApplication",
+            operatingSystem: "Web",
+            offers: [
+              {
+                "@type": "Offer",
+                name: "Starter",
+                price: "0",
+                priceCurrency: "USD",
+              },
+              {
+                "@type": "Offer",
+                name: "Pro",
+                price: "5",
+                priceCurrency: "USD",
+                priceSpecification: {
+                  "@type": "UnitPriceSpecification",
+                  price: "5",
+                  priceCurrency: "USD",
+                  billingDuration: "P1M",
+                },
+              },
+            ],
+            url: `${getBaseUrl()}/pricing`,
+          })}
+        </script>
       </Helmet>
 
       <section className="space-y-4">

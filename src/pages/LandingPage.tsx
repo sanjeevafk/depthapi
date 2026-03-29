@@ -7,6 +7,12 @@ import { LivePreviewCard } from "../components/LivePreviewCard";
 import { useAuth } from "../context/AuthContext";
 import { useEffect, type ReactNode } from "react";
 import { Helmet } from "react-helmet-async";
+import {
+  buildTitle,
+  getBaseUrl,
+  getOgImageUrl,
+  getSiteName,
+} from "../lib/seo";
 
 export default function LandingPage(): JSX.Element {
   const navigate = useNavigate();
@@ -24,7 +30,9 @@ export default function LandingPage(): JSX.Element {
     <div className="min-h-screen bg-black text-white selection:bg-cyan-500/30">
       <Helmet>
         <title>
-          KnowBear — AI Learning Workspace for Clear, Layered Explanations
+          {buildTitle(
+            "AI Learning Workspace for Clear, Layered Explanations",
+          )}
         </title>
         <meta
           name="description"
@@ -34,11 +42,43 @@ export default function LandingPage(): JSX.Element {
           name="keywords"
           content="AI learning workspace, layered explanations, education SaaS, AI tutor, knowledge engine, study assistant"
         />
-        <meta property="og:title" content="KnowBear — AI Learning Workspace" />
+        <meta
+          property="og:title"
+          content={`${getSiteName()} — AI Learning Workspace`}
+        />
         <meta
           property="og:description"
           content="Layered, reliable explanations for faster learning. Built for students, professionals, and teams."
         />
+        <meta property="og:image" content={getOgImageUrl()} />
+        <meta property="og:url" content={`${getBaseUrl()}/`} />
+        <meta property="og:type" content="website" />
+        <script type="application/ld+json">
+          {JSON.stringify({
+            "@context": "https://schema.org",
+            "@type": "Organization",
+            name: getSiteName(),
+            url: getBaseUrl(),
+            logo: `${getBaseUrl()}/favicon.svg`,
+          })}
+        </script>
+        <script type="application/ld+json">
+          {JSON.stringify({
+            "@context": "https://schema.org",
+            "@type": "SoftwareApplication",
+            name: getSiteName(),
+            applicationCategory: "EducationalApplication",
+            operatingSystem: "Web",
+            description:
+              "AI learning workspace delivering layered explanations for faster understanding.",
+            offers: {
+              "@type": "Offer",
+              price: "0",
+              priceCurrency: "USD",
+            },
+            url: getBaseUrl(),
+          })}
+        </script>
       </Helmet>
       {/* Starry Background */}
       <div className="fixed inset-0 z-0">

@@ -1,16 +1,41 @@
 import { Helmet } from "react-helmet-async";
 import LegalPageLayout from "../components/LegalPageLayout";
+import {
+  buildTitle,
+  getBaseUrl,
+  getOgImageUrl,
+  getSiteName,
+} from "../lib/seo";
 
 export default function FeaturesPage(): JSX.Element {
   return (
     <LegalPageLayout title="Features" lastUpdated="March 30, 2026">
       <Helmet>
-        <title>KnowBear Features | Layered AI Learning Platform</title>
+        <title>{buildTitle("Features for Layered AI Learning")}</title>
         <meta
           name="description"
           content="Explore KnowBear features: layered explanations, learning modes, exportable notes, and reliable AI tutoring for students and professionals."
         />
-        <meta property="og:title" content="KnowBear Features" />
+        <meta property="og:title" content={`${getSiteName()} Features`} />
+        <meta
+          property="og:description"
+          content="Layered explanations, learning modes, and exportable notes for faster understanding."
+        />
+        <meta property="og:image" content={getOgImageUrl()} />
+        <meta property="og:url" content={`${getBaseUrl()}/features`} />
+        <meta property="og:type" content="website" />
+        <script type="application/ld+json">
+          {JSON.stringify({
+            "@context": "https://schema.org",
+            "@type": "SoftwareApplication",
+            name: getSiteName(),
+            applicationCategory: "EducationalApplication",
+            operatingSystem: "Web",
+            description:
+              "Layered explanations with learning modes and exportable notes.",
+            url: `${getBaseUrl()}/features`,
+          })}
+        </script>
       </Helmet>
 
       <section className="space-y-4">
