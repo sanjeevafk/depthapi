@@ -306,6 +306,51 @@ def _looks_reasoning_query(query: str) -> bool:
     return any(marker in lowered for marker in ("why", "how", "prove", "reason", "derive"))
 
 
+def _extract_length_constraint(text: str) -> tuple[str, int] | None:
+    lowered = (text or "").lower()
+    if not lowered:
+        return None
+    patterns = (
+        r"\b(?:in|within|under|max(?:imum)?|limit(?:ed)? to)\s+(\d{1,4})\s*(words?|chars?|characters?)\b",
+        r"\b(\d{1,4})\s*(words?|chars?|characters?)\b",
+        r"\b(\d{1,4})-(word|words|char|chars|character|characters)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, lowered)
+        if not match:
+            continue
+        count = int(match.group(1))
+        unit = match.group(2) if match.lastindex and match.lastindex >= 2 else ""
+        unit = unit.lower()
+        if "char" in unit:
+            return ("chars", max(count, 1))
+        return ("words", max(count, 1))
+    return None
+
+
+def _apply_length_constraint(prompt: str, constraint: tuple[str, int] | None) -> str:
+    if not constraint:
+        return prompt
+    unit, count = constraint
+    if unit == "chars":
+        return f"{prompt}\n\nLength constraint: respond in at most {count} characters."
+    return f"{prompt}\n\nLength constraint: respond in at most {count} words."
+
+
+def _truncate_to_constraint(text: str, constraint: tuple[str, int] | None) -> str:
+    if not constraint:
+        return text
+    unit, count = constraint
+    if count <= 0:
+        return ""
+    if unit == "chars":
+        return (text or "")[:count]
+    words = (text or "").split()
+    if len(words) <= count:
+        return text
+    return " ".join(words[:count])
+
+
 def is_low_quality(response: str) -> bool:
     text = (response or "").strip()
     return (
@@ -950,6 +995,8 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
     search_context = await _load_search_context(topic, mode=LEARNING_MODE)
     prompt = template.format(topic=topic)
     prompt = _append_search_context(prompt, search_context)
+    length_constraint = _extract_length_constraint(topic)
+    prompt = _apply_length_constraint(prompt, length_constraint)
         
     routed_aliases = route_model_aliases(
         topic,
@@ -967,13 +1014,14 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
         or 0.0
     )
     max_tokens = int(getattr(settings, "max_output_tokens_learning", 1024))
-    return await _call_with_quality_escalation(
+    response = await _call_with_quality_escalation(
         [model] if model else routed_aliases,
         prompt,
         complexity=learning_complexity,
         max_tokens=max_tokens,
         **kwargs,
     )
+    return _truncate_to_constraint(response, length_constraint)
 async def generate_stream_explanation(topic: str, level: str, model: str | None = None, **kwargs):
     """Stream explanation for topic at given level."""
     mode = normalize_mode(kwargs.get("mode", LEARNING_MODE))
@@ -1120,6 +1168,7 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         search_context = await _load_search_context(topic, mode=LEARNING_MODE)
         prompt = template.format(topic=topic)
         prompt = _append_search_context(prompt, search_context)
+        prompt = _apply_length_constraint(prompt, _extract_length_constraint(topic))
     
     if model:
         alias = model
@@ -1201,6 +1250,16 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
                 yield fallback_response[index : index + 400]
     else:
         streamed_chunks = 0
+        remaining_chars = None
+        target_words = None
+        words_emitted = 0
+        pending = ""
+        if length_constraint:
+            unit, count = length_constraint
+            if unit == "chars":
+                remaining_chars = count
+            else:
+                target_words = count
         try:
             max_tokens = int(getattr(settings, "max_output_tokens_learning", 1024))
             async for chunk in stream_chat_completion(
@@ -1211,8 +1270,44 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
                 request_id=request_id,
                 telemetry_sink=stream_telemetry,
             ):
+                text_chunk = str(chunk or "")
+                if remaining_chars is not None:
+                    if remaining_chars <= 0:
+                        break
+                    if len(text_chunk) <= remaining_chars:
+                        streamed_chunks += 1
+                        remaining_chars -= len(text_chunk)
+                        yield text_chunk
+                    else:
+                        streamed_chunks += 1
+                        yield text_chunk[:remaining_chars]
+                        remaining_chars = 0
+                        break
+                    continue
+
+                if target_words is not None:
+                    pending += text_chunk
+                    matches = list(re.finditer(r"\\S+", pending))
+                    if not matches:
+                        continue
+                    if words_emitted + len(matches) < target_words:
+                        streamed_chunks += 1
+                        words_emitted += len(matches)
+                        yield pending
+                        pending = ""
+                        continue
+                    remaining = target_words - words_emitted
+                    if remaining <= 0:
+                        break
+                    cutoff_match = matches[remaining - 1]
+                    streamed_chunks += 1
+                    words_emitted = target_words
+                    yield pending[: cutoff_match.end()]
+                    pending = ""
+                    break
+
                 streamed_chunks += 1
-                yield chunk
+                yield text_chunk
         except Exception as exc:
             stream_telemetry["stream_error"] = str(exc)
             stream_telemetry["stream_error_type"] = type(exc).__name__
