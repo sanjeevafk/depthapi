@@ -3,6 +3,7 @@ import { Routes, Route, useLocation } from "react-router-dom";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import ToastHost from "./components/ToastHost";
 import { setMonitoringRoute } from "./lib/monitoring";
+import { trackPageView } from "./lib/analytics";
 import { useEffect } from "react";
 import { useChatStore } from "./stores/useChatStore";
 import { loadTheme } from "./lib/chatStoreUtils";
@@ -19,6 +20,7 @@ function RouteMonitoringBridge(): null {
 
   useEffect(() => {
     setMonitoringRoute(`${location.pathname}${location.search}`);
+    trackPageView(`${location.pathname}${location.search}`, document.title);
   }, [location.pathname, location.search]);
 
   return null;

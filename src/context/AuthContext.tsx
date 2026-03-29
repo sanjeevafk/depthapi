@@ -10,6 +10,7 @@ import { User, Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
 import { useChatStore } from "../stores/useChatStore";
 import { setMonitoringUser } from "../lib/monitoring";
+import { trackSignUp } from "../lib/analytics";
 
 type UserProfile = {
   is_pro?: boolean;
@@ -161,6 +162,9 @@ export function AuthProvider({
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
+      if (_event === "SIGNED_IN" && session?.user) {
+        trackSignUp("google");
+      }
       if (session?.user) {
         void fetchProfile(session.user.id, { force: true });
       } else {

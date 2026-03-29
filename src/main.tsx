@@ -11,6 +11,7 @@ import "./index.css";
 import App from "./App.tsx";
 import { QUERY_PERSIST_KEY } from "./lib/queryPersistence";
 import { initMonitoring } from "./lib/monitoring";
+import { initAnalytics } from "./lib/analytics";
 
 const root = document.getElementById("root");
 const queryClient = new QueryClient({
@@ -39,6 +40,7 @@ if (!root) {
 }
 
 initMonitoring();
+initAnalytics();
 
 createRoot(root).render(
   <StrictMode>
