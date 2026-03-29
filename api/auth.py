@@ -140,7 +140,7 @@ async def check_is_pro(user_id: str, force_refresh: bool = False) -> bool:
     try:
         # Use simple select, admin client bypasses RLS so we can read any user
         response = await asyncio.to_thread(
-            supabase.table("users").select("is_pro").eq("id", user_id).single().execute
+            lambda: supabase.table("users").select("is_pro").eq("id", user_id).single().execute()
         )
         data = getattr(response, "data", None)
         is_pro = bool(data.get("is_pro", False)) if isinstance(data, dict) else False

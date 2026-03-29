@@ -253,12 +253,12 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
 
     try:
         conversation_resp = await asyncio.to_thread(
-            supabase.table("conversations")
+            lambda: supabase.table("conversations")
             .select("id, user_id, mode, settings")
             .eq("id", req.conversation_id)
             .eq("user_id", user_id)
             .single()
-            .execute
+            .execute()
         )
         if not getattr(conversation_resp, "data", None):
             raise HTTPException(status_code=404, detail="Conversation not found")
@@ -367,7 +367,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
 
     try:
         await asyncio.to_thread(
-            supabase.table("messages")
+            lambda: supabase.table("messages")
             .insert(
                 {
                     "conversation_id": conversation.get("id"),
@@ -376,7 +376,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     "metadata": user_metadata,
                 }
             )
-            .execute
+            .execute()
         )
     except Exception as exc:
         logger.error(
@@ -410,7 +410,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     try:
         assistant_result, conversation_update_result = await asyncio.gather(
             asyncio.to_thread(
-                supabase.table("messages")
+                lambda: supabase.table("messages")
                 .insert(
                     {
                         "conversation_id": conversation.get("id"),
@@ -419,10 +419,13 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                         "metadata": assistant_metadata,
                     }
                 )
-                .execute
+                .execute()
             ),
             asyncio.to_thread(
-                supabase.table("conversations").update(update_payload).eq("id", conversation.get("id")).execute
+                lambda: supabase.table("conversations")
+                .update(update_payload)
+                .eq("id", conversation.get("id"))
+                .execute()
             ),
             return_exceptions=True,
         )
@@ -949,7 +952,10 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             if assistant_message_id:
                 try:
                     await asyncio.to_thread(
-                        supabase.table("messages").update({"content": full_content}).eq("id", assistant_message_id).execute
+                        lambda: supabase.table("messages")
+                        .update({"content": full_content})
+                        .eq("id", assistant_message_id)
+                        .execute()
                     )
                 except Exception as exc:
                     logger.error(
