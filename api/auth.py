@@ -3,7 +3,7 @@ import threading
 import time
 from collections import OrderedDict
 from functools import lru_cache
-from fastapi import HTTPException, Security
+from fastapi import HTTPException, Security, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from config import get_settings
 from logging_config import anonymize_user_id, logger
@@ -92,6 +92,25 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Security(secu
     except Exception as e:
         logger.warning("auth_verify_token_validation_error", error_type=type(e).__name__)
         raise HTTPException(status_code=401, detail="Invalid authentication credentials")
+
+
+def _is_admin_user(user: object) -> bool:
+    role = None
+    app_metadata = getattr(user, "app_metadata", None)
+    if isinstance(app_metadata, dict):
+        role = app_metadata.get("role")
+    if not role:
+        user_metadata = getattr(user, "user_metadata", None)
+        if isinstance(user_metadata, dict):
+            role = user_metadata.get("role")
+    return str(role or "").lower() == "admin"
+
+
+async def require_admin(auth_data: dict = Depends(verify_token)):
+    user = auth_data.get("user") if isinstance(auth_data, dict) else None
+    if user and _is_admin_user(user):
+        return auth_data
+    raise HTTPException(status_code=403, detail="Admin access required")
 
 async def verify_token_optional(credentials: HTTPAuthorizationCredentials = Security(security)):
     """Optionally verify the Supabase JWT token."""

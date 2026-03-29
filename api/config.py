@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     sentry_traces_sample_rate: float = 0.1
     sentry_profiles_sample_rate: float = 0.0
     sentry_release: str = ""
+    sentry_auth_token: str = ""
     
     # Dodo Payments Configuration
     dodo_api_key: str = ""
