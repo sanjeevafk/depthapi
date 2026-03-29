@@ -18,6 +18,7 @@ from routers import (
     messages,
     analytics,
     legal,
+    seo,
 )
 from auth import get_supabase_admin
 from services.cache import close_redis, get_redis
@@ -310,6 +311,7 @@ app.include_router(export.router, prefix="/api")
 app.include_router(history.router, prefix="/api")
 app.include_router(analytics.router, prefix="/api")
 app.include_router(legal.router, prefix="/api")
+app.include_router(seo.router)
 app.include_router(webhooks.router)  # No prefix - webhooks use full path
 app.include_router(payments.router, prefix="/api")
 
