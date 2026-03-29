@@ -1,8 +1,17 @@
 import LegalPageLayout from "../components/LegalPageLayout";
+import { Helmet } from "react-helmet-async";
 
 export default function PrivacyPage(): JSX.Element {
   return (
     <LegalPageLayout title="Privacy Policy" lastUpdated="March 29, 2026">
+      <Helmet>
+        <title>KnowBear Privacy Policy | AI Learning SaaS</title>
+        <meta
+          name="description"
+          content="Read the KnowBear Privacy Policy to understand what data we collect, how we use it, and your rights under GDPR/CCPA."
+        />
+        <meta property="og:title" content="KnowBear Privacy Policy" />
+      </Helmet>
       <section className="space-y-4">
         <p>
           This Privacy Policy explains how KnowBear collects, uses, and shares
