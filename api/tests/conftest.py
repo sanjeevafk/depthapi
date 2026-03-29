@@ -66,12 +66,37 @@ class DummyRedis:
     async def ttl(self, key):
         return 60
 
-    async def eval(self, _script, _num_keys, key, requested, limit, window_seconds):
-        current = int(self.store.get(key, 0))
-        requested_value = int(requested)
-        limit_value = int(limit)
-        window_value = int(window_seconds)
+    async def eval(self, script, _num_keys, *args):
+        if "HGETALL" in str(script):
+            key = str(args[0])
+            now_min = int(args[1])
+            requested_value = int(args[2])
+            limit_value = int(args[3])
+            window_value = int(args[4])
 
+            hash_store = self.store.setdefault(key, {})
+            total = 0
+            stale_before = now_min - window_value + 1
+            for bucket, value in list(hash_store.items()):
+                bucket_int = int(bucket)
+                if bucket_int < stale_before:
+                    hash_store.pop(bucket, None)
+                else:
+                    total += int(value)
+
+            if total + requested_value > limit_value:
+                return [0, total, window_value * 60]
+
+            hash_store[str(now_min)] = int(hash_store.get(str(now_min), 0)) + requested_value
+            self.store[key] = hash_store
+            return [1, total + requested_value, window_value * 60]
+
+        key = str(args[0])
+        requested_value = int(args[1])
+        limit_value = int(args[2])
+        window_value = int(args[3])
+
+        current = int(self.store.get(key, 0))
         consumed = current + requested_value
         if consumed > limit_value:
             return [0, current, window_value]

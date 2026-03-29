@@ -116,7 +116,7 @@ async def test_quota_does_not_consume_tokens_on_reject(monkeypatch, test_setting
     )
     assert result.allowed is False
     assert result.consumed == 0
-    assert "knowbear:quota:user-1:learning" not in fake_redis.data
+    assert "knowbear:quota:user-1:learning" not in fake_redis.hashes
 
     allowed = await rate_limit_module.check_daily_quota(
         key="knowbear:quota:user-1:learning",

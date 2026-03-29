@@ -458,8 +458,14 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             raise assistant_result
 
         assistant_resp = assistant_result
-        assistant_data = cast(list[Dict[str, Any]], assistant_resp.data) if assistant_resp.data else []
-        assistant_message_id = assistant_data[0]["id"] if assistant_data else None
+        assistant_data = []
+        assistant_message_id = None
+        if hasattr(assistant_resp, "data"):
+            data = getattr(assistant_resp, "data")
+            if data:
+                assistant_data = cast(list[Dict[str, Any]], data)
+                if assistant_data:
+                    assistant_message_id = assistant_data[0].get("id")
         await cache_set(
             idempotency_key,
             {
@@ -576,6 +582,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             yield emit("meta", meta_payload)
 
             if cached_response:
+                telemetry_sink["token_usage"] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
                 log_sampled_success(
                     "messages_cache_hit",
                     request_id=request_id,

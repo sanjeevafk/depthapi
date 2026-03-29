@@ -203,11 +203,6 @@ async def query_topic(
             raise HTTPException(status_code=401, detail="Authentication required for socratic mode")
         if not is_verified_pro:
             raise HTTPException(status_code=403, detail="Socratic mode is a Pro feature")
-    if mode == SOCRATIC_MODE:
-        if not auth_data:
-            raise HTTPException(status_code=401, detail="Authentication required for socratic mode")
-        if not is_verified_pro:
-            raise HTTPException(status_code=403, detail="Socratic mode is a Pro feature")
 
     allowed_levels = FREE_LEVELS
     levels = [level for level in _normalize_levels(req.levels) if level in allowed_levels]
