@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import html as html_lib
+from urllib.parse import urlparse
 
 
 @dataclass(slots=True)
@@ -22,15 +24,32 @@ def _format_date(raw: str | None) -> str:
         return raw
 
 
+def _safe_url(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    try:
+        parsed = urlparse(raw)
+    except ValueError:
+        return None
+    if parsed.scheme not in {"https", "http"}:
+        return None
+    if not parsed.netloc:
+        return None
+    return raw
+
+
 def build_welcome_email(site_name: str, support_email: str, user_name: str | None) -> EmailContent:
     greeting_name = user_name or "there"
+    safe_site_name = html_lib.escape(site_name, quote=True)
+    safe_support_email = html_lib.escape(support_email, quote=True)
+    safe_greeting_name = html_lib.escape(greeting_name, quote=True)
     subject = f"Welcome to {site_name}"
     html = f"""
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111;">
-      <h1 style="margin-bottom: 8px;">Welcome to {site_name}, {greeting_name}!</h1>
+      <h1 style="margin-bottom: 8px;">Welcome to {safe_site_name}, {safe_greeting_name}!</h1>
       <p>Thanks for signing up. You now have access to your AI learning workspace with layered explanations and structured learning modes.</p>
-      <p>If you ever need help, reach us at <a href="mailto:{support_email}">{support_email}</a>.</p>
-      <p style="margin-top: 24px;">— The {site_name} Team</p>
+      <p>If you ever need help, reach us at <a href="mailto:{safe_support_email}">{safe_support_email}</a>.</p>
+      <p style="margin-top: 24px;">— The {safe_site_name} Team</p>
     </div>
     """
     text = (
@@ -57,9 +76,11 @@ def build_subscription_confirmation_email(
     greeting_name = user_name or "there"
     plan_label = plan or "Pro"
     next_billing = _format_date(next_billing_date)
+    safe_invoice_url = _safe_url(invoice_url)
+    safe_receipt_url = _safe_url(receipt_url)
     amount_line = ""
     if amount is not None:
-        amount_line = f\"{amount} {currency or ''}\".strip()
+        amount_line = f"{amount} {currency or ''}".strip()
     subject = f"{site_name} subscription confirmed"
     html = f"""
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111;">
@@ -69,8 +90,8 @@ def build_subscription_confirmation_email(
       {f"<p><strong>Next billing date:</strong> {next_billing}</p>" if next_billing else ""}
       {f"<p><strong>Amount paid:</strong> {amount_line}</p>" if amount_line else ""}
       {f"<p><strong>Payment ID:</strong> {payment_id}</p>" if payment_id else ""}
-      {f"<p><a href='{invoice_url}'>View invoice</a></p>" if invoice_url else ""}
-      {f"<p><a href='{receipt_url}'>View receipt</a></p>" if receipt_url else ""}
+      {f"<p><a href='{safe_invoice_url}'>View invoice</a></p>" if safe_invoice_url else ""}
+      {f"<p><a href='{safe_receipt_url}'>View receipt</a></p>" if safe_receipt_url else ""}
       <p>Need help? Contact <a href="mailto:{support_email}">{support_email}</a>.</p>
       <p style="margin-top: 24px;">— The {site_name} Team</p>
     </div>
@@ -82,8 +103,8 @@ def build_subscription_confirmation_email(
         f"{f'Next billing date: {next_billing}\n' if next_billing else ''}"
         f"{f'Amount paid: {amount_line}\n' if amount_line else ''}"
         f"{f'Payment ID: {payment_id}\n' if payment_id else ''}"
-        f"{f'Invoice: {invoice_url}\n' if invoice_url else ''}"
-        f"{f'Receipt: {receipt_url}\n' if receipt_url else ''}"
+        f"{f'Invoice: {safe_invoice_url}\n' if safe_invoice_url else ''}"
+        f"{f'Receipt: {safe_receipt_url}\n' if safe_receipt_url else ''}"
         f"Need help? Email {support_email}.\n\n"
         f"— The {site_name} Team"
     )

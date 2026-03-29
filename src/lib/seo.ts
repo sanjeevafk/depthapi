@@ -5,7 +5,7 @@ const rawOgImage = import.meta.env.VITE_OG_IMAGE_URL;
 export const getSiteName = () => rawSiteName || "KnowBear";
 
 export const getBaseUrl = () =>
-  (rawBaseUrl || "https://yourdomain.com").replace(/\/+$/, "");
+  (rawBaseUrl || "https://knowbear.app").replace(/\/+$/, "");
 
 export const getOgImageUrl = () => {
   if (rawOgImage) return rawOgImage;

@@ -2,6 +2,7 @@
 
 from datetime import date
 import os
+from xml.sax.saxutils import escape
 from fastapi import APIRouter
 from fastapi.responses import Response, PlainTextResponse
 
@@ -65,9 +66,9 @@ async def sitemap_xml():
                 "".join(
                     [
                         "<url>",
-                        f"<loc>{entry['loc']}</loc>",
-                        f"<lastmod>{entry['lastmod']}</lastmod>",
-                        f"<changefreq>{entry['changefreq']}</changefreq>",
+                        f"<loc>{escape(entry['loc'])}</loc>",
+                        f"<lastmod>{escape(entry['lastmod'])}</lastmod>",
+                        f"<changefreq>{escape(entry['changefreq'])}</changefreq>",
                         "</url>",
                     ]
                 )

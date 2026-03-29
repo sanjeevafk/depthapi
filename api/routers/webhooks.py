@@ -13,11 +13,17 @@ router = APIRouter(tags=["webhooks"])
 
 
 def _extract_supabase_email(payload: dict) -> tuple[str | None, str | None]:
-    record = payload.get("record") if isinstance(payload.get("record"), dict) else {}
-    user = payload.get("user") if isinstance(payload.get("user"), dict) else {}
+    record_value = payload.get("record")
+    record = record_value if isinstance(record_value, dict) else {}
+    user_value = payload.get("user")
+    user = user_value if isinstance(user_value, dict) else {}
     email = payload.get("email") or record.get("email") or user.get("email")
-    metadata = record.get("raw_user_meta_data") if isinstance(record.get("raw_user_meta_data"), dict) else {}
-    name = metadata.get("full_name") or user.get("user_metadata", {}).get("full_name")
+    metadata_value = record.get("raw_user_meta_data")
+    metadata = metadata_value if isinstance(metadata_value, dict) else {}
+    user_metadata = user.get("user_metadata")
+    if not isinstance(user_metadata, dict):
+        user_metadata = {}
+    name = metadata.get("full_name") or user_metadata.get("full_name")
     if isinstance(email, str) and email.strip():
         return email.strip(), name if isinstance(name, str) else None
     return None, name if isinstance(name, str) else None

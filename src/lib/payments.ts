@@ -98,7 +98,12 @@ export const createCheckoutSession = async (
 /**
  * Verify payment status after successful payment
  */
-export const verifyPaymentStatus = async (): Promise<boolean> => {
+type PaymentStatus = {
+  isPro: boolean;
+  plan?: string;
+};
+
+export const verifyPaymentStatus = async (): Promise<PaymentStatus> => {
   try {
     trackTelemetry("payment_verify_status_start");
     const {
@@ -107,7 +112,7 @@ export const verifyPaymentStatus = async (): Promise<boolean> => {
 
     if (!session) {
       trackTelemetry("payment_verify_status_result", { status: "no_session" });
-      return false;
+      return { isPro: false };
     }
 
     const response = await fetch(`${API_BASE_URL}/api/payments/verify-status`, {
@@ -126,11 +131,19 @@ export const verifyPaymentStatus = async (): Promise<boolean> => {
       return false;
     }
 
-    const data = (await response.json()) as { is_pro?: boolean };
+    const data = (await response.json()) as { is_pro?: boolean; plan?: string };
     trackTelemetry("payment_verify_status_result", {
       status: data.is_pro === true ? "pro" : "free",
     });
-    return data.is_pro === true;
+    return {
+      isPro: data.is_pro === true,
+      plan:
+        typeof data.plan === "string" && data.plan.trim().length > 0
+          ? data.plan
+          : data.is_pro === true
+            ? "pro"
+            : undefined,
+    };
   } catch (error) {
     const normalized = normalizeError(error);
     console.error("Payment verification error:", normalized);
@@ -139,7 +152,7 @@ export const verifyPaymentStatus = async (): Promise<boolean> => {
       error_type: normalized.name,
     });
     captureFrontendError(normalized, { source: "payments.verify_status" });
-    return false;
+    return { isPro: false };
   }
 };
 
@@ -149,17 +162,17 @@ export const verifyPaymentStatus = async (): Promise<boolean> => {
 export const waitForPaymentConfirmation = async (
   maxAttempts: number = 15,
   intervalMs: number = 2000,
-): Promise<boolean> => {
+): Promise<PaymentStatus> => {
   for (let i = 0; i < maxAttempts; i++) {
-    const isPro = await verifyPaymentStatus();
+    const status = await verifyPaymentStatus();
 
-    if (isPro) {
-      return true;
+    if (status.isPro) {
+      return status;
     }
 
     // Wait before next attempt
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
 
-  return false;
+  return { isPro: false };
 };

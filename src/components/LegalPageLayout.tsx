@@ -27,7 +27,7 @@ export default function LegalPageLayout({
             />
             Know<span className="text-accent-teal">Bear</span>
           </Link>
-          <nav className="flex items-center gap-4 text-sm text-slate-600 dark:text-slate-300">
+          <nav aria-label="Main navigation" className="flex items-center gap-4 text-sm text-slate-600 dark:text-slate-300">
             <Link to="/" className="hover:text-slate-900 dark:hover:text-white">
               Home
             </Link>

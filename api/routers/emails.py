@@ -31,7 +31,8 @@ def _resolve_user_name(auth: dict) -> str | None:
     user = auth.get("user")
     if not user:
         return None
-    return user.user_metadata.get("full_name") or user.email
+    metadata = user.user_metadata or {}
+    return metadata.get("full_name") or user.email
 
 
 @router.post("/emails/welcome")
