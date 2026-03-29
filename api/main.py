@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from routers import pinned, query, export, history, webhooks, payments, messages
+from routers import pinned, query, export, history, webhooks, payments, messages, analytics
 from auth import get_supabase_admin
 from services.cache import close_redis, get_redis
 from services.inference import close_client
@@ -298,6 +298,7 @@ app.include_router(messages.router, prefix="/api")
 app.include_router(query.router, prefix="/api")
 app.include_router(export.router, prefix="/api")
 app.include_router(history.router, prefix="/api")
+app.include_router(analytics.router, prefix="/api")
 app.include_router(webhooks.router)  # No prefix - webhooks use full path
 app.include_router(payments.router, prefix="/api")
 

@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from auth import check_is_pro, ensure_user_exists, get_supabase_admin, verify_token_optional
 from config import get_settings
 from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
+from services.analytics import build_llm_request_payload, record_llm_request
 from services.cache import cache_get, cache_set, cache_set_if_absent
 from services.inference import TECHNICAL_MAX_TOKENS, generate_explanation, generate_stream_explanation
 from services.llm_client import get_provider_config_state
@@ -902,6 +903,37 @@ async def query_topic_stream(
                 stream_max_seconds=stream_max_seconds,
                 sampled=True,
             )
+            status = "success"
+            if timed_out or start_timeout:
+                status = "timed_out"
+            elif not full_content.strip():
+                status = "error"
+            error_type = None
+            error_message = None
+            if status == "timed_out":
+                error_type = "timed_out"
+                error_message = "Streaming timed out"
+            elif status == "error":
+                error_type = "stream_failed"
+                error_message = "Streaming failed"
+            payload = build_llm_request_payload(
+                request_id=request_id,
+                user_id=user_id_raw,
+                conversation_id=None,
+                model_alias=model_alias,
+                model_name=telemetry_sink.get("model"),
+                provider=telemetry_sink.get("provider"),
+                mode=mode,
+                status=status,
+                token_usage=token_usage if isinstance(token_usage, dict) else None,
+                estimated_cost_usd=estimated_cost_usd,
+                latency_ms=round(total_ms, 2),
+                model_inference_ms=model_inference_ms,
+                stream_duration_ms=stream_duration_ms,
+                error_type=error_type,
+                error_message=error_message,
+            )
+            asyncio.create_task(record_llm_request(payload))
             if isinstance(token_usage, dict):
                 actual_tokens = int(token_usage.get("prompt_tokens") or 0) + int(
                     token_usage.get("completion_tokens") or 0
