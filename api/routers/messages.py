@@ -16,11 +16,12 @@ from config import get_settings
 from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from monitoring import capture_telemetry_event
 from services.cache import cache_get, cache_set, cache_set_if_absent
-from services.inference import generate_explanation, generate_stream_explanation
+from services.inference import TECHNICAL_MAX_TOKENS, generate_explanation, generate_stream_explanation
 from services.llm_client import get_provider_config_state
 from services.llm_errors import LLMUnavailable
-from services.rate_limit import enforce_request_controls, estimate_tokens_for_text
+from services.rate_limit import enforce_request_controls, refund_tokens
 from services.streaming import SseEventBuilder, SSE_RESPONSE_HEADERS
+from services.token_count import count_prompt_tokens
 from utils import (
     DEFAULT_CHAT_MODE,
     PROMPT_MODE_ALIASES,
@@ -238,14 +239,6 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             idempotency_claimed = True
 
     is_pro = await check_is_pro(user_id)
-    estimated_tokens = estimate_tokens_for_text(content)
-    client_ip = _resolve_client_ip(request, trusted_proxies=trusted_proxies)
-    await enforce_request_controls(
-        user_id=user_id,
-        client_ip=client_ip,
-        estimated_tokens=estimated_tokens,
-        is_pro=is_pro,
-    )
 
     supabase = get_supabase_admin()
     if not supabase:
@@ -311,6 +304,26 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
 
     if selected_mode == TECHNICAL_MODE and not is_pro:
         raise HTTPException(status_code=403, detail="Technical mode is a Pro feature")
+    if selected_mode == SOCRATIC_MODE and not is_pro:
+        raise HTTPException(status_code=403, detail="Socratic mode is a Pro feature")
+
+    if selected_mode == TECHNICAL_MODE:
+        max_output_tokens = TECHNICAL_MAX_TOKENS
+    elif selected_mode == SOCRATIC_MODE:
+        max_output_tokens = int(getattr(config_settings, "max_output_tokens_socratic", 1024))
+    else:
+        max_output_tokens = int(getattr(config_settings, "max_output_tokens_learning", 1024))
+
+    prompt_tokens = count_prompt_tokens(content)
+    reserved_tokens = max(prompt_tokens + max_output_tokens, 1)
+    client_ip = _resolve_client_ip(request, trusted_proxies=trusted_proxies)
+    quota_reservation = await enforce_request_controls(
+        user_id=user_id,
+        client_ip=client_ip,
+        reserved_tokens=reserved_tokens,
+        mode=selected_mode,
+        is_pro=is_pro,
+    )
     request_temperature = max(0.0, min(float(req.temperature), 1.0))
     cache_key = _message_cache_key(
         content=content,
@@ -986,6 +999,20 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 duration_ms=round(total_ms, 2),
                 fallback_used=fallback_used,
             )
+            if isinstance(token_usage, dict):
+                actual_tokens = int(token_usage.get("prompt_tokens") or 0) + int(
+                    token_usage.get("completion_tokens") or 0
+                )
+                if actual_tokens > 0:
+                    try:
+                        await refund_tokens(quota_reservation, actual_tokens)
+                    except Exception as exc:
+                        logger.warning(
+                            "messages_quota_refund_failed",
+                            error=str(exc),
+                            request_id=request_id,
+                            user_id_hash=user_id_hash,
+                        )
 
     return StreamingResponse(
         event_generator(),

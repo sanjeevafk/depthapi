@@ -901,6 +901,7 @@ async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **k
 async def generate_explanation(topic: str, level: str, model: str | None = None, **kwargs) -> str:
     """Generate explanation for topic at given level."""
     mode = normalize_mode(kwargs.get("mode", LEARNING_MODE))
+    settings = get_settings()
 
     # ── TECHNICAL MODE (v2) ─────────────────────────────────────────────────
     if mode == TECHNICAL_MODE:
@@ -932,10 +933,12 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
             ).get("complexity", 0.0)
             or 0.0
         )
+        max_tokens = int(getattr(settings, "max_output_tokens_socratic", 1024))
         response = await _call_with_quality_escalation(
             [model] if model else routed_aliases,
             prompt,
             complexity=socratic_complexity,
+            max_tokens=max_tokens,
             **kwargs,
         )
         return _enforce_socratic_response_constraints(response)
@@ -963,10 +966,12 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
         ).get("complexity", 0.0)
         or 0.0
     )
+    max_tokens = int(getattr(settings, "max_output_tokens_learning", 1024))
     return await _call_with_quality_escalation(
         [model] if model else routed_aliases,
         prompt,
         complexity=learning_complexity,
+        max_tokens=max_tokens,
         **kwargs,
     )
 async def generate_stream_explanation(topic: str, level: str, model: str | None = None, **kwargs):
@@ -977,6 +982,7 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
     anonymized_user_id = anonymize_user_id(str(kwargs.get("user_id") or "") or None)
     route_telemetry_sink = kwargs.get("telemetry_sink") if isinstance(kwargs.get("telemetry_sink"), dict) else None
     prompt = ""
+    settings = get_settings()
 
     if mode == TECHNICAL_MODE:
         intent = "unknown"
@@ -1137,10 +1143,12 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         emitted_questions = 0
         socratic_error: Exception | None = None
         try:
+            max_tokens = int(getattr(settings, "max_output_tokens_socratic", 1024))
             async for chunk in stream_chat_completion(
                 model=alias,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=kwargs.get("temperature", 0.7),
+                max_tokens=max_tokens,
                 request_id=request_id,
                 telemetry_sink=stream_telemetry,
             ):
@@ -1194,10 +1202,12 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
     else:
         streamed_chunks = 0
         try:
+            max_tokens = int(getattr(settings, "max_output_tokens_learning", 1024))
             async for chunk in stream_chat_completion(
                 model=alias,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=kwargs.get("temperature", 0.7),
+                max_tokens=max_tokens,
                 request_id=request_id,
                 telemetry_sink=stream_telemetry,
             ):
