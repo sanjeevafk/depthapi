@@ -13,6 +13,7 @@ from services.rate_limit import TokenReservation
 
 @pytest.mark.asyncio
 async def test_query_stream_fallback_on_start_timeout(app_client, monkeypatch, test_settings):
+    test_settings.environment = "production"
     test_settings.stream_start_timeout_seconds = 0.1
     test_settings.stream_max_seconds = 3
     test_settings.stream_heartbeat_seconds = 0.05

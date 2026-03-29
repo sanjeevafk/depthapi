@@ -212,7 +212,7 @@ async def check_hourly_quota(*, key: str, limit: int, requested: int, now_minute
 
 
 async def refund_tokens(reservation: TokenReservation, actual_tokens: int) -> None:
-    if actual_tokens <= 0:
+    if actual_tokens < 0:
         return
     refund = max(reservation.reserved_tokens - int(actual_tokens), 0)
     if refund <= 0:
