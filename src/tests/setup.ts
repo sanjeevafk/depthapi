@@ -8,7 +8,7 @@ class ResizeObserver {
     this.callback = callback;
   }
 
-  observe(target: Element, _options?: ResizeObserverOptions) {
+  observe(target: Element) {
     this.targets.add(target);
     const entry = { target, contentRect: target.getBoundingClientRect() } as ResizeObserverEntry;
     this.callback([entry], this);
