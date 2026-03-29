@@ -10,6 +10,9 @@ interface ImportMetaEnv {
   readonly VITE_SENTRY_RELEASE?: string;
   readonly VITE_APP_VERSION?: string;
   readonly VITE_GA4_ID?: string;
+  readonly VITE_SITE_NAME?: string;
+  readonly VITE_PUBLIC_BASE_URL?: string;
+  readonly VITE_OG_IMAGE_URL?: string;
 }
 
 interface ImportMeta {
