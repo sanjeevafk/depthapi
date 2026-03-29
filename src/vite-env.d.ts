@@ -9,6 +9,7 @@ interface ImportMetaEnv {
   readonly VITE_SENTRY_TRACES_SAMPLE_RATE?: string;
   readonly VITE_SENTRY_RELEASE?: string;
   readonly VITE_APP_VERSION?: string;
+  readonly VITE_GA4_ID?: string;
 }
 
 interface ImportMeta {

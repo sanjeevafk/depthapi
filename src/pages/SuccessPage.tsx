@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { CheckCircle, Loader2 } from "lucide-react";
 import { waitForPaymentConfirmation } from "../lib/payments";
 import { useAuth } from "../context/AuthContext";
+import { trackSubscriptionStarted } from "../lib/analytics";
 
 export default function SuccessPage(): JSX.Element {
   const navigate = useNavigate();
@@ -22,6 +23,7 @@ export default function SuccessPage(): JSX.Element {
 
         if (isPro) {
           setStatus("success");
+          trackSubscriptionStarted("monthly");
           await refreshProfile({ force: true });
         } else {
           setStatus("error");
