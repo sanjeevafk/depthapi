@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from standardwebhooks import Webhook, WebhookVerificationError
 
@@ -18,6 +18,11 @@ from auth import check_is_pro, get_supabase_admin, invalidate_pro_cache, verify_
 from config import get_settings
 from logging_config import anonymize_user_id
 from monitoring import capture_telemetry_event
+from services.email_service import send_email
+from services.email_templates import (
+    build_subscription_confirmation_email,
+    build_cancellation_email,
+)
 from services.rate_limit import check_rate_limit
 
 logger = structlog.get_logger()
@@ -155,6 +160,32 @@ def _resolve_user_id_from_email(supabase: Any, email: str) -> Optional[str]:
             user_id = payload.get("id")
             if isinstance(user_id, str) and user_id:
                 return user_id
+    except Exception:
+        pass
+    return None
+
+
+def _resolve_email_from_user_id(supabase: Any, user_id: str) -> Optional[str]:
+    try:
+        response = supabase.table("users").select("email").eq("id", user_id).single().execute()
+        payload = getattr(response, "data", None)
+        if isinstance(payload, dict):
+            email = payload.get("email")
+            if isinstance(email, str) and email:
+                return email
+    except Exception:
+        pass
+    return None
+
+
+def _resolve_name_from_user_id(supabase: Any, user_id: str) -> Optional[str]:
+    try:
+        response = supabase.table("users").select("full_name").eq("id", user_id).single().execute()
+        payload = getattr(response, "data", None)
+        if isinstance(payload, dict):
+            name = payload.get("full_name")
+            if isinstance(name, str) and name:
+                return name
     except Exception:
         pass
     return None
@@ -409,7 +440,7 @@ async def create_checkout_session(request: CheckoutRequest, auth=Depends(verify_
 
 
 @router.post("/payments/webhook/dodo", response_model=PaymentWebhookResult)
-async def dodo_webhook(request: Request):
+async def dodo_webhook(request: Request, background_tasks: BackgroundTasks):
     """Verify Dodo Standard Webhooks and process Pro subscription state."""
     settings = get_settings()
 
@@ -479,6 +510,65 @@ async def dodo_webhook(request: Request):
         user_id_hash=anonymize_user_id(result.user_id) if result.user_id else None,
         state=result.state,
     )
+
+    settings = get_settings()
+    event_type_normalized = (result.event or "").lower()
+    if result.state in {"active", "inactive", "expired"}:
+        email = _extract_customer_email(data)
+        user_id = result.user_id
+        if not email and user_id:
+            email = _resolve_email_from_user_id(supabase, user_id)
+        if email:
+            user_name = _resolve_name_from_user_id(supabase, user_id) if user_id else None
+            plan = None
+            metadata = data.get("metadata")
+            if isinstance(metadata, dict):
+                plan = metadata.get("plan")
+            next_billing = data.get("next_billing_date")
+            end_date = data.get("current_period_end") or data.get("next_billing_date")
+
+            if result.state == "active":
+                content = build_subscription_confirmation_email(
+                    settings.site_name,
+                    settings.support_email,
+                    user_name,
+                    plan,
+                    next_billing if isinstance(next_billing, str) else None,
+                    data.get("amount"),
+                    data.get("currency"),
+                    data.get("payment_id") or data.get("id"),
+                    data.get("invoice_url") or data.get("invoice_link"),
+                    data.get("receipt_url"),
+                )
+                background_tasks.add_task(
+                    send_email,
+                    to=email,
+                    subject=content.subject,
+                    html=content.html,
+                    text=content.text,
+                    template="subscription_confirmation",
+                    user_id=user_id,
+                    event_type=result.event,
+                    metadata={"event_id": result.event_id},
+                )
+            elif result.state in {"inactive", "expired"} and event_type_normalized.startswith("subscription."):
+                content = build_cancellation_email(
+                    settings.site_name,
+                    settings.support_email,
+                    user_name,
+                    end_date if isinstance(end_date, str) else None,
+                )
+                background_tasks.add_task(
+                    send_email,
+                    to=email,
+                    subject=content.subject,
+                    html=content.html,
+                    text=content.text,
+                    template="cancellation",
+                    user_id=user_id,
+                    event_type=result.event,
+                    metadata={"event_id": result.event_id},
+                )
     return result
 
 
