@@ -1,8 +1,17 @@
 import LegalPageLayout from "../components/LegalPageLayout";
+import { Helmet } from "react-helmet-async";
 
 export default function TermsPage(): JSX.Element {
   return (
     <LegalPageLayout title="Terms of Service" lastUpdated="March 29, 2026">
+      <Helmet>
+        <title>KnowBear Terms of Service | AI Learning SaaS</title>
+        <meta
+          name="description"
+          content="Review the KnowBear Terms of Service for our AI learning workspace, including account use, subscriptions, payments, and legal terms."
+        />
+        <meta property="og:title" content="KnowBear Terms of Service" />
+      </Helmet>
       <section className="space-y-4">
         <p>
           These Terms of Service ("Terms") govern your access to and use of the

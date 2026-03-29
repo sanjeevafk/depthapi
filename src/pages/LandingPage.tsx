@@ -6,6 +6,7 @@ import { LoginButton } from "../components/LoginButton";
 import { LivePreviewCard } from "../components/LivePreviewCard";
 import { useAuth } from "../context/AuthContext";
 import { useEffect, type ReactNode } from "react";
+import { Helmet } from "react-helmet-async";
 
 export default function LandingPage(): JSX.Element {
   const navigate = useNavigate();
@@ -21,6 +22,24 @@ export default function LandingPage(): JSX.Element {
 
   return (
     <div className="min-h-screen bg-black text-white selection:bg-cyan-500/30">
+      <Helmet>
+        <title>
+          KnowBear — AI Learning Workspace for Clear, Layered Explanations
+        </title>
+        <meta
+          name="description"
+          content="KnowBear is a teaching-first AI workspace that delivers layered explanations from ELI5 to technical deep dives. Learn faster with structured, reliable answers."
+        />
+        <meta
+          name="keywords"
+          content="AI learning workspace, layered explanations, education SaaS, AI tutor, knowledge engine, study assistant"
+        />
+        <meta property="og:title" content="KnowBear — AI Learning Workspace" />
+        <meta
+          property="og:description"
+          content="Layered, reliable explanations for faster learning. Built for students, professionals, and teams."
+        />
+      </Helmet>
       {/* Starry Background */}
       <div className="fixed inset-0 z-0">
         <div className="stars"></div>
@@ -201,6 +220,18 @@ export default function LandingPage(): JSX.Element {
               </p>
             </div>
             <div className="flex items-center gap-6 text-gray-400 text-sm font-medium">
+              <Link
+                to="/features"
+                className="hover:text-white transition-colors"
+              >
+                Features
+              </Link>
+              <Link
+                to="/pricing"
+                className="hover:text-white transition-colors"
+              >
+                Pricing
+              </Link>
               <Link
                 to="/terms"
                 className="hover:text-white transition-colors"
