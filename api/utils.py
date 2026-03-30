@@ -103,3 +103,29 @@ CHAT_INFERENCE_MODE_ALIASES = {
 }
 PROMPT_MODE_ALIASES = {
 }
+
+
+DEPTH_REQUEST_PATTERNS = (
+    r"\bexplain more\b",
+    r"\bmore detail(?:ed)?\b",
+    r"\bin detail\b",
+    r"\bin depth\b",
+    r"\bin-depth\b",
+    r"\bgo deeper\b",
+    r"\bdive deeper\b",
+    r"\belaborate\b",
+    r"\bexpand(?: on)?\b",
+    r"\bmore depth\b",
+    r"\bmore context\b",
+    r"\bexplain further\b",
+    r"\bmore thorough\b",
+    r"\bdeep(er)? explanation\b",
+    r"\bfull explanation\b",
+)
+
+
+def requests_depth(text: str) -> bool:
+    lowered = (text or "").lower()
+    if not lowered:
+        return False
+    return any(re.search(pattern, lowered) for pattern in DEPTH_REQUEST_PATTERNS)
