@@ -1,5 +1,6 @@
 import base64
 import os
+import time
 import types
 from types import SimpleNamespace
 import pytest
@@ -17,6 +18,9 @@ import services.search as search_module
 import services.llm_client as llm_client_module
 import services.inference as inference_module
 import services.rate_limit as rate_limit_module
+import services.message_gate as message_gate_module
+import services.conversation_cache as conversation_cache_module
+import services.user_cache as user_cache_module
 
 
 class AppClientWrapper:
@@ -39,6 +43,12 @@ class DummyRedis:
 
     async def get(self, key):
         return self.store.get(key)
+
+    async def delete(self, key):
+        if key in self.store:
+            del self.store[key]
+            return 1
+        return 0
 
     async def setex(self, key, ttl, value):
         self.store[key] = value
@@ -66,8 +76,218 @@ class DummyRedis:
     async def ttl(self, key):
         return 60
 
+    async def rpush(self, key, *values):
+        lst = self.store.get(key)
+        if not isinstance(lst, list):
+            lst = []
+        lst.extend(list(values))
+        self.store[key] = lst
+        return len(lst)
+
+    async def ltrim(self, key, start, stop):
+        lst = self.store.get(key)
+        if not isinstance(lst, list):
+            return True
+        length = len(lst)
+        if start < 0:
+            start = max(length + start, 0)
+        if stop < 0:
+            stop = length + stop
+        self.store[key] = lst[start: stop + 1]
+        return True
+
+    async def lrange(self, key, start, stop):
+        lst = self.store.get(key)
+        if not isinstance(lst, list):
+            return []
+        length = len(lst)
+        if start < 0:
+            start = max(length + start, 0)
+        if stop < 0:
+            stop = length + stop
+        return lst[start: stop + 1]
+
+    async def hget(self, key, field):
+        h = self.store.get(key)
+        if not isinstance(h, dict):
+            return None
+        return h.get(field)
+
+    async def hset(self, key, field, value):
+        h = self.store.get(key)
+        if not isinstance(h, dict):
+            h = {}
+        h[field] = value
+        self.store[key] = h
+        return 1
+
+    async def hgetall(self, key):
+        h = self.store.get(key)
+        if not isinstance(h, dict):
+            return {}
+        return dict(h)
+
+    async def pipeline(self, commands):
+        results = []
+        for command in commands:
+            op = str(command[0]).upper()
+            if op == "DEL":
+                results.append(await self.delete(command[1]))
+            elif op == "SETEX":
+                results.append(await self.setex(command[1], int(command[2]), command[3]))
+            elif op == "RPUSH":
+                results.append(await self.rpush(command[1], *command[2:]))
+            elif op == "LTRIM":
+                results.append(await self.ltrim(command[1], int(command[2]), int(command[3])))
+            else:
+                results.append(None)
+        return results
+
     async def eval(self, script, _num_keys, *args):
-        if "HGETALL" in str(script):
+        script_text = str(script)
+        if "HGETALL" in script_text and "HINCRBY" in script_text:
+            key = str(args[0])
+            now_minute = str(args[1])
+            requested = int(args[2])
+            limit = int(args[3])
+            window = int(args[4])
+            buckets = self.store.get(key)
+            if not isinstance(buckets, dict):
+                buckets = {}
+            total = sum(int(value) for value in buckets.values())
+            if total + requested > limit:
+                return [0, total, window * 60]
+            buckets[now_minute] = int(buckets.get(now_minute, 0)) + requested
+            self.store[key] = buckets
+            return [1, total + requested, window * 60]
+        if "INCRBY" in script_text and "local requested" in script_text and "consumed > limit" in script_text:
+            key = str(args[0])
+            requested = int(args[1])
+            limit = int(args[2])
+            window = int(args[3])
+            current = int(self.store.get(key, 0))
+            consumed = current + requested
+            if consumed > limit:
+                return [0, current, window]
+            self.store[key] = consumed
+            return [1, consumed, window]
+        if "refund" in script_text and "HSET" in script_text and "HGET" in script_text:
+            key = str(args[0])
+            bucket = str(args[1])
+            refund = int(args[2])
+            buckets = self.store.get(key)
+            if not isinstance(buckets, dict):
+                buckets = {}
+            current = int(buckets.get(bucket, 0))
+            next_value = max(current - refund, 0)
+            buckets[bucket] = next_value
+            self.store[key] = buckets
+            return next_value
+        if "refund" in script_text and "SET" in script_text:
+            key = str(args[0])
+            refund = int(args[1])
+            current = int(self.store.get(key, 0))
+            next_value = max(current - refund, 0)
+            self.store[key] = next_value
+            return next_value
+        if "idempotency_ttl" in script_text and "PENDING" in script_text:
+            keys = list(args[:_num_keys])
+            argv = list(args[_num_keys:])
+            token_bucket_key = str(keys[0])
+            quota_key = str(keys[1])
+            circuit_minute_key = str(keys[2])
+            circuit_open_key = str(keys[3])
+            idempotency_key = str(keys[4])
+            try:
+                now_ts = int(argv[0])
+                capacity = float(argv[1])
+                refill_per_sec = float(argv[2])
+                cost = int(argv[3])
+                quota_limit = int(argv[4])
+                quota_window = int(argv[5])
+                reserved_tokens = int(argv[6])
+                circuit_threshold = int(argv[7])
+                circuit_open_seconds = int(argv[8])
+                idempotency_ttl = int(argv[9])
+                idempotency_stale = int(argv[10])
+
+                status = await self.hget(idempotency_key, "status")
+                if status == "COMPLETED":
+                    response = await self.hget(idempotency_key, "response")
+                    return [1, 0, "COMPLETED", response]
+                if status == "PENDING":
+                    started_at = int(await self.hget(idempotency_key, "started_at") or 0)
+                    if started_at > 0 and (now_ts - started_at) < idempotency_stale:
+                        return [0, idempotency_ttl, "PENDING", None]
+                    await self.hset(idempotency_key, "status", "EXPIRED")
+                    await self.hset(idempotency_key, "expired_at", now_ts)
+
+                if circuit_threshold > 0 and await self.get(circuit_open_key):
+                    return [0, circuit_open_seconds, "CIRCUIT_OPEN", None]
+
+                if capacity > 0 and refill_per_sec > 0:
+                    tokens = float(await self.hget(token_bucket_key, "tokens") or capacity)
+                    last_ts = int(await self.hget(token_bucket_key, "last_ts") or now_ts)
+                    delta = max(0, now_ts - last_ts)
+                    refill = delta * refill_per_sec
+                    new_tokens = min(capacity, tokens + refill)
+                    if new_tokens < cost:
+                        retry_after = int((cost - new_tokens) / refill_per_sec) + 1
+                        return [0, retry_after, "RATE_LIMITED", None]
+                    await self.hset(token_bucket_key, "tokens", new_tokens - cost)
+                    await self.hset(token_bucket_key, "last_ts", now_ts)
+
+                if quota_limit > 0:
+                    consumed = int(await self.get(quota_key) or 0)
+                    if consumed + reserved_tokens > quota_limit:
+                        return [0, quota_window, "QUOTA_EXCEEDED", None]
+                    await self.incrby(quota_key, reserved_tokens)
+
+                if circuit_threshold > 0:
+                    total = int(await self.incrby(circuit_minute_key, reserved_tokens))
+                    if total > circuit_threshold:
+                        await self.setex(circuit_open_key, circuit_open_seconds, "1")
+                        return [0, circuit_open_seconds, "CIRCUIT_OPEN", None]
+
+                await self.hset(idempotency_key, "status", "PENDING")
+                await self.hset(idempotency_key, "started_at", now_ts)
+                return [1, 0, "PENDING", None]
+            except Exception:
+                await self.hset(idempotency_key, "status", "PENDING")
+                await self.hset(idempotency_key, "started_at", int(time.time()))
+                return [1, 0, "PENDING", None]
+
+        if "LRANGE" in script_text and "meta" in script_text:
+            meta_key = str(args[0])
+            list_key = str(args[1])
+            max_messages = int(args[2])
+            meta = await self.get(meta_key)
+            msgs = await self.lrange(list_key, -max_messages, -1)
+            return [meta, msgs]
+
+        if "RPUSH" in script_text and "__SEQ__" in script_text:
+            seq_key = str(args[0])
+            list_key = str(args[1])
+            message_json = str(args[2])
+            max_messages = int(args[3])
+            seq = await self.incr(seq_key)
+            payload = message_json.replace("__SEQ__", str(seq))
+            await self.rpush(list_key, payload)
+            if max_messages > 0:
+                await self.ltrim(list_key, -max_messages, -1)
+            return seq
+
+        if script_text.strip() == "return redis.call('GET', KEYS[1])":
+            return await self.get(str(args[0]))
+
+        if "SETEX" in script_text and "INCRBY" not in script_text:
+            key = str(args[0])
+            ttl = int(args[1])
+            value = args[2]
+            await self.setex(key, ttl, value)
+            return True
+
+        if "HGETALL" in script_text:
             key = str(args[0])
             now_min = int(args[1])
             requested_value = int(args[2])
@@ -303,6 +523,9 @@ async def app_client(monkeypatch, dummy_redis):
     monkeypatch.setattr(cache_module, "get_redis", _get_redis)
     monkeypatch.setattr(rate_limit_module, "get_redis", _get_redis)
     monkeypatch.setattr(api_main_app, "get_redis", _get_redis)
+    monkeypatch.setattr(message_gate_module, "get_redis", _get_redis)
+    monkeypatch.setattr(conversation_cache_module, "get_redis", _get_redis)
+    monkeypatch.setattr(user_cache_module, "get_redis", _get_redis)
     monkeypatch.setattr(api_main_app, "close_redis", _noop_close)
     monkeypatch.setattr(api_main_app, "redis_available", False)
     main_app.app.dependency_overrides = {}

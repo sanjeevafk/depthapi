@@ -5,19 +5,27 @@ import hashlib
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, cast
+from typing import Any, Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+import orjson
 
 from auth import check_is_pro, get_supabase_admin, verify_token
 from config import get_settings
 from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from monitoring import capture_telemetry_event
 from services.analytics import build_llm_request_payload, record_llm_request
-from services.cache import cache_get, cache_set, cache_set_if_absent
-from services.inference import TECHNICAL_MAX_TOKENS, generate_explanation, generate_stream_explanation
+from services.cache import cache_get, cache_set, cache_set_if_absent, get_redis
+from services.conversation_cache import warm_conversation_snapshot
+from services.inference import (
+    TECHNICAL_MAX_TOKENS,
+    SYSTEM_PROMPT,
+    MODE_SYSTEM_PROMPTS,
+    generate_explanation,
+    generate_stream_explanation,
+)
 from services.conversation_context import (
     ConversationMessage,
     build_context_messages,
@@ -30,9 +38,17 @@ from services.conversation_intent import (
 )
 from services.llm_client import get_provider_config_state
 from services.llm_errors import LLMUnavailable
-from services.rate_limit import enforce_request_controls, refund_tokens
+from services.message_gate import (
+    append_conversation_message,
+    cache_get_value,
+    cache_set_value,
+    fetch_conversation_snapshot,
+    gatekeep_message_request,
+)
+from services.rate_limit import _resolve_limits, enforce_request_controls
 from services.streaming import SseEventBuilder, SSE_RESPONSE_HEADERS
 from services.token_count import count_prompt_tokens
+from services.user_cache import refresh_is_pro_cache
 from utils import (
     DEFAULT_CHAT_MODE,
     PROMPT_MODE_ALIASES,
@@ -45,6 +61,9 @@ from utils import (
 )
 
 router = APIRouter(tags=["messages"])
+
+_INGRESS_DEDUP: dict[str, float] = {}
+_INGRESS_DEDUP_LOCK = asyncio.Lock()
 
 
 def _trusted_proxies_from_settings(config_settings: Any) -> set[str]:
@@ -65,6 +84,52 @@ def _resolve_client_ip(request: Request, *, trusted_proxies: set[str]) -> str:
     return str(peer_host or "unknown")
 
 
+async def _ingress_dedupe_check(message_id: str, ttl_seconds: float = 3.0) -> bool:
+    now = time.time()
+    async with _INGRESS_DEDUP_LOCK:
+        expired = [key for key, ts in _INGRESS_DEDUP.items() if (now - ts) > ttl_seconds]
+        for key in expired:
+            _INGRESS_DEDUP.pop(key, None)
+        if message_id in _INGRESS_DEDUP:
+            return False
+        _INGRESS_DEDUP[message_id] = now
+        return True
+
+
+async def _ingress_dedupe_clear(message_id: str) -> None:
+    async with _INGRESS_DEDUP_LOCK:
+        _INGRESS_DEDUP.pop(message_id, None)
+
+
+def _parse_snapshot_meta(raw: str | None) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        meta = orjson.loads(raw)
+        return meta if isinstance(meta, dict) else {}
+    except Exception:
+        return {}
+
+
+def _parse_snapshot_messages(raw_messages: list[str]) -> list[ConversationMessage]:
+    messages: list[ConversationMessage] = []
+    for raw in raw_messages:
+        try:
+            payload = orjson.loads(raw)
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            role = str(payload.get("role") or "")
+            content = str(payload.get("content") or "")
+            if role and content is not None:
+                messages.append({"role": role, "content": content})
+    return messages
+
+
+async def _capture_telemetry_async(event: str, **payload: Any) -> None:
+    await asyncio.to_thread(capture_telemetry_event, event, **payload)
+
+
 class MessageRequest(BaseModel):
     conversation_id: str = Field(..., min_length=1)
     content: str = Field(..., min_length=1, max_length=8000)
@@ -81,12 +146,14 @@ def _message_cache_key(
     mode: str,
     prompt_mode: str,
     temperature: float,
+    model_alias: str,
+    system_prompt: str,
     context_signature: str = "",
     intent_type: str = "",
     intent_payload: str = "",
 ) -> str:
     digest = hashlib.sha256(
-        f"{content}\x00{mode}\x00{prompt_mode}\x00{temperature:.2f}\x00{context_signature}\x00{intent_type}\x00{intent_payload}".encode(
+        f"{system_prompt}\x00{context_signature}\x00{content}\x00{temperature:.2f}\x00{model_alias}\x00{mode}\x00{prompt_mode}\x00{intent_type}\x00{intent_payload}".encode(
             "utf-8"
         )
     ).hexdigest()
@@ -173,18 +240,28 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     user_id = str(getattr(user, "id", "") or "").strip()
     if not user_id:
         raise HTTPException(status_code=401, detail="Authenticated user id is missing")
+    is_pro = bool(auth_data.get("is_pro"))
+    exp = auth_data.get("exp")
+    if isinstance(exp, (int, float)):
+        exp_delta = float(exp) - time.time()
+        if exp_delta > 900:
+            is_pro = False
+        if exp_delta < 120:
+            asyncio.create_task(refresh_is_pro_cache(user_id))
 
     content = (req.content or "").strip()
     user_id_hash = anonymize_user_id(user_id)
     content_hash = anonymize_text(content)
 
-    capture_telemetry_event(
-        "message_send",
-        request_id=request_id,
-        user_id_hash=user_id_hash,
-        mode=req.mode,
-        prompt_mode=req.prompt_mode,
-        regenerate=bool(req.regenerate),
+    asyncio.create_task(
+        _capture_telemetry_async(
+            "message_send",
+            request_id=request_id,
+            user_id_hash=user_id_hash,
+            mode=req.mode,
+            prompt_mode=req.prompt_mode,
+            regenerate=bool(req.regenerate),
+        )
     )
 
     if not content:
@@ -192,6 +269,9 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
 
     client_message_id = _require_uuid(req.client_generated_id, "client_generated_id")
     assistant_client_id = _require_uuid(req.assistant_client_id, "assistant_client_id")
+
+    if not await _ingress_dedupe_check(client_message_id):
+        raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
 
     config_settings = get_settings()
     environment = str(getattr(config_settings, "environment", "") or "").strip().lower()
@@ -222,84 +302,28 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         max(int(getattr(config_settings, "stream_idempotency_ttl_seconds", 90)), 60),
         120,
     )
-    idempotency_stale_seconds = max(
-        5,
-        min(int(getattr(config_settings, "stream_idempotency_stale_seconds", 20)), idempotency_ttl_seconds),
-    )
     trusted_proxies = _trusted_proxies_from_settings(config_settings)
 
-    idempotency_key = _idempotency_key(user_id, client_message_id)
-    idempotency_payload = await cache_get(idempotency_key)
-    idempotency_claimed = False
-    if idempotency_payload:
-        status = idempotency_payload.get("status")
-        cached_response = idempotency_payload.get("response")
-        if status == "completed" and cached_response:
-            assistant_message_id = idempotency_payload.get("assistant_message_id")
-            replay_mode = idempotency_payload.get("mode") or DEFAULT_CHAT_MODE
-            replay_prompt_mode = idempotency_payload.get("prompt_mode") or normalize_prompt_level(None)
-            return _build_replay_response(
-                content=str(cached_response),
-                message_id=client_message_id,
-                assistant_message_id=assistant_message_id,
-                mode=replay_mode,
-                prompt_mode=replay_prompt_mode,
-            )
+    history_limit = max(int(getattr(config_settings, "conversation_context_fetch_limit", 80)), 1)
+    snapshot_meta_raw, snapshot_raw_messages = await fetch_conversation_snapshot(
+        conversation_id=req.conversation_id,
+        max_messages=history_limit,
+        timeout_seconds=0.08,
+    )
+    snapshot_degraded = not snapshot_meta_raw and not snapshot_raw_messages
+    snapshot_meta = _parse_snapshot_meta(snapshot_meta_raw)
+    if snapshot_meta and snapshot_meta.get("user_id") and str(snapshot_meta.get("user_id")) != user_id:
+        await _ingress_dedupe_clear(client_message_id)
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if not snapshot_meta_raw:
+        asyncio.create_task(warm_conversation_snapshot(req.conversation_id, user_id))
 
-        if status == "in_progress":
-            started_at = idempotency_payload.get("started_at")
-            now_ts = int(time.time())
-            started_ts = int(started_at) if isinstance(started_at, (int, float)) else now_ts
-            age_seconds = max(now_ts - started_ts, 0)
-            if age_seconds < idempotency_stale_seconds:
-                raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
-            reclaimed = await cache_set(
-                idempotency_key,
-                {
-                    "status": "reclaimed",
-                    "reclaimed_at": now_ts,
-                    "previous_started_at": started_ts,
-                    "message_id": client_message_id,
-                },
-                ttl=idempotency_ttl_seconds,
-            )
-            if not reclaimed:
-                raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
-            idempotency_claimed = True
-
-    is_pro = await check_is_pro(user_id)
-
-    supabase = get_supabase_admin()
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database connection error")
-
-    try:
-        conversation_resp = await asyncio.to_thread(
-            lambda: supabase.table("conversations")
-            .select("id, user_id, mode, settings")
-            .eq("id", req.conversation_id)
-            .eq("user_id", user_id)
-            .single()
-            .execute()
-        )
-        if not getattr(conversation_resp, "data", None):
-            raise HTTPException(status_code=404, detail="Conversation not found")
-        conversation = cast(Dict[str, Any], conversation_resp.data)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error(
-            "messages_conversation_fetch_failed",
-            error=str(exc),
-            request_id=request_id,
-            user_id_hash=user_id_hash,
-            conversation_id=req.conversation_id,
-            retry=bool(req.regenerate),
-            sampled=False,
-        )
-        raise HTTPException(status_code=500, detail="Failed to load conversation") from exc
-
-    selected_mode = normalize_mode(req.mode or conversation.get("mode") or conversation.get("settings", {}).get("mode"))
+    selected_mode = normalize_mode(
+        req.mode
+        or snapshot_meta.get("mode")
+        or (snapshot_meta.get("settings") or {}).get("mode")
+        or DEFAULT_CHAT_MODE
+    )
     if selected_mode not in {LEARNING_MODE, TECHNICAL_MODE, SOCRATIC_MODE}:
         selected_mode = DEFAULT_CHAT_MODE
     if selected_mode == TECHNICAL_MODE:
@@ -322,45 +346,22 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
 
     requested_prompt_mode = PROMPT_MODE_ALIASES.get(req.prompt_mode or "", req.prompt_mode or "")
     stored_prompt_mode = PROMPT_MODE_ALIASES.get(
-        cast(str, (conversation.get("settings") or {}).get("prompt_mode") or ""),
-        cast(str, (conversation.get("settings") or {}).get("prompt_mode") or ""),
+        cast(str, snapshot_meta.get("prompt_mode") or ""),
+        cast(str, snapshot_meta.get("prompt_mode") or ""),
     )
     prompt_mode = normalize_prompt_level(requested_prompt_mode or stored_prompt_mode)
     if prompt_mode not in SUPPORTED_PROMPT_MODES:
         prompt_mode = normalize_prompt_level(None)
 
     if selected_mode == TECHNICAL_MODE and not is_pro:
+        await _ingress_dedupe_clear(client_message_id)
         raise HTTPException(status_code=403, detail="Technical mode is a Pro feature")
     if selected_mode == SOCRATIC_MODE and not is_pro:
+        await _ingress_dedupe_clear(client_message_id)
         raise HTTPException(status_code=403, detail="Socratic mode is a Pro feature")
 
     # ── Conversation context & intent ──────────────────────────────────────
-    history_rows: list[dict[str, Any]] = []
-    history_limit = max(int(getattr(config_settings, "conversation_context_fetch_limit", 80)), 1)
-    try:
-        history_resp = await asyncio.to_thread(
-            lambda: supabase.table("messages")
-            .select("role, content, created_at")
-            .eq("conversation_id", req.conversation_id)
-            .order("created_at", desc=True)
-            .limit(history_limit)
-            .execute()
-        )
-        history_rows = cast(list[dict[str, Any]], getattr(history_resp, "data", []) or [])
-    except Exception as exc:
-        logger.warning(
-            "messages_history_fetch_failed",
-            error=str(exc),
-            request_id=request_id,
-            user_id_hash=user_id_hash,
-            conversation_id=req.conversation_id,
-            sampled=False,
-        )
-
-    history_messages: list[ConversationMessage] = [
-        {"role": str(row.get("role") or ""), "content": str(row.get("content") or "")}
-        for row in reversed(history_rows)
-    ]
+    history_messages = _parse_snapshot_messages(snapshot_raw_messages)
     last_user_message, last_assistant_message = extract_last_turns(history_messages)
     has_prior = bool(last_user_message or last_assistant_message)
     intent = classify_conversation_intent(content, has_prior=has_prior)
@@ -369,12 +370,14 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         correction_text=content if intent.type == "correction" else None,
         clarification_text=content if intent.type == "clarification" else None,
     )
+    prompt_build_start = time.perf_counter()
     context_messages, context_signature = build_context_messages(
         history_messages,
         max_tokens=max(int(getattr(config_settings, "conversation_context_max_tokens", 1200)), 1),
         summary_max_tokens=max(int(getattr(config_settings, "conversation_context_summary_tokens", 240)), 0),
     )
     socratic_context = build_socratic_context(history_messages)
+    prompt_build_ms = (time.perf_counter() - prompt_build_start) * 1000
 
     effective_content = content
     ack_response = _ack_response(selected_mode) if intent.type == "acknowledgment" else None
@@ -390,105 +393,91 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     prompt_tokens = count_prompt_tokens(effective_content)
     reserved_tokens = max(prompt_tokens + max_output_tokens, 1)
     client_ip = _resolve_client_ip(request, trusted_proxies=trusted_proxies)
-    quota_reservation = await enforce_request_controls(
-        user_id=user_id,
-        client_ip=client_ip,
-        reserved_tokens=reserved_tokens,
-        mode=selected_mode,
+    identifier = f"user:{user_id}" if user_id else f"ip:{client_ip}"
+    daily_limit, _hourly_limit, rpm, burst_limit, sustained_window, burst_window = _resolve_limits(
+        settings=config_settings,
+        is_authenticated=True,
         is_pro=is_pro,
+        mode=selected_mode,
     )
+    if burst_limit <= 0 and rpm <= 0:
+        bucket_capacity = 0
+        refill_per_sec = 0.0
+    else:
+        bucket_capacity = burst_limit if burst_limit > 0 else max(rpm, 1)
+        refill_per_sec = (
+            float(rpm) / float(sustained_window)
+            if rpm > 0 and sustained_window > 0
+            else float(bucket_capacity) / float(max(burst_window, 1))
+        )
+    idempotency_key = _idempotency_key(user_id, client_message_id)
+    gatekeeper = await gatekeep_message_request(
+        identifier=identifier,
+        reserved_tokens=reserved_tokens,
+        token_bucket_capacity=bucket_capacity,
+        token_bucket_refill_per_sec=refill_per_sec,
+        token_bucket_cost=1,
+        daily_quota_limit=daily_limit,
+        daily_quota_window=max(int(getattr(config_settings, "quota_window_seconds", 86400)), 1),
+        circuit_threshold=max(int(getattr(config_settings, "circuit_breaker_tokens_per_minute", 0)), 0),
+        circuit_open_seconds=max(int(getattr(config_settings, "circuit_breaker_open_seconds", 60)), 1),
+        idempotency_key=idempotency_key,
+        timeout_seconds=0.05,
+    )
+    redis_degraded = gatekeeper.degraded
+    redis_eval_ms = gatekeeper.redis_eval_ms
+    if gatekeeper.idempotency_status == "COMPLETED" and gatekeeper.idempotency_response:
+        await _ingress_dedupe_clear(client_message_id)
+        return _build_replay_response(
+            content=str(gatekeeper.idempotency_response),
+            message_id=client_message_id,
+            assistant_message_id=None,
+            mode=selected_mode,
+            prompt_mode=prompt_mode,
+        )
+    if not gatekeeper.allowed:
+        await _ingress_dedupe_clear(client_message_id)
+        if gatekeeper.idempotency_status == "PENDING":
+            raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
+        if gatekeeper.idempotency_status == "CIRCUIT_OPEN":
+            raise HTTPException(
+                status_code=503,
+                detail={"type": "circuit_breaker_open", "action": "reject"},
+                headers={"Retry-After": str(max(gatekeeper.retry_after, 1))},
+            )
+        raise HTTPException(
+            status_code=429,
+            detail={"type": "rate_limit_exceeded"},
+            headers={"Retry-After": str(max(gatekeeper.retry_after, 1))},
+        )
     request_temperature = max(0.0, min(float(req.temperature), 1.0))
+    system_prompt = SYSTEM_PROMPT.strip()
+    mode_prompt = MODE_SYSTEM_PROMPTS.get(selected_mode, "").strip()
+    intent_prompt = (intent_system_prompt or "").strip()
+    system_prompt_bundle = "\n".join(
+        [part for part in (system_prompt, mode_prompt, intent_prompt) if part]
+    )
     cache_key = _message_cache_key(
         content=effective_content,
         mode=selected_mode,
         prompt_mode=prompt_mode,
         temperature=request_temperature,
+        model_alias=str(config_state.get("model_alias") or selected_mode),
+        system_prompt=system_prompt_bundle,
         context_signature=context_signature,
         intent_type=intent.type,
         intent_payload=intent_payload,
     )
-    cached_payload = None if req.regenerate else await cache_get(cache_key)
-    cached_response = cached_payload.get("response") if cached_payload else None
-    if cached_response and not isinstance(cached_response, str):
-        cached_response = str(cached_response)
+    cached_response = None
+    if not req.regenerate:
+        cached_response = await cache_get_value(cache_key, timeout_seconds=0.05)
 
-    idempotency_record = {
-        "status": "in_progress",
-        "started_at": int(time.time()),
-        "message_id": client_message_id,
-        "assistant_client_id": assistant_client_id,
-        "mode": selected_mode,
-        "prompt_mode": prompt_mode,
-    }
-    if idempotency_claimed:
-        reserved = await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
-    else:
-        reserved = await cache_set_if_absent(idempotency_key, idempotency_record, idempotency_ttl_seconds)
-    if not reserved:
-        existing = await cache_get(idempotency_key)
-        if existing:
-            status = existing.get("status")
-            idempotency_response = existing.get("response")
-            if status == "completed" and idempotency_response:
-                return _build_replay_response(
-                    content=str(idempotency_response),
-                    message_id=client_message_id,
-                    assistant_message_id=existing.get("assistant_message_id"),
-                    mode=existing.get("mode") or selected_mode,
-                    prompt_mode=existing.get("prompt_mode") or prompt_mode,
-                )
-            if status == "in_progress":
-                started_at = existing.get("started_at")
-                now_ts = int(time.time())
-                started_ts = int(started_at) if isinstance(started_at, (int, float)) else now_ts
-                age_seconds = max(now_ts - started_ts, 0)
-                if age_seconds < idempotency_stale_seconds:
-                    raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
-                await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
-            if status == "failed":
-                await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
-
+    assistant_message_id = str(uuid.uuid4())
     user_metadata = {
         "client_id": client_message_id,
         "mode": selected_mode,
         "prompt_mode": prompt_mode,
-    }
-
-    try:
-        await asyncio.to_thread(
-            lambda: supabase.table("messages")
-            .insert(
-                {
-                    "conversation_id": conversation.get("id"),
-                    "role": "user",
-                    "content": content,
-                    "metadata": user_metadata,
-                }
-            )
-            .execute()
-        )
-    except Exception as exc:
-        logger.error(
-            "messages_user_insert_failed",
-            error=str(exc),
-            request_id=request_id,
-            user_id_hash=user_id_hash,
-            conversation_id=req.conversation_id,
-            retry=bool(req.regenerate),
-            sampled=False,
-        )
-        await cache_set(
-            idempotency_key,
-            {"status": "failed", "message_id": client_message_id},
-            ttl=idempotency_ttl_seconds,
-        )
-        raise HTTPException(status_code=500, detail="Failed to save user message") from exc
-
-    now_iso = datetime.now(timezone.utc).isoformat()
-    update_payload = {
-        "mode": selected_mode,
-        "settings": {**(conversation.get("settings") or {}), "mode": selected_mode, "prompt_mode": prompt_mode},
-        "updated_at": now_iso,
+        "assistant_message_id": assistant_message_id,
     }
     assistant_metadata = {
         "assistant_client_id": assistant_client_id,
@@ -496,33 +485,25 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         "prompt_mode": prompt_mode,
     }
 
-    try:
-        assistant_result, conversation_update_result = await asyncio.gather(
-            asyncio.to_thread(
-                lambda: supabase.table("messages")
-                .insert(
-                    {
-                        "conversation_id": conversation.get("id"),
-                        "role": "assistant",
-                        "content": "",
-                        "metadata": assistant_metadata,
-                    }
-                )
-                .execute()
-            ),
-            asyncio.to_thread(
-                lambda: supabase.table("conversations")
-                .update(update_payload)
-                .eq("id", conversation.get("id"))
-                .execute()
-            ),
-            return_exceptions=True,
-        )
-
-        if isinstance(conversation_update_result, Exception):
-            logger.warning(
-                "messages_conversation_update_failed",
-                error=str(conversation_update_result),
+    async def _persist_user_message(sequence_id: int | None) -> None:
+        supabase = get_supabase_admin()
+        if not supabase:
+            return
+        payload = {
+            "id": client_message_id,
+            "conversation_id": req.conversation_id,
+            "role": "user",
+            "content": content,
+            "metadata": user_metadata,
+        }
+        if sequence_id is not None:
+            payload["sequence_id"] = sequence_id
+        try:
+            await asyncio.to_thread(lambda: supabase.table("messages").insert(payload).execute())
+        except Exception as exc:
+            logger.error(
+                "messages_user_insert_failed",
+                error=str(exc),
                 request_id=request_id,
                 user_id_hash=user_id_hash,
                 conversation_id=req.conversation_id,
@@ -530,45 +511,59 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 sampled=False,
             )
 
-        if isinstance(assistant_result, Exception):
-            raise assistant_result
+    async def _persist_assistant_message(sequence_id: int | None, content_value: str) -> None:
+        supabase = get_supabase_admin()
+        if not supabase:
+            return
+        payload = {
+            "id": assistant_message_id,
+            "conversation_id": req.conversation_id,
+            "role": "assistant",
+            "content": content_value,
+            "metadata": assistant_metadata,
+        }
+        if sequence_id is not None:
+            payload["sequence_id"] = sequence_id
+        try:
+            await asyncio.to_thread(lambda: supabase.table("messages").insert(payload).execute())
+        except Exception as exc:
+            logger.error(
+                "messages_assistant_insert_failed",
+                error=str(exc),
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+                conversation_id=req.conversation_id,
+                retry=bool(req.regenerate),
+                sampled=False,
+            )
 
-        assistant_resp = assistant_result
-        assistant_data = []
-        assistant_message_id = None
-        if hasattr(assistant_resp, "data"):
-            data = getattr(assistant_resp, "data")
-            if data:
-                assistant_data = cast(list[Dict[str, Any]], data)
-                if assistant_data:
-                    assistant_message_id = assistant_data[0].get("id")
-        await cache_set(
-            idempotency_key,
-            {
-                "status": "in_progress",
-                "message_id": client_message_id,
-                "assistant_message_id": assistant_message_id,
-                "mode": selected_mode,
-                "prompt_mode": prompt_mode,
-            },
-            ttl=idempotency_ttl_seconds,
-        )
-    except Exception as exc:
-        logger.error(
-            "messages_assistant_insert_failed",
-            error=str(exc),
-            request_id=request_id,
-            user_id_hash=user_id_hash,
-            conversation_id=req.conversation_id,
-            retry=bool(req.regenerate),
-            sampled=False,
-        )
-        await cache_set(
-            idempotency_key,
-            {"status": "failed", "message_id": client_message_id},
-            ttl=idempotency_ttl_seconds,
-        )
-        raise HTTPException(status_code=500, detail="Failed to start assistant message") from exc
+    async def _persist_conversation_update() -> None:
+        supabase = get_supabase_admin()
+        if not supabase:
+            return
+        now_iso = datetime.now(timezone.utc).isoformat()
+        update_payload = {
+            "mode": selected_mode,
+            "settings": {"mode": selected_mode, "prompt_mode": prompt_mode},
+            "updated_at": now_iso,
+        }
+        try:
+            await asyncio.to_thread(
+                lambda: supabase.table("conversations")
+                .update(update_payload)
+                .eq("id", req.conversation_id)
+                .execute()
+            )
+        except Exception as exc:
+            logger.warning(
+                "messages_conversation_update_failed",
+                error=str(exc),
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+                conversation_id=req.conversation_id,
+                retry=bool(req.regenerate),
+                sampled=False,
+            )
 
     async def event_generator():
         start_time = time.perf_counter()
@@ -591,14 +586,19 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         telemetry_sink: dict[str, Any] = {}
         stream_failed = False
         pending_chunk_task: asyncio.Task[str] | None = None
+        user_sequence_id: int | None = None
+        assistant_sequence_id: int | None = None
+        redis_append_failed = False
 
-        capture_telemetry_event(
-            "stream_start",
-            request_id=request_id,
-            user_id_hash=user_id_hash,
-            mode=selected_mode,
-            prompt_mode=prompt_mode,
-            regenerate=bool(req.regenerate),
+        asyncio.create_task(
+            _capture_telemetry_async(
+                "stream_start",
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+                mode=selected_mode,
+                prompt_mode=prompt_mode,
+                regenerate=bool(req.regenerate),
+            )
         )
 
         def record_chunk():
@@ -654,29 +654,95 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 pass
             pending_chunk_task = None
 
+        async def finalize_assistant_message(content_value: str, *, cacheable: bool = True) -> None:
+            nonlocal assistant_sequence_id, redis_append_failed
+            if not content_value.strip():
+                return
+            assistant_payload = {
+                "role": "assistant",
+                "content": content_value,
+                "sequence_id": "__SEQ__",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "assistant_client_id": assistant_client_id,
+            }
+            assistant_sequence_id = await append_conversation_message(
+                conversation_id=req.conversation_id,
+                message_json=orjson.dumps(assistant_payload).decode("utf-8"),
+                max_messages=history_limit,
+                timeout_seconds=0.05,
+            )
+            if assistant_sequence_id is None:
+                redis_append_failed = True
+            asyncio.create_task(_persist_assistant_message(assistant_sequence_id, content_value))
+            if cacheable:
+                await cache_set_value(cache_key, content_value, cache_ttl_seconds, timeout_seconds=0.05)
+            if not gatekeeper.degraded:
+                try:
+                    redis = await get_redis()
+                    response_hash = hashlib.sha256(content_value.encode("utf-8")).hexdigest()
+                    await redis.hset(idempotency_key, "status", "COMPLETED")
+                    await redis.hset(idempotency_key, "response", content_value)
+                    await redis.hset(idempotency_key, "response_hash", response_hash)
+                    await redis.hset(idempotency_key, "assistant_message_id", assistant_message_id)
+                    await redis.hset(idempotency_key, "completed_at", int(time.time()))
+                    await redis.expire(idempotency_key, idempotency_ttl_seconds)
+                except Exception as exc:
+                    logger.warning(
+                        "messages_idempotency_update_failed",
+                        request_id=request_id,
+                        error=str(exc),
+                    )
+
         stream = None
         try:
+            assert (time.perf_counter() - request_received) < 0.2
+            yield emit("start", {"type": "start"})
             meta_payload = {
                 "assistant_message_id": assistant_message_id,
                 "mode": selected_mode,
                 "prompt_mode": prompt_mode,
                 "message_id": client_message_id,
             }
+            if cached_response:
+                meta_payload["replay"] = True
             yield emit("meta", meta_payload)
+
+            user_payload = {
+                "role": "user",
+                "content": content,
+                "sequence_id": "__SEQ__",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "client_id": client_message_id,
+            }
+            user_sequence_id = await append_conversation_message(
+                conversation_id=req.conversation_id,
+                message_json=orjson.dumps(user_payload).decode("utf-8"),
+                max_messages=history_limit,
+                timeout_seconds=0.05,
+            )
+            if user_sequence_id is None:
+                redis_append_failed = True
+            asyncio.create_task(_persist_user_message(user_sequence_id))
+            asyncio.create_task(_persist_conversation_update())
 
             if ack_response:
                 full_content = ack_response
-                await cache_set(
-                    idempotency_key,
-                    {
-                        "status": "completed",
-                        "response": full_content,
-                        "assistant_message_id": assistant_message_id,
-                        "mode": selected_mode,
-                        "prompt_mode": prompt_mode,
-                    },
-                    ttl=idempotency_ttl_seconds,
+                assistant_payload = {
+                    "role": "assistant",
+                    "content": full_content,
+                    "sequence_id": "__SEQ__",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "assistant_client_id": assistant_client_id,
+                }
+                assistant_sequence_id = await append_conversation_message(
+                    conversation_id=req.conversation_id,
+                    message_json=orjson.dumps(assistant_payload).decode("utf-8"),
+                    max_messages=history_limit,
+                    timeout_seconds=0.05,
                 )
+                if assistant_sequence_id is None:
+                    redis_append_failed = True
+                asyncio.create_task(_persist_assistant_message(assistant_sequence_id, full_content))
                 for index in range(0, len(full_content), chunk_size):
                     chunk = full_content[index : index + chunk_size]
                     record_chunk()
@@ -699,17 +765,22 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     sampled=True,
                 )
                 full_content = cached_response
-                await cache_set(
-                    idempotency_key,
-                    {
-                        "status": "completed",
-                        "response": full_content,
-                        "assistant_message_id": assistant_message_id,
-                        "mode": selected_mode,
-                        "prompt_mode": prompt_mode,
-                    },
-                    ttl=idempotency_ttl_seconds,
+                assistant_payload = {
+                    "role": "assistant",
+                    "content": full_content,
+                    "sequence_id": "__SEQ__",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "assistant_client_id": assistant_client_id,
+                }
+                assistant_sequence_id = await append_conversation_message(
+                    conversation_id=req.conversation_id,
+                    message_json=orjson.dumps(assistant_payload).decode("utf-8"),
+                    max_messages=history_limit,
+                    timeout_seconds=0.05,
                 )
+                if assistant_sequence_id is None:
+                    redis_append_failed = True
+                asyncio.create_task(_persist_assistant_message(assistant_sequence_id, full_content))
                 for index in range(0, len(cached_response), chunk_size):
                     chunk = cached_response[index : index + chunk_size]
                     record_chunk()
@@ -839,17 +910,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     )
                     full_content = _final_fallback_message(selected_mode)
                     yield emit("delta", {"delta": full_content, "assistant_message_id": assistant_message_id})
-                    await cache_set(
-                        idempotency_key,
-                        {
-                            "status": "completed",
-                            "response": full_content,
-                            "assistant_message_id": assistant_message_id,
-                            "mode": selected_mode,
-                            "prompt_mode": prompt_mode,
-                        },
-                        ttl=idempotency_ttl_seconds,
-                    )
+                    await finalize_assistant_message(full_content, cacheable=not req.regenerate)
                     yield emit("done", "[DONE]")
                     return
 
@@ -859,19 +920,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     record_chunk()
                     yield emit("delta", {"delta": chunk, "assistant_message_id": assistant_message_id})
                 yield emit("done", "[DONE]")
-                if not req.regenerate:
-                    await cache_set(cache_key, {"response": full_content}, ttl=cache_ttl_seconds)
-                await cache_set(
-                    idempotency_key,
-                    {
-                        "status": "completed",
-                        "response": full_content,
-                        "assistant_message_id": assistant_message_id,
-                        "mode": selected_mode,
-                        "prompt_mode": prompt_mode,
-                    },
-                    ttl=idempotency_ttl_seconds,
-                )
+                await finalize_assistant_message(full_content, cacheable=not req.regenerate)
                 return
 
             response_truncated = bool(timed_out and not aborted)
@@ -880,28 +929,8 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 full_content += cutoff_message
                 yield emit("delta", {"delta": cutoff_message, "assistant_message_id": assistant_message_id})
 
-            if full_content.strip() and not response_truncated and not req.regenerate:
-                await cache_set(cache_key, {"response": full_content}, ttl=cache_ttl_seconds)
-
             if full_content.strip():
-                await cache_set(
-                    idempotency_key,
-                    {
-                        "status": "completed",
-                        "response": full_content,
-                        "assistant_message_id": assistant_message_id,
-                        "mode": selected_mode,
-                        "prompt_mode": prompt_mode,
-                        "truncated": response_truncated,
-                    },
-                    ttl=idempotency_ttl_seconds,
-                )
-            else:
-                await cache_set(
-                    idempotency_key,
-                    {"status": "failed", "message_id": client_message_id},
-                    ttl=idempotency_ttl_seconds,
-                )
+                await finalize_assistant_message(full_content, cacheable=not req.regenerate)
 
             if not aborted:
                 yield emit("done", "[DONE]")
@@ -943,19 +972,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                         record_chunk()
                         yield emit("delta", {"delta": chunk, "assistant_message_id": assistant_message_id})
                     yield emit("done", "[DONE]")
-                    if not req.regenerate:
-                        await cache_set(cache_key, {"response": full_content}, ttl=cache_ttl_seconds)
-                    await cache_set(
-                        idempotency_key,
-                        {
-                            "status": "completed",
-                            "response": full_content,
-                            "assistant_message_id": assistant_message_id,
-                            "mode": selected_mode,
-                            "prompt_mode": prompt_mode,
-                        },
-                        ttl=idempotency_ttl_seconds,
-                    )
+                    await finalize_assistant_message(full_content, cacheable=not req.regenerate)
                     return
                 except Exception as fallback_exc:
                     logger.error(
@@ -973,41 +990,13 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     )
                     full_content = _final_fallback_message(selected_mode)
                     yield emit("delta", {"delta": full_content, "assistant_message_id": assistant_message_id})
-                    await cache_set(
-                        idempotency_key,
-                        {
-                            "status": "completed",
-                            "response": full_content,
-                            "assistant_message_id": assistant_message_id,
-                            "mode": selected_mode,
-                            "prompt_mode": prompt_mode,
-                        },
-                        ttl=idempotency_ttl_seconds,
-                    )
+                    await finalize_assistant_message(full_content, cacheable=not req.regenerate)
                     yield emit("done", "[DONE]")
                     return
             if aborted:
-                await cache_set(
-                    idempotency_key,
-                    {"status": "failed", "message_id": client_message_id},
-                    ttl=idempotency_ttl_seconds,
-                )
                 return
             if full_content.strip():
-                if not req.regenerate and not response_truncated:
-                    await cache_set(cache_key, {"response": full_content}, ttl=cache_ttl_seconds)
-                await cache_set(
-                    idempotency_key,
-                    {
-                        "status": "completed",
-                        "response": full_content,
-                        "assistant_message_id": assistant_message_id,
-                        "mode": selected_mode,
-                        "prompt_mode": prompt_mode,
-                        "partial": True,
-                    },
-                    ttl=idempotency_ttl_seconds,
-                )
+                await finalize_assistant_message(full_content, cacheable=not req.regenerate and not response_truncated)
                 mode_label = ""
                 if selected_mode == TECHNICAL_MODE:
                     mode_label = "technical "
@@ -1022,17 +1011,13 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 )
                 yield emit("done", "[DONE]")
                 return
-            await cache_set(
-                idempotency_key,
-                {"status": "failed", "message_id": client_message_id},
-                ttl=idempotency_ttl_seconds,
-            )
             yield emit("error", {"error": "Streaming failed"})
             yield emit("done", "[DONE]")
         finally:
             await cancel_pending_chunk_task()
             if stream is not None:
                 await close_stream(stream)
+            await _ingress_dedupe_clear(client_message_id)
             total_ms = (time.perf_counter() - start_time) * 1000
             avg_chunk_interval_ms = None
             if chunk_count > 1:
@@ -1053,6 +1038,26 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             stream_duration_ms = telemetry_sink.get("stream_duration_ms")
             token_usage = telemetry_sink.get("token_usage")
             estimated_cost_usd = telemetry_sink.get("estimated_cost_usd")
+            if not gatekeeper.degraded:
+                try:
+                    redis = await get_redis()
+                    if full_content.strip():
+                        response_hash = hashlib.sha256(full_content.encode("utf-8")).hexdigest()
+                        await redis.hset(idempotency_key, "status", "COMPLETED")
+                        await redis.hset(idempotency_key, "response", full_content)
+                        await redis.hset(idempotency_key, "response_hash", response_hash)
+                        await redis.hset(idempotency_key, "assistant_message_id", assistant_message_id)
+                        await redis.hset(idempotency_key, "completed_at", int(time.time()))
+                    else:
+                        await redis.hset(idempotency_key, "status", "EXPIRED")
+                        await redis.hset(idempotency_key, "expired_at", int(time.time()))
+                    await redis.expire(idempotency_key, idempotency_ttl_seconds)
+                except Exception as exc:
+                    logger.warning(
+                        "messages_idempotency_update_failed",
+                        request_id=request_id,
+                        error=str(exc),
+                    )
             log_sampled_success(
                 "messages_stream_observed",
                 request_id=request_id,
@@ -1079,27 +1084,14 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 timed_out=timed_out,
                 fallback_used=fallback_used,
                 stream_max_seconds=stream_max_seconds,
+                redis_eval_ms=redis_eval_ms,
+                prompt_build_ms=round(prompt_build_ms, 2),
+                time_to_first_token=round(first_token_ms, 2) if first_token_ms is not None else None,
+                redis_degraded=redis_degraded,
+                redis_append_failed=redis_append_failed,
+                snapshot_degraded=snapshot_degraded,
                 sampled=True,
             )
-            if assistant_message_id:
-                try:
-                    await asyncio.to_thread(
-                        lambda: supabase.table("messages")
-                        .update({"content": full_content})
-                        .eq("id", assistant_message_id)
-                        .execute()
-                    )
-                except Exception as exc:
-                    logger.error(
-                        "messages_assistant_update_failed",
-                        error=str(exc),
-                        request_id=request_id,
-                        user_id_hash=user_id_hash,
-                        message_id=assistant_message_id,
-                        retry=bool(req.regenerate),
-                        sampled=False,
-                    )
-
             status = "success"
             if aborted:
                 status = "aborted"
@@ -1107,16 +1099,18 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 status = "timed_out"
             elif stream_failed:
                 status = "error"
-            capture_telemetry_event(
-                "stream_end",
-                request_id=request_id,
-                user_id_hash=user_id_hash,
-                mode=selected_mode,
-                prompt_mode=prompt_mode,
-                regenerate=bool(req.regenerate),
-                status=status,
-                duration_ms=round(total_ms, 2),
-                fallback_used=fallback_used,
+            asyncio.create_task(
+                _capture_telemetry_async(
+                    "stream_end",
+                    request_id=request_id,
+                    user_id_hash=user_id_hash,
+                    mode=selected_mode,
+                    prompt_mode=prompt_mode,
+                    regenerate=bool(req.regenerate),
+                    status=status,
+                    duration_ms=round(total_ms, 2),
+                    fallback_used=fallback_used,
+                )
             )
             error_type = None
             error_message = None
@@ -1147,20 +1141,6 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 error_message=error_message,
             )
             asyncio.create_task(record_llm_request(payload))
-            if isinstance(token_usage, dict):
-                actual_tokens = int(token_usage.get("prompt_tokens") or 0) + int(
-                    token_usage.get("completion_tokens") or 0
-                )
-                if actual_tokens > 0:
-                    try:
-                        await refund_tokens(quota_reservation, actual_tokens)
-                    except Exception as exc:
-                        logger.warning(
-                            "messages_quota_refund_failed",
-                            error=str(exc),
-                            request_id=request_id,
-                            user_id_hash=user_id_hash,
-                        )
 
     return StreamingResponse(
         event_generator(),

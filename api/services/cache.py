@@ -34,12 +34,61 @@ class UpstashRedisCompat:
 
         return first.get("result") if isinstance(first, dict) else None
 
+    async def _execute_pipeline(self, commands: list[list[Any]]) -> list[Any]:
+        payload = [[str(part) for part in command] for command in commands]
+        response = await self._client.post("/pipeline", json=payload)
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, list):
+            raise RuntimeError("Invalid Upstash Redis pipeline response")
+        results = []
+        for item in data:
+            if isinstance(item, dict) and item.get("error"):
+                raise RuntimeError(str(item.get("error")))
+            results.append(item.get("result") if isinstance(item, dict) else None)
+        return results
+
     async def ping(self) -> bool:
         await self._execute("PING")
         return True
 
     async def get(self, key: str) -> Any:
         return await self._execute("GET", key)
+
+    async def delete(self, key: str) -> int:
+        result = await self._execute("DEL", key)
+        return int(result) if result is not None else 0
+
+    async def rpush(self, key: str, *values: Any) -> int:
+        result = await self._execute("RPUSH", key, *values)
+        return int(result) if result is not None else 0
+
+    async def ltrim(self, key: str, start: int, stop: int) -> bool:
+        result = await self._execute("LTRIM", key, int(start), int(stop))
+        return bool(result) if result is not None else True
+
+    async def lrange(self, key: str, start: int, stop: int) -> list[Any]:
+        result = await self._execute("LRANGE", key, int(start), int(stop))
+        return list(result) if isinstance(result, list) else []
+
+    async def hget(self, key: str, field: str) -> Any:
+        return await self._execute("HGET", key, field)
+
+    async def hset(self, key: str, field: str, value: Any) -> int:
+        result = await self._execute("HSET", key, field, value)
+        return int(result) if result is not None else 0
+
+    async def hgetall(self, key: str) -> dict[str, Any]:
+        result = await self._execute("HGETALL", key)
+        if not isinstance(result, list):
+            return {}
+        items = {}
+        for i in range(0, len(result), 2):
+            k = result[i]
+            v = result[i + 1] if i + 1 < len(result) else None
+            if k is not None:
+                items[str(k)] = v
+        return items
 
     async def setex(self, key: str, ttl: int, value: Any) -> bool:
         if isinstance(value, bytes):
@@ -63,6 +112,9 @@ class UpstashRedisCompat:
 
     async def eval(self, script: str, numkeys: int, *args: Any) -> Any:
         return await self._execute("EVAL", script, int(numkeys), *args)
+
+    async def pipeline(self, commands: list[list[Any]]) -> list[Any]:
+        return await self._execute_pipeline(commands)
 
     async def expire(self, key: str, ttl_seconds: int) -> bool:
         result = await self._execute("EXPIRE", key, int(ttl_seconds))
