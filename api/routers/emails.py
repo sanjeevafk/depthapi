@@ -35,6 +35,26 @@ def _resolve_user_name(auth: dict) -> str | None:
     return metadata.get("full_name") or user.email
 
 
+def _build_test_email(site_name: str, support_email: str, user_name: str | None):
+    greeting_name = user_name or "there"
+    subject = f"{site_name} test email"
+    html = (
+        "<div style=\"font-family: Arial, sans-serif; line-height: 1.6; color: #111;\">"
+        f"<h1 style=\"margin-bottom: 8px;\">{site_name} email test</h1>"
+        f"<p>Hi {greeting_name}, this is a test email to confirm delivery.</p>"
+        f"<p>If you did not request this, ignore it or contact {support_email}.</p>"
+        f"<p style=\"margin-top: 24px;\">— The {site_name} Team</p>"
+        "</div>"
+    )
+    text = (
+        f"{site_name} email test\n\n"
+        f"Hi {greeting_name}, this is a test email to confirm delivery.\n\n"
+        f"If you did not request this, ignore it or contact {support_email}.\n\n"
+        f"— The {site_name} Team"
+    )
+    return subject, html, text
+
+
 @router.post("/emails/welcome")
 async def send_welcome(background_tasks: BackgroundTasks, auth=Depends(verify_token)):
     settings = get_settings()
@@ -136,5 +156,36 @@ async def send_cancellation(
         template="cancellation",
         user_id=str(user.id),
         event_type="cancellation",
+    )
+    return {"queued": True}
+
+
+@router.post("/emails/test")
+async def send_test_email(background_tasks: BackgroundTasks, auth=Depends(verify_token)):
+    settings = get_settings()
+    user = auth["user"]
+    rl = await check_rate_limit(
+        identifier=str(user.id),
+        limit=max(int(settings.email_rate_limit_per_minute or 5), 1),
+        window_seconds=60,
+        namespace="email_test",
+        fail_open=True,
+    )
+    if not rl.allowed:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many email requests")
+    subject, html, text = _build_test_email(
+        settings.site_name,
+        settings.support_email,
+        _resolve_user_name(auth),
+    )
+    background_tasks.add_task(
+        send_email,
+        to=user.email,
+        subject=subject,
+        html=html,
+        text=text,
+        template="test",
+        user_id=str(user.id),
+        event_type="test",
     )
     return {"queued": True}
