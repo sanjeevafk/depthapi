@@ -59,8 +59,10 @@ async def send_email(
     metadata: dict[str, Any] | None = None,
 ) -> bool:
     settings = get_settings()
-    api_key = settings.resend_api_key
-    sender = settings.resend_from
+    api_key = ""
+    if settings.resend_api_key:
+        api_key = settings.resend_api_key.get_secret_value().strip()
+    sender = (settings.resend_from or "").strip()
 
     if not api_key:
         logger.warning("resend_missing_api_key")
