@@ -14,6 +14,7 @@ interface SendChatParams {
   promptMode: PromptMode;
   temperature: number;
   isPro: boolean;
+  history?: Array<{ role: "user" | "assistant" | "system"; content: string }>;
   isRegeneration?: boolean;
   clientMessageId: string;
   assistantClientId: string;
@@ -216,6 +217,7 @@ export async function sendChat(params: SendChatParams): Promise<void> {
             bypass_cache: Boolean(params.isRegeneration),
             temperature: params.temperature,
             message_id: params.clientMessageId,
+            history: params.history,
           }),
         });
 

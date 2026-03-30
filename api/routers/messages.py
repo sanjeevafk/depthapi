@@ -18,6 +18,15 @@ from monitoring import capture_telemetry_event
 from services.analytics import build_llm_request_payload, record_llm_request
 from services.cache import cache_get, cache_set, cache_set_if_absent
 from services.inference import TECHNICAL_MAX_TOKENS, generate_explanation, generate_stream_explanation
+from services.conversation_context import (
+    build_context_messages,
+    build_socratic_context,
+    extract_last_turns,
+)
+from services.conversation_intent import (
+    classify_conversation_intent,
+    build_intent_system_prompt,
+)
 from services.llm_client import get_provider_config_state
 from services.llm_errors import LLMUnavailable
 from services.rate_limit import enforce_request_controls, refund_tokens
@@ -66,11 +75,29 @@ class MessageRequest(BaseModel):
     regenerate: bool = False
 
 
-def _message_cache_key(content: str, mode: str, prompt_mode: str, temperature: float) -> str:
+def _message_cache_key(
+    content: str,
+    mode: str,
+    prompt_mode: str,
+    temperature: float,
+    context_signature: str = "",
+    intent_type: str = "",
+    intent_payload: str = "",
+) -> str:
     digest = hashlib.sha256(
-        f"{content}\x00{mode}\x00{prompt_mode}\x00{temperature:.2f}".encode("utf-8")
+        f"{content}\x00{mode}\x00{prompt_mode}\x00{temperature:.2f}\x00{context_signature}\x00{intent_type}\x00{intent_payload}".encode(
+            "utf-8"
+        )
     ).hexdigest()
     return f"knowbear:cache:{digest}"
+
+
+def _ack_response(mode: str) -> str:
+    if mode == TECHNICAL_MODE:
+        return "Understood. Share the next technical detail or question when ready."
+    if mode == SOCRATIC_MODE:
+        return "Got it. Whenever you're ready, share your next thought."
+    return "Got it. Let me know what you'd like to explore next."
 
 
 def _idempotency_key(user_id: str, message_id: str) -> str:
@@ -308,6 +335,54 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     if selected_mode == SOCRATIC_MODE and not is_pro:
         raise HTTPException(status_code=403, detail="Socratic mode is a Pro feature")
 
+    # ── Conversation context & intent ──────────────────────────────────────
+    history_rows: list[dict[str, Any]] = []
+    history_limit = max(int(getattr(config_settings, "conversation_context_fetch_limit", 80)), 1)
+    try:
+        history_resp = await asyncio.to_thread(
+            lambda: supabase.table("messages")
+            .select("role, content, created_at")
+            .eq("conversation_id", req.conversation_id)
+            .order("created_at", desc=True)
+            .limit(history_limit)
+            .execute()
+        )
+        history_rows = cast(list[dict[str, Any]], getattr(history_resp, "data", []) or [])
+    except Exception as exc:
+        logger.warning(
+            "messages_history_fetch_failed",
+            error=str(exc),
+            request_id=request_id,
+            user_id_hash=user_id_hash,
+            conversation_id=req.conversation_id,
+            sampled=False,
+        )
+
+    history_messages = [
+        {"role": str(row.get("role") or ""), "content": str(row.get("content") or "")}
+        for row in reversed(history_rows)
+    ]
+    last_user_message, last_assistant_message = extract_last_turns(history_messages)
+    has_prior = bool(last_user_message or last_assistant_message)
+    intent = classify_conversation_intent(content, has_prior=has_prior)
+    intent_system_prompt = build_intent_system_prompt(
+        intent,
+        correction_text=content if intent.type == "correction" else None,
+        clarification_text=content if intent.type == "clarification" else None,
+    )
+    context_messages, context_signature = build_context_messages(
+        history_messages,
+        max_tokens=max(int(getattr(config_settings, "conversation_context_max_tokens", 1200)), 1),
+        summary_max_tokens=max(int(getattr(config_settings, "conversation_context_summary_tokens", 240)), 0),
+    )
+    socratic_context = build_socratic_context(history_messages)
+
+    effective_content = content
+    if intent.type in {"correction", "clarification"} and last_user_message:
+        effective_content = last_user_message
+    ack_response = _ack_response(selected_mode) if intent.type == "acknowledgment" else None
+    intent_payload = content if intent.type in {"correction", "clarification"} else ""
+
     if selected_mode == TECHNICAL_MODE:
         max_output_tokens = TECHNICAL_MAX_TOKENS
     elif selected_mode == SOCRATIC_MODE:
@@ -315,7 +390,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     else:
         max_output_tokens = int(getattr(config_settings, "max_output_tokens_learning", 1024))
 
-    prompt_tokens = count_prompt_tokens(content)
+    prompt_tokens = count_prompt_tokens(effective_content)
     reserved_tokens = max(prompt_tokens + max_output_tokens, 1)
     client_ip = _resolve_client_ip(request, trusted_proxies=trusted_proxies)
     quota_reservation = await enforce_request_controls(
@@ -327,10 +402,13 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     )
     request_temperature = max(0.0, min(float(req.temperature), 1.0))
     cache_key = _message_cache_key(
-        content=content,
+        content=effective_content,
         mode=selected_mode,
         prompt_mode=prompt_mode,
         temperature=request_temperature,
+        context_signature=context_signature,
+        intent_type=intent.type,
+        intent_payload=intent_payload,
     )
     cached_payload = None if req.regenerate else await cache_get(cache_key)
     cached_response = cached_payload.get("response") if cached_payload else None
@@ -582,6 +660,26 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             }
             yield emit("meta", meta_payload)
 
+            if ack_response:
+                full_content = ack_response
+                await cache_set(
+                    idempotency_key,
+                    {
+                        "status": "completed",
+                        "response": full_content,
+                        "assistant_message_id": assistant_message_id,
+                        "mode": selected_mode,
+                        "prompt_mode": prompt_mode,
+                    },
+                    ttl=idempotency_ttl_seconds,
+                )
+                for index in range(0, len(full_content), chunk_size):
+                    chunk = full_content[index : index + chunk_size]
+                    record_chunk()
+                    yield emit("delta", {"delta": chunk, "assistant_message_id": assistant_message_id})
+                yield emit("done", "[DONE]")
+                return
+
             if cached_response:
                 telemetry_sink["token_usage"] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
                 log_sampled_success(
@@ -617,7 +715,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
 
             generation_start = time.perf_counter()
             stream = generate_stream_explanation(
-                content,
+                effective_content,
                 prompt_mode,
                 mode=selected_mode,
                 temperature=request_temperature,
@@ -626,6 +724,9 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 user_id=user_id,
                 is_pro=is_pro,
                 telemetry_sink=telemetry_sink,
+                conversation_messages=context_messages,
+                conversation_context=socratic_context,
+                intent_system_prompt=intent_system_prompt,
             )
             stream_iter = stream.__aiter__()
             start_deadline = start_time + stream_start_timeout_seconds
@@ -703,7 +804,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 try:
                     fallback_content = await asyncio.wait_for(
                         generate_explanation(
-                            content,
+                            effective_content,
                             prompt_mode,
                             mode=selected_mode,
                             temperature=request_temperature,
@@ -712,6 +813,9 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                             user_id=user_id,
                             is_pro=is_pro,
                             telemetry_sink=telemetry_sink,
+                            conversation_messages=context_messages,
+                            conversation_context=socratic_context,
+                            intent_system_prompt=intent_system_prompt,
                         ),
                         timeout=fallback_timeout_seconds,
                     )
@@ -814,7 +918,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 try:
                     fallback_content = await asyncio.wait_for(
                         generate_explanation(
-                            content,
+                            effective_content,
                             prompt_mode,
                             mode=selected_mode,
                             temperature=request_temperature,
@@ -823,6 +927,9 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                             user_id=user_id,
                             is_pro=is_pro,
                             telemetry_sink=telemetry_sink,
+                            conversation_messages=context_messages,
+                            conversation_context=socratic_context,
+                            intent_system_prompt=intent_system_prompt,
                         ),
                         timeout=fallback_timeout_seconds,
                     )
