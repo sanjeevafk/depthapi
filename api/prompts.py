@@ -30,6 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
+from utils import requests_depth
 
 
 # ===========================================================================
@@ -83,6 +84,27 @@ def build_uncertainty_clause(fallback_phrase: str) -> str:
         f"Uncertainty: If you are not confident you can answer this topic "
         f"accurately, do not guess. Respond with exactly:\n"
         f'"{fallback_phrase}"'
+    )
+
+
+def build_learning_length_rule(topic: str) -> str:
+    expanded = requests_depth(topic)
+    if expanded:
+        return (
+            "Target 80–100 words, hard cap 120 words. Use 2–4 sentences. "
+            "Always complete the final sentence. Compress instead of truncating: "
+            "tighten phrasing and drop low-value qualifiers or examples if needed. "
+            "If you cannot fit, give the minimal complete answer and add: "
+            "\"Ask to expand if needed.\" Pre-plan the response structure and "
+            "budget words per sentence before writing."
+        )
+    return (
+        "Target 40–50 words, hard cap 60 words. Use 1–2 sentences. "
+        "Always complete the final sentence. Compress instead of truncating: "
+        "tighten phrasing and drop low-value qualifiers or examples if needed. "
+        "If you cannot fit, give the minimal complete answer and add: "
+        "\"Ask to expand if needed.\" Pre-plan the response structure and "
+        "budget words per sentence before writing."
     )
 
 
@@ -676,7 +698,7 @@ def build_prompt(
                 uncertainty_clause=uncertainty_clause,
                 one_shot_example=example_block,
                 output_format=OUTPUT_PLAIN,
-                length_rule=cfg["length_rule"],
+                length_rule=build_learning_length_rule(topic),
             )
             .replace("{{topic}}", topic)   # double-brace escapes the topic slot
         )
