@@ -377,8 +377,6 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     socratic_context = build_socratic_context(history_messages)
 
     effective_content = content
-    if intent.type in {"correction", "clarification"} and last_user_message:
-        effective_content = last_user_message
     ack_response = _ack_response(selected_mode) if intent.type == "acknowledgment" else None
     intent_payload = content if intent.type in {"correction", "clarification"} else ""
 
