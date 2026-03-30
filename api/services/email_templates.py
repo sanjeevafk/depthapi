@@ -96,18 +96,31 @@ def build_subscription_confirmation_email(
       <p style="margin-top: 24px;">— The {site_name} Team</p>
     </div>
     """
-    text = (
-        f"Your {site_name} subscription is active\n\n"
-        f"Hi {greeting_name}, thanks for subscribing to the {plan_label} plan.\n"
-        "Your premium access is now enabled.\n"
-        f"{f'Next billing date: {next_billing}\n' if next_billing else ''}"
-        f"{f'Amount paid: {amount_line}\n' if amount_line else ''}"
-        f"{f'Payment ID: {payment_id}\n' if payment_id else ''}"
-        f"{f'Invoice: {safe_invoice_url}\n' if safe_invoice_url else ''}"
-        f"{f'Receipt: {safe_receipt_url}\n' if safe_receipt_url else ''}"
-        f"Need help? Email {support_email}.\n\n"
-        f"— The {site_name} Team"
+    text_lines = [
+        f"Your {site_name} subscription is active",
+        "",
+        f"Hi {greeting_name}, thanks for subscribing to the {plan_label} plan.",
+        "Your premium access is now enabled.",
+    ]
+    if next_billing:
+        text_lines.append(f"Next billing date: {next_billing}")
+    if amount_line:
+        text_lines.append(f"Amount paid: {amount_line}")
+    if payment_id:
+        text_lines.append(f"Payment ID: {payment_id}")
+    if safe_invoice_url:
+        text_lines.append(f"Invoice: {safe_invoice_url}")
+    if safe_receipt_url:
+        text_lines.append(f"Receipt: {safe_receipt_url}")
+    text_lines.extend(
+        [
+            "",
+            f"Need help? Email {support_email}.",
+            "",
+            f"— The {site_name} Team",
+        ]
     )
+    text = "\n".join(text_lines)
     return EmailContent(subject=subject, html=html.strip(), text=text)
 
 
