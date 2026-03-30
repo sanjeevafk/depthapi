@@ -5,10 +5,11 @@ import hashlib
 import json
 import re
 import time
-from typing import TypedDict
+from typing import TypedDict, cast
 import httpx
 import structlog
 from openai import APIConnectionError, APIStatusError, APITimeoutError
+from openai.types.chat import ChatCompletionMessageParam
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from config import get_settings
 from prompts import SYSTEM_PROMPT, DiagramType, build_prompt
@@ -1041,7 +1042,7 @@ async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **k
         )
         result = await create_chat_completion(
             model=alias,
-            messages=messages,
+            messages=cast(list[ChatCompletionMessageParam], messages),
             max_tokens=max_tokens,
             temperature=kwargs.get("temperature", 0.7),
             request_id=request_id,
@@ -1219,7 +1220,7 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         try:
             async for chunk in stream_chat_completion(
                 model=alias,
-                messages=messages,
+                messages=cast(list[ChatCompletionMessageParam], messages),
                 max_tokens=TECHNICAL_MAX_TOKENS,
                 temperature=TECHNICAL_TEMPERATURE,
                 request_id=request_id,
@@ -1338,11 +1339,14 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             max_tokens = int(getattr(settings, "max_output_tokens_socratic", 1024))
             async for chunk in stream_chat_completion(
                 model=alias,
-                messages=_build_messages(
-                    prompt,
-                    conversation_messages=kwargs.get("conversation_messages"),
-                    intent_system_prompt=kwargs.get("intent_system_prompt"),
-                    mode=mode,
+                messages=cast(
+                    list[ChatCompletionMessageParam],
+                    _build_messages(
+                        prompt,
+                        conversation_messages=kwargs.get("conversation_messages"),
+                        intent_system_prompt=kwargs.get("intent_system_prompt"),
+                        mode=mode,
+                    ),
                 ),
                 temperature=kwargs.get("temperature", 0.7),
                 max_tokens=max_tokens,
@@ -1423,11 +1427,14 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             max_tokens = int(getattr(settings, "max_output_tokens_learning", 1024))
             async for chunk in stream_chat_completion(
                 model=alias,
-                messages=_build_messages(
-                    prompt,
-                    conversation_messages=kwargs.get("conversation_messages"),
-                    intent_system_prompt=kwargs.get("intent_system_prompt"),
-                    mode=mode,
+                messages=cast(
+                    list[ChatCompletionMessageParam],
+                    _build_messages(
+                        prompt,
+                        conversation_messages=kwargs.get("conversation_messages"),
+                        intent_system_prompt=kwargs.get("intent_system_prompt"),
+                        mode=mode,
+                    ),
                 ),
                 temperature=kwargs.get("temperature", 0.7),
                 max_tokens=max_tokens,
