@@ -23,6 +23,7 @@ from services.rate_limit import enforce_request_controls, refund_tokens
 from services.streaming import SseEventBuilder, SSE_RESPONSE_HEADERS
 from services.token_count import count_prompt_tokens
 from services.conversation_context import (
+    ConversationMessage,
     build_context_messages,
     build_socratic_context,
     extract_last_turns,
@@ -271,7 +272,7 @@ async def query_topic(
         levels = ["eli15"]
 
     settings = get_settings()
-    history_messages = [
+    history_messages: list[ConversationMessage] = [
         {"role": str(item.role), "content": str(item.content or "")}
         for item in (req.history or [])
     ]
@@ -478,7 +479,7 @@ async def query_topic_stream(
     level = normalized_levels[0] if normalized_levels else "eli15"
 
     settings = get_settings()
-    history_messages = [
+    history_messages: list[ConversationMessage] = [
         {"role": str(item.role), "content": str(item.content or "")}
         for item in (req.history or [])
     ]
@@ -780,7 +781,7 @@ async def query_topic_stream(
             yield emit(
                 "meta",
                 {
-                    "topic": effective_topic,
+                    "topic": topic,
                     "level": level,
                     "mode": mode,
                     "message_id": message_id,
