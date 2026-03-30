@@ -292,7 +292,7 @@ async def query_topic(
     socratic_context = build_socratic_context(history_messages)
 
     effective_topic = topic
-    if intent.type in {"correction", "clarification"} and last_user_message:
+    if intent.type == "correction" and last_user_message:
         effective_topic = last_user_message
     intent_payload = topic if intent.type in {"correction", "clarification"} else ""
 
@@ -499,7 +499,7 @@ async def query_topic_stream(
     socratic_context = build_socratic_context(history_messages)
 
     effective_topic = topic
-    if intent.type in {"correction", "clarification"} and last_user_message:
+    if intent.type == "correction" and last_user_message:
         effective_topic = last_user_message
 
     intent_payload = topic if intent.type in {"correction", "clarification"} else ""

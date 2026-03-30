@@ -982,6 +982,7 @@ def _build_messages(
     if conversation_messages:
         messages.extend(conversation_messages)
     messages.append({"role": "user", "content": prompt})
+    assert any(msg.get("role") == "user" and msg.get("content") == prompt for msg in messages)
     return messages
 
 
