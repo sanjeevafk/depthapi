@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     anon_rph: int = 10
     max_output_tokens_learning: int = 1024
     max_output_tokens_socratic: int = 1024
+    conversation_context_max_tokens: int = 1200
+    conversation_context_summary_tokens: int = 240
+    conversation_context_fetch_limit: int = 80
     supabase_url: str = ""
     supabase_anon_key: str = ""
     supabase_service_role_key: SecretStr = SecretStr("")

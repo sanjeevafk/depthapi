@@ -943,14 +943,33 @@ def _append_search_context(prompt: str, context: str) -> str:
     )
 
 
-def _build_messages(prompt: str) -> list[dict[str, str]]:
+MODE_SYSTEM_PROMPTS = {
+    LEARNING_MODE: "Mode: Learning. Provide clear explanations and adapt depth to the user's request.",
+    SOCRATIC_MODE: "Mode: Socratic. Guide the user with questions rather than direct answers.",
+    TECHNICAL_MODE: "Mode: Technical. Provide precise, structured, technically rigorous responses.",
+}
+
+
+def _build_messages(
+    prompt: str,
+    *,
+    conversation_messages: list[dict[str, str]] | None = None,
+    intent_system_prompt: str | None = None,
+    mode: str | None = None,
+) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = []
     system_prompt = SYSTEM_PROMPT.strip()
     if system_prompt:
-        return [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
-        ]
-    return [{"role": "user", "content": prompt}]
+        messages.append({"role": "system", "content": system_prompt})
+    mode_prompt = MODE_SYSTEM_PROMPTS.get(mode or "", "").strip()
+    if mode_prompt:
+        messages.append({"role": "system", "content": mode_prompt})
+    if intent_system_prompt:
+        messages.append({"role": "system", "content": intent_system_prompt.strip()})
+    if conversation_messages:
+        messages.extend(conversation_messages)
+    messages.append({"role": "user", "content": prompt})
+    return messages
 
 
 async def _load_search_context(topic: str, *, mode: str) -> str:
@@ -1002,7 +1021,12 @@ async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **k
         anonymized_user_id = anonymize_user_id(str(kwargs.get("user_id") or "") or None)
         telemetry_sink = kwargs.get("telemetry_sink") if isinstance(kwargs.get("telemetry_sink"), dict) else None
         model_start = time.perf_counter()
-        messages = _build_messages(prompt)
+        messages = _build_messages(
+            prompt,
+            conversation_messages=kwargs.get("conversation_messages"),
+            intent_system_prompt=kwargs.get("intent_system_prompt"),
+            mode=kwargs.get("mode"),
+        )
         result = await create_chat_completion(
             model=alias,
             messages=messages,
@@ -1158,7 +1182,12 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         if not prompt or not prompt.strip():
             prompt = TECHNICAL_MINIMAL_PROMPT
         prompt = _append_search_context(prompt, search_context)
-        messages = _build_messages(prompt)
+        messages = _build_messages(
+            prompt,
+            conversation_messages=kwargs.get("conversation_messages"),
+            intent_system_prompt=kwargs.get("intent_system_prompt"),
+            mode=mode,
+        )
 
         primary_alias, _fallback_alias = _technical_route(
             topic,
@@ -1296,7 +1325,12 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             max_tokens = int(getattr(settings, "max_output_tokens_socratic", 1024))
             async for chunk in stream_chat_completion(
                 model=alias,
-                messages=_build_messages(prompt),
+                messages=_build_messages(
+                    prompt,
+                    conversation_messages=kwargs.get("conversation_messages"),
+                    intent_system_prompt=kwargs.get("intent_system_prompt"),
+                    mode=mode,
+                ),
                 temperature=kwargs.get("temperature", 0.7),
                 max_tokens=max_tokens,
                 request_id=request_id,
@@ -1370,7 +1404,12 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             max_tokens = int(getattr(settings, "max_output_tokens_learning", 1024))
             async for chunk in stream_chat_completion(
                 model=alias,
-                messages=_build_messages(prompt),
+                messages=_build_messages(
+                    prompt,
+                    conversation_messages=kwargs.get("conversation_messages"),
+                    intent_system_prompt=kwargs.get("intent_system_prompt"),
+                    mode=mode,
+                ),
                 temperature=kwargs.get("temperature", 0.7),
                 max_tokens=max_tokens,
                 request_id=request_id,
