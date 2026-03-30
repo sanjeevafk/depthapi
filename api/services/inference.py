@@ -19,7 +19,7 @@ from services.intent import (
     detect_diagram_type,
     validate_technical_response,
 )
-from utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE, normalize_mode
+from utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE, normalize_mode, requests_depth
 from services.llm_client import close_llm_client, create_chat_completion, stream_chat_completion
 
 _tech_logger = structlog.get_logger(__name__)
@@ -325,22 +325,126 @@ def _apply_length_constraint(prompt: str, constraint: tuple[str, int] | None) ->
         return prompt
     unit, count = constraint
     if unit == "chars":
-        return f"{prompt}\n\nLength constraint: respond in at most {count} characters."
-    return f"{prompt}\n\nLength constraint: respond in at most {count} words."
+        return (
+            f"{prompt}\n\nLength constraint: respond in at most {count} characters. "
+            "If this conflicts with earlier length guidance, follow this limit "
+            "and still complete the final sentence."
+        )
+    return (
+        f"{prompt}\n\nLength constraint: respond in at most {count} words. "
+        "If this conflicts with earlier length guidance, follow this limit "
+        "and still complete the final sentence."
+    )
 
 
-def _truncate_to_constraint(text: str, constraint: tuple[str, int] | None) -> str:
+def _normalize_whitespace(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "")).strip()
+
+
+def _word_count(text: str) -> int:
+    return len(re.findall(r"\S+", text or ""))
+
+
+def _split_sentences(text: str) -> list[str]:
+    normalized = _normalize_whitespace(text)
+    if not normalized:
+        return []
+    parts = re.split(r"(?<=[.!?])\s+", normalized)
+    return [part.strip() for part in parts if part and part.strip()]
+
+
+def _append_cue_if_fits(text: str, limit: int, cue: str | None) -> str:
+    if not cue:
+        return text
+    cue_words = _word_count(cue)
+    if _word_count(text) + cue_words <= limit:
+        return f"{text} {cue}".strip()
+    return text
+
+
+def _compress_sentence(sentence: str, limit: int) -> str:
+    cleaned = _normalize_whitespace(sentence)
+    if _word_count(cleaned) <= limit:
+        return cleaned
+    without_parentheticals = re.sub(r"\s*\([^)]*\)", "", cleaned).strip()
+    if _word_count(without_parentheticals) <= limit:
+        return without_parentheticals
+    words = without_parentheticals.split()
+    if not words:
+        return ""
+    cutoff = min(limit, len(words))
+    for index in range(cutoff, 0, -1):
+        if re.search(r"[,:;–—-]$", words[index - 1]):
+            trimmed = " ".join(words[:index]).rstrip(",;–—-")
+            return trimmed + ("" if trimmed.endswith((".", "!", "?")) else ".")
+    trimmed = " ".join(words[:cutoff]).rstrip(",;–—-")
+    return trimmed + ("" if trimmed.endswith((".", "!", "?")) else ".")
+
+
+def _enforce_word_limit(text: str, limit: int, *, cue: str | None = None) -> str:
+    normalized = _normalize_whitespace(text)
+    if not normalized:
+        return ""
+    if _word_count(normalized) <= limit:
+        return normalized
+    sentences = _split_sentences(normalized)
+    selected: list[str] = []
+    words_used = 0
+    for sentence in sentences:
+        sentence_words = _word_count(sentence)
+        if words_used + sentence_words <= limit:
+            selected.append(sentence)
+            words_used += sentence_words
+        else:
+            break
+    if selected:
+        result = " ".join(selected).strip()
+        return _append_cue_if_fits(result, limit, cue)
+    compressed = _compress_sentence(sentences[0] if sentences else normalized, limit)
+    return _append_cue_if_fits(compressed, limit, cue)
+
+
+def _enforce_length_constraint(text: str, constraint: tuple[str, int] | None) -> str:
     if not constraint:
         return text
     unit, count = constraint
     if count <= 0:
         return ""
     if unit == "chars":
-        return (text or "")[:count]
-    words = (text or "").split()
-    if len(words) <= count:
-        return text
-    return " ".join(words[:count])
+        normalized = _normalize_whitespace(text)
+        if len(normalized) <= count:
+            return normalized
+        sentences = _split_sentences(normalized)
+        selected = []
+        chars_used = 0
+        for sentence in sentences:
+            if chars_used + len(sentence) <= count:
+                selected.append(sentence)
+                chars_used += len(sentence) + (1 if selected else 0)
+            else:
+                break
+        if selected:
+            return " ".join(selected).strip()
+        return normalized[:count].rstrip() + ("." if normalized and normalized[-1] not in ".!?" else "")
+    return _enforce_word_limit(text, count)
+
+
+def _learning_length_policy(topic: str) -> tuple[int, str]:
+    if requests_depth(topic):
+        return (120, "Ask to expand if needed.")
+    return (60, "Ask to expand if needed.")
+
+
+def _drain_complete_sentences(buffer: str) -> tuple[list[str], str]:
+    if not buffer:
+        return [], ""
+    parts = re.split(r"(?<=[.!?])\s+", buffer)
+    if not buffer.strip().endswith((".", "!", "?")) and parts:
+        remainder = parts.pop()
+    else:
+        remainder = ""
+    sentences = [part.strip() for part in parts if part and part.strip()]
+    return sentences, remainder
 
 
 def is_low_quality(response: str) -> bool:
@@ -993,6 +1097,7 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
     prompt = _append_search_context(prompt, search_context)
     length_constraint = _extract_length_constraint(topic)
     prompt = _apply_length_constraint(prompt, length_constraint)
+    learn_cap, learn_cue = _learning_length_policy(topic)
         
     routed_aliases = route_model_aliases(
         topic,
@@ -1017,7 +1122,9 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
         max_tokens=max_tokens,
         **kwargs,
     )
-    return _truncate_to_constraint(response, length_constraint)
+    if length_constraint:
+        return _enforce_length_constraint(response, length_constraint)
+    return _enforce_word_limit(response, learn_cap, cue=learn_cue)
 async def generate_stream_explanation(topic: str, level: str, model: str | None = None, **kwargs):
     """Stream explanation for topic at given level."""
     mode = normalize_mode(kwargs.get("mode", LEARNING_MODE))
@@ -1248,12 +1355,17 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         target_words = None
         words_emitted = 0
         pending = ""
+        cue: str | None = None
+        emitted_any = False
+        trimmed_for_limit = False
         if length_constraint:
             unit, count = length_constraint
             if unit == "chars":
                 remaining_chars = count
             else:
                 target_words = count
+        else:
+            target_words, cue = _learning_length_policy(topic)
         try:
             max_tokens = int(getattr(settings, "max_output_tokens_learning", 1024))
             async for chunk in stream_chat_completion(
@@ -1281,24 +1393,24 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
 
                 if target_words is not None:
                     pending += text_chunk
-                    matches = list(re.finditer(r"\\S+", pending))
-                    if not matches:
+                    sentences, pending = _drain_complete_sentences(pending)
+                    if not sentences:
                         continue
-                    if words_emitted + len(matches) < target_words:
-                        streamed_chunks += 1
-                        words_emitted += len(matches)
-                        yield pending
-                        pending = ""
-                        continue
-                    remaining = target_words - words_emitted
-                    if remaining <= 0:
+                    for sentence in sentences:
+                        sentence_words = _word_count(sentence)
+                        if words_emitted + sentence_words <= target_words:
+                            streamed_chunks += 1
+                            prefix = "" if not emitted_any else " "
+                            yield f"{prefix}{sentence}"
+                            emitted_any = True
+                            words_emitted += sentence_words
+                        else:
+                            trimmed_for_limit = True
+                            pending = ""
+                            break
+                    if trimmed_for_limit:
                         break
-                    cutoff_match = matches[remaining - 1]
-                    streamed_chunks += 1
-                    words_emitted = target_words
-                    yield pending[: cutoff_match.end()]
-                    pending = ""
-                    break
+                    continue
 
                 streamed_chunks += 1
                 yield text_chunk
@@ -1317,6 +1429,29 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
                 yield "Unable to stream a response right now. Please try again."
             else:
                 yield "\n\n---\n*Response incomplete due to a service interruption.*"
+
+        if target_words is not None:
+            if not trimmed_for_limit:
+                final_pending = _normalize_whitespace(pending)
+                if final_pending:
+                    final_words = _word_count(final_pending)
+                    if words_emitted + final_words <= target_words:
+                        prefix = "" if not emitted_any else " "
+                        yield f"{prefix}{final_pending}"
+                        emitted_any = True
+                        words_emitted += final_words
+                    elif not emitted_any:
+                        compressed = _compress_sentence(final_pending, target_words)
+                        if compressed:
+                            result = _append_cue_if_fits(compressed, target_words, cue)
+                            yield result
+                            emitted_any = True
+                            words_emitted = _word_count(result)
+            if trimmed_for_limit and cue:
+                cue_words = _word_count(cue)
+                if words_emitted + cue_words <= target_words:
+                    prefix = "" if not emitted_any else " "
+                    yield f"{prefix}{cue}"
 
     stream_duration_ms = round((time.perf_counter() - stream_start) * 1000, 2)
     model_inference_ms = stream_telemetry.get("model_inference_ms")

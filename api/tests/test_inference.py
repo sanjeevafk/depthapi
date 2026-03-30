@@ -7,6 +7,11 @@ import services.inference as inference_module
 import services.llm_client as llm_client
 
 
+def _sentence_with_words(word_count: int) -> str:
+    words = [f"word{i}" for i in range(1, word_count + 1)]
+    return " ".join(words).strip() + "."
+
+
 @pytest.mark.asyncio
 async def test_generate_explanation_unknown_level():
     with pytest.raises(ValueError):
@@ -102,6 +107,72 @@ async def test_generate_explanation_search_failure_is_fail_soft(monkeypatch):
     result = await inference_module.generate_explanation("tcp", "eli10", mode="learning")
     assert "without external search" in result
     assert calls["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_learning_length_policy_default_adds_cue_when_trimmed(monkeypatch):
+    async def fake_search_context(_topic: str):
+        return ""
+
+    async def fake_call_model(*_args, **_kwargs):
+        return f"{_sentence_with_words(48)} {_sentence_with_words(20)}"
+
+    monkeypatch.setattr(inference_module.search_service, "get_search_context", fake_search_context)
+    monkeypatch.setattr(inference_module, "_call_with_quality_escalation", fake_call_model)
+
+    result = await inference_module.generate_explanation(
+        "volcanoes",
+        "eli10",
+        mode="learning",
+    )
+
+    words = result.split()
+    assert len(words) <= 60
+    assert result.endswith("Ask to expand if needed.")
+
+
+@pytest.mark.asyncio
+async def test_learning_length_policy_expanded_allows_more(monkeypatch):
+    async def fake_search_context(_topic: str):
+        return ""
+
+    async def fake_call_model(*_args, **_kwargs):
+        return f"{_sentence_with_words(70)} {_sentence_with_words(30)}"
+
+    monkeypatch.setattr(inference_module.search_service, "get_search_context", fake_search_context)
+    monkeypatch.setattr(inference_module, "_call_with_quality_escalation", fake_call_model)
+
+    result = await inference_module.generate_explanation(
+        "volcanoes explain more",
+        "eli10",
+        mode="learning",
+    )
+
+    words = result.split()
+    assert len(words) <= 120
+    assert result.endswith(".")
+
+
+@pytest.mark.asyncio
+async def test_learning_length_constraint_uses_complete_sentence(monkeypatch):
+    async def fake_search_context(_topic: str):
+        return ""
+
+    async def fake_call_model(*_args, **_kwargs):
+        return f"{_sentence_with_words(30)} {_sentence_with_words(30)} {_sentence_with_words(30)}"
+
+    monkeypatch.setattr(inference_module.search_service, "get_search_context", fake_search_context)
+    monkeypatch.setattr(inference_module, "_call_with_quality_escalation", fake_call_model)
+
+    result = await inference_module.generate_explanation(
+        "ocean currents in 50 words",
+        "eli10",
+        mode="learning",
+    )
+
+    words = result.split()
+    assert len(words) <= 50
+    assert result.endswith(".")
 
 
 @pytest.mark.asyncio
