@@ -294,7 +294,6 @@ async def query_topic(
     if intent.type in {"correction", "clarification"} and last_user_message:
         effective_topic = last_user_message
     intent_payload = topic if intent.type in {"correction", "clarification"} else ""
-    intent_payload = topic if intent.type in {"correction", "clarification"} else ""
 
     if intent.type == "acknowledgment":
         ack = _ack_response(mode)
@@ -501,6 +500,8 @@ async def query_topic_stream(
     effective_topic = topic
     if intent.type in {"correction", "clarification"} and last_user_message:
         effective_topic = last_user_message
+
+    intent_payload = topic if intent.type in {"correction", "clarification"} else ""
 
     if intent.type == "acknowledgment":
         ack = _ack_response(mode)
