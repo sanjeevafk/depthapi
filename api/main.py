@@ -8,6 +8,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
 from routers import (
     pinned,
     query,
@@ -102,6 +106,23 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+settings = get_settings()
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=(
+        [f"{max(int(settings.slowapi_default_limit_per_minute or 120), 1)}/minute"]
+        if settings.slowapi_enabled
+        else []
+    ),
+)
+app.state.limiter = limiter
+if settings.slowapi_enabled:
+    app.add_exception_handler(RateLimitExceeded, lambda request, exc: JSONResponse(
+        status_code=429,
+        content={"error": "Too many requests"},
+    ))
+    app.add_middleware(SlowAPIMiddleware)
+
 DEFAULT_ALLOWED_ORIGINS = (
     "https://knowbear.sanjeevkumar.me",
     "https://knowbear.vercel.app",
@@ -151,7 +172,7 @@ async def security_headers(request: Request, call_next):
         "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://vercel.live; " 
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' blob: data: https://*.googleusercontent.com; "
-        "connect-src 'self' https://*.supabase.co; "
+        "connect-src 'self' https://*.supabase.co https://auth.knowbear.app; "
         "font-src 'self' data:; "
         "object-src 'none'; "
         "base-uri 'self'; "
