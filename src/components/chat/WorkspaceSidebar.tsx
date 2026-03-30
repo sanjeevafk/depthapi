@@ -65,6 +65,21 @@ const WORKSPACE_OPTIONS: WorkspaceOption[] = [
   },
 ];
 
+const MODE_BADGE_LABELS: Record<Conversation["mode"], string> = {
+  learn: "Learn",
+  technical: "Technical",
+  socratic: "Socratic",
+};
+
+const MODE_BADGE_STYLES: Record<Conversation["mode"], string> = {
+  learn:
+    "border-cyan-200 bg-cyan-100 text-cyan-900 dark:border-cyan-500/30 dark:bg-cyan-500/10 dark:text-cyan-200",
+  technical:
+    "border-sky-200 bg-sky-100 text-sky-900 dark:border-sky-400/30 dark:bg-sky-500/10 dark:text-sky-200",
+  socratic:
+    "border-violet-200 bg-violet-100 text-violet-900 dark:border-violet-400/30 dark:bg-violet-500/10 dark:text-violet-200",
+};
+
 export default function WorkspaceSidebar({
   workspace,
   conversations,
@@ -269,6 +284,14 @@ export default function WorkspaceSidebar({
                 const deleteConversationAriaLabel = `Delete ${
                   conversation.title || "conversation"
                 }`;
+                const modeKey =
+                  conversation.mode === "technical" ||
+                  conversation.mode === "socratic" ||
+                  conversation.mode === "learn"
+                    ? conversation.mode
+                    : "learn";
+                const modeLabel = MODE_BADGE_LABELS[modeKey];
+                const modeStyle = MODE_BADGE_STYLES[modeKey];
 
                 return (
                   <div
@@ -290,12 +313,20 @@ export default function WorkspaceSidebar({
                         className="min-w-0 flex-1 text-left"
                         aria-label={openConversationAriaLabel}
                       >
-                        <p
-                          className="truncate text-sm font-medium text-slate-800 dark:text-slate-100"
-                          title={conversationTitle}
-                        >
-                          {conversationTitle}
-                        </p>
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <p
+                            className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800 dark:text-slate-100"
+                            title={conversationTitle}
+                          >
+                            {conversationTitle}
+                          </p>
+                          <span
+                            className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${modeStyle}`}
+                            aria-label={`Conversation mode: ${modeLabel}`}
+                          >
+                            {modeLabel}
+                          </span>
+                        </div>
                       </button>
                       <button
                         type="button"
