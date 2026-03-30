@@ -19,7 +19,7 @@ create table if not exists public.history (
   user_id uuid references public.users(id) on delete cascade not null,
   topic text not null,
   levels text[] not null, -- Array of levels queried
-  mode text default 'learning', -- Store which mode was used
+  mode text default 'learn', -- Store which mode was used
   created_at timestamptz default now()
 );
 

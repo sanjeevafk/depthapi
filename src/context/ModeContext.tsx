@@ -24,10 +24,10 @@ export function ModeProvider({
   const [searchParams, setSearchParams] = useSearchParams();
   const [mode, setModeState] = useState<Mode>(() => {
     const urlMode = searchParams.get("mode") as Mode;
-    if (["learning", "technical", "socratic"].includes(urlMode)) {
+    if (["learn", "technical", "socratic"].includes(urlMode)) {
       return urlMode;
     }
-    return "learning";
+    return "learn";
   });
 
   const setMode = useCallback(
@@ -50,7 +50,7 @@ export function ModeProvider({
     const urlMode = searchParams.get("mode") as Mode;
     if (
       urlMode &&
-      ["learning", "technical", "socratic"].includes(urlMode) &&
+      ["learn", "technical", "socratic"].includes(urlMode) &&
       urlMode !== mode
     ) {
       setModeState(urlMode);

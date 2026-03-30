@@ -31,7 +31,7 @@ async def test_query_stream_fallback_on_start_timeout(app_client, monkeypatch, t
 
     resp = await app_client.post(
         "/api/query/stream",
-        json={"topic": "test", "levels": ["eli5"], "mode": "learning", "message_id": "b3f5d29c-7b1a-4d68-9a8b-ef0b3b3a1c5a"},
+        json={"topic": "test", "levels": ["eli5"], "mode": "learn", "message_id": "b3f5d29c-7b1a-4d68-9a8b-ef0b3b3a1c5a"},
     )
 
     assert resp.status_code == 200
@@ -63,7 +63,7 @@ async def test_query_stream_allows_slow_first_chunk_without_cancel_loop(app_clie
 
     resp = await app_client.post(
         "/api/query/stream",
-        json={"topic": "test", "levels": ["eli5"], "mode": "learning", "bypass_cache": True},
+        json={"topic": "test", "levels": ["eli5"], "mode": "learn", "bypass_cache": True},
     )
 
     assert resp.status_code == 200
@@ -93,7 +93,7 @@ async def test_query_stream_fallback_on_stream_exception(app_client, monkeypatch
 
     resp = await app_client.post(
         "/api/query/stream",
-        json={"topic": "test", "levels": ["eli5"], "mode": "learning"},
+        json={"topic": "test", "levels": ["eli5"], "mode": "learn"},
     )
 
     assert resp.status_code == 200
@@ -127,7 +127,7 @@ async def test_query_stream_fallback_allows_slow_generation_budget(app_client, m
 
     resp = await app_client.post(
         "/api/query/stream",
-        json={"topic": "slow-fallback", "levels": ["eli5"], "mode": "learning"},
+        json={"topic": "slow-fallback", "levels": ["eli5"], "mode": "learn"},
     )
 
     assert resp.status_code == 200
@@ -151,7 +151,7 @@ async def test_query_stream_duplicate_in_progress_returns_wait(app_client, monke
     payload = {
         "topic": "duplicate",
         "levels": ["eli5"],
-        "mode": "learning",
+        "mode": "learn",
         "message_id": "f9d454fb-29ac-4be8-9c25-0a64d9fb0b3a",
     }
 
@@ -181,7 +181,7 @@ async def test_messages_idempotency_replay(app_client, monkeypatch, test_setting
 
     fake_supabase = FakeSupabase(
         responses={
-            "conversations": {"id": "conv-1", "user_id": user.id, "mode": "learning", "settings": {}},
+            "conversations": {"id": "conv-1", "user_id": user.id, "mode": "learn", "settings": {}},
             "messages": [{"id": "assistant-1"}],
             "users": {"is_pro": False},
         }
@@ -199,7 +199,7 @@ async def test_messages_idempotency_replay(app_client, monkeypatch, test_setting
             "content": "hello",
             "client_generated_id": "5c6f8d49-8330-4b8b-93a1-42f5e59f00f9",
             "assistant_client_id": "e6b7b0f4-3a71-4fd4-bf62-9c9c9d38937a",
-            "mode": "learning",
+            "mode": "learn",
             "prompt_mode": "eli5",
         }
 
@@ -242,7 +242,7 @@ async def test_messages_reclaims_stale_in_progress_idempotency(app_client, monke
 
     fake_supabase = FakeSupabase(
         responses={
-            "conversations": {"id": "conv-reclaim", "user_id": user.id, "mode": "learning", "settings": {}},
+            "conversations": {"id": "conv-reclaim", "user_id": user.id, "mode": "learn", "settings": {}},
             "messages": [{"id": "assistant-reclaim"}],
             "users": {"is_pro": False},
         }
@@ -262,7 +262,7 @@ async def test_messages_reclaims_stale_in_progress_idempotency(app_client, monke
             "content": "hello",
             "client_generated_id": "8a5f7736-2edb-4f7b-bf45-9b8f2ea1ea1e",
             "assistant_client_id": "8f2c9e58-0ae5-4fce-bc73-51f1ca6f43c4",
-            "mode": "learning",
+            "mode": "learn",
             "prompt_mode": "eli5",
         }
 
@@ -304,7 +304,7 @@ async def test_query_stream_idempotency_replay_with_message_id(app_client, monke
     payload = {
         "topic": "test",
         "levels": ["eli5"],
-        "mode": "learning",
+        "mode": "learn",
         "message_id": "232c2670-6ad8-48fb-a9a4-b416cc654e79",
     }
 
@@ -351,7 +351,7 @@ async def test_query_stream_stale_in_progress_does_not_clobber_completed_record(
     payload = {
         "topic": "race",
         "levels": ["eli5"],
-        "mode": "learning",
+        "mode": "learn",
         "message_id": "3e964baa-386f-4d2f-9cc4-3f0dc0855e61",
     }
 
@@ -385,7 +385,7 @@ async def test_messages_fallback_on_stream_exception(app_client, monkeypatch, te
 
     fake_supabase = FakeSupabase(
         responses={
-            "conversations": {"id": "conv-fallback", "user_id": user.id, "mode": "learning", "settings": {}},
+            "conversations": {"id": "conv-fallback", "user_id": user.id, "mode": "learn", "settings": {}},
             "messages": [{"id": "assistant-fallback"}],
             "users": {"is_pro": False},
         }
@@ -404,7 +404,7 @@ async def test_messages_fallback_on_stream_exception(app_client, monkeypatch, te
             "content": "hello",
             "client_generated_id": "3d204b5f-fbf4-4ef7-b223-5f58eab1e7bf",
             "assistant_client_id": "4f8ae3b6-d23f-4b17-9405-118fd7f79ece",
-            "mode": "learning",
+            "mode": "learn",
             "prompt_mode": "eli5",
         }
 
@@ -441,7 +441,7 @@ async def test_messages_allows_slow_first_chunk_without_cancel_loop(app_client, 
 
     fake_supabase = FakeSupabase(
         responses={
-            "conversations": {"id": "conv-slow-first", "user_id": user.id, "mode": "learning", "settings": {}},
+            "conversations": {"id": "conv-slow-first", "user_id": user.id, "mode": "learn", "settings": {}},
             "messages": [{"id": "assistant-slow-first"}],
             "users": {"is_pro": False},
         }
@@ -460,7 +460,7 @@ async def test_messages_allows_slow_first_chunk_without_cancel_loop(app_client, 
             "content": "hello",
             "client_generated_id": "9d78cfd2-4884-45dc-a5fc-cd6f8d415c62",
             "assistant_client_id": "b5a609ec-0e4c-46ca-b4a7-f3ec8e5f8499",
-            "mode": "learning",
+            "mode": "learn",
             "prompt_mode": "eli5",
             "regenerate": True,
         }
@@ -502,7 +502,7 @@ async def test_messages_fallback_allows_slow_generation_budget(app_client, monke
 
     fake_supabase = FakeSupabase(
         responses={
-            "conversations": {"id": "conv-slow-fallback", "user_id": user.id, "mode": "learning", "settings": {}},
+            "conversations": {"id": "conv-slow-fallback", "user_id": user.id, "mode": "learn", "settings": {}},
             "messages": [{"id": "assistant-slow-fallback"}],
             "users": {"is_pro": False},
         }
@@ -521,7 +521,7 @@ async def test_messages_fallback_allows_slow_generation_budget(app_client, monke
             "content": "hello",
             "client_generated_id": "c9f4ea73-a8ba-49fa-aef8-6b6bc8f4d7ca",
             "assistant_client_id": "1a2ecfdf-1ed2-49e9-ae18-22f6e3fbf54b",
-            "mode": "learning",
+            "mode": "learn",
             "prompt_mode": "eli5",
         }
 
@@ -604,7 +604,7 @@ async def test_query_stream_waits_for_history_persistence(app_client, monkeypatc
         start = time.perf_counter()
         resp = await app_client.post(
             "/api/query/stream",
-            json={"topic": "Persist stream", "levels": ["eli5"], "mode": "learning"},
+            json={"topic": "Persist stream", "levels": ["eli5"], "mode": "learn"},
         )
         elapsed = time.perf_counter() - start
 
@@ -687,7 +687,7 @@ async def test_query_stream_emits_single_done_when_stream_and_fallback_fail(app_
 
     resp = await app_client.post(
         "/api/query/stream",
-        json={"topic": "test", "levels": ["eli5"], "mode": "learning"},
+        json={"topic": "test", "levels": ["eli5"], "mode": "learn"},
     )
 
     assert resp.status_code == 200
@@ -730,7 +730,7 @@ async def test_query_stream_does_not_hang_when_stream_close_blocks(app_client, m
         json={
             "topic": "close timeout",
             "levels": ["eli5"],
-            "mode": "learning",
+            "mode": "learn",
             "bypass_cache": True,
         },
     )
@@ -763,7 +763,7 @@ async def test_messages_abort_logs_confirmation(app_client, monkeypatch, test_se
 
     fake_supabase = FakeSupabase(
         responses={
-            "conversations": {"id": "conv-2", "user_id": user.id, "mode": "learning", "settings": {}},
+            "conversations": {"id": "conv-2", "user_id": user.id, "mode": "learn", "settings": {}},
             "messages": [{"id": "assistant-2"}],
             "users": {"is_pro": False},
         }
@@ -792,7 +792,7 @@ async def test_messages_abort_logs_confirmation(app_client, monkeypatch, test_se
             "content": "hello",
             "client_generated_id": "ac62a2d6-6d44-4a3e-89b5-6c5a9b9d99a0",
             "assistant_client_id": "7e3e31c6-22c6-4f9c-8a6a-2aa5e1141bc5",
-            "mode": "learning",
+            "mode": "learn",
             "prompt_mode": "eli5",
         }
 
@@ -838,7 +838,7 @@ async def test_messages_stream_does_not_hang_when_stream_close_blocks(app_client
 
     fake_supabase = FakeSupabase(
         responses={
-            "conversations": {"id": "conv-close-timeout", "user_id": user.id, "mode": "learning", "settings": {}},
+            "conversations": {"id": "conv-close-timeout", "user_id": user.id, "mode": "learn", "settings": {}},
             "messages": [{"id": "assistant-close-timeout"}],
             "users": {"is_pro": False},
         }
@@ -857,7 +857,7 @@ async def test_messages_stream_does_not_hang_when_stream_close_blocks(app_client
             "content": "hang-close-timeout-check",
             "client_generated_id": "f4e667f4-bde8-4ac2-9f0f-b9d213444745",
             "assistant_client_id": "89189fc9-82d6-48f7-96dd-f9cbd585f3f8",
-            "mode": "learning",
+            "mode": "learn",
             "prompt_mode": "eli5",
             "regenerate": True,
         }
@@ -899,7 +899,7 @@ async def test_messages_fallback_when_stream_completes_without_chunks(app_client
 
     fake_supabase = FakeSupabase(
         responses={
-            "conversations": {"id": "conv-empty-stream", "user_id": user.id, "mode": "learning", "settings": {}},
+            "conversations": {"id": "conv-empty-stream", "user_id": user.id, "mode": "learn", "settings": {}},
             "messages": [{"id": "assistant-empty-stream"}],
             "users": {"is_pro": False},
         }
@@ -918,7 +918,7 @@ async def test_messages_fallback_when_stream_completes_without_chunks(app_client
             "content": "empty-stream-check",
             "client_generated_id": "b6ff4c4b-4ce9-45ff-bf88-99160fe8d45e",
             "assistant_client_id": "9ea7ea2f-80d0-43b7-b227-6279400df4c6",
-            "mode": "learning",
+            "mode": "learn",
             "prompt_mode": "eli5",
             "regenerate": True,
         }
@@ -946,7 +946,7 @@ async def test_messages_technical_mode_blocks_free_user(app_client, monkeypatch,
 
     fake_supabase = FakeSupabase(
         responses={
-            "conversations": {"id": "conv-tech", "user_id": user.id, "mode": "learning", "settings": {}},
+            "conversations": {"id": "conv-tech", "user_id": user.id, "mode": "learn", "settings": {}},
             "users": {"is_pro": False},
         }
     )
@@ -1036,7 +1036,7 @@ async def test_messages_regeneration_forwards_temperature(app_client, monkeypatc
 
     fake_supabase = FakeSupabase(
         responses={
-            "conversations": {"id": "conv-regen", "user_id": user.id, "mode": "learning", "settings": {}},
+            "conversations": {"id": "conv-regen", "user_id": user.id, "mode": "learn", "settings": {}},
             "messages": [{"id": "assistant-regen"}],
             "users": {"is_pro": False},
         }
@@ -1054,7 +1054,7 @@ async def test_messages_regeneration_forwards_temperature(app_client, monkeypatc
             "content": "hello",
             "client_generated_id": "889e2f13-b55e-46cd-b8de-c640f81b4cab",
             "assistant_client_id": "d5e814fd-5ff7-4c8f-88e2-4e09e2e25028",
-            "mode": "learning",
+            "mode": "learn",
             "prompt_mode": "eli5",
             "regenerate": True,
             "temperature": 0.9,
@@ -1085,10 +1085,10 @@ async def test_messages_untrusted_peer_ignores_forwarded_headers(app_client, mon
         captured["client_ip"] = str(kwargs.get("client_ip", ""))
         return TokenReservation(
             identifier="user:test",
-            mode="learning",
+            mode="learn",
             reserved_tokens=100,
-            daily_key="knowbear:quota:user:test:learning",
-            hourly_key="knowbear:quota_hour:user:test:learning",
+            daily_key="knowbear:quota:user:test:learn",
+            hourly_key="knowbear:quota_hour:user:test:learn",
             hourly_bucket=0,
             is_anonymous=False,
         )
@@ -1098,7 +1098,7 @@ async def test_messages_untrusted_peer_ignores_forwarded_headers(app_client, mon
 
     fake_supabase = FakeSupabase(
         responses={
-            "conversations": {"id": "conv-ip-untrusted", "user_id": user.id, "mode": "learning", "settings": {}},
+            "conversations": {"id": "conv-ip-untrusted", "user_id": user.id, "mode": "learn", "settings": {}},
             "messages": [{"id": "assistant-ip-untrusted"}],
             "users": {"is_pro": False},
         }
@@ -1117,7 +1117,7 @@ async def test_messages_untrusted_peer_ignores_forwarded_headers(app_client, mon
             "content": "hello",
             "client_generated_id": "2c801f77-0ab9-4e7d-a7b6-b95b69f8627e",
             "assistant_client_id": "d6353ce2-47c3-4c7f-9c1d-6d7f8df6f4ed",
-            "mode": "learning",
+            "mode": "learn",
             "prompt_mode": "eli5",
         }
 
@@ -1151,10 +1151,10 @@ async def test_messages_trusted_peer_uses_leftmost_forwarded_ip(app_client, monk
         captured["client_ip"] = str(kwargs.get("client_ip", ""))
         return TokenReservation(
             identifier="user:test",
-            mode="learning",
+            mode="learn",
             reserved_tokens=100,
-            daily_key="knowbear:quota:user:test:learning",
-            hourly_key="knowbear:quota_hour:user:test:learning",
+            daily_key="knowbear:quota:user:test:learn",
+            hourly_key="knowbear:quota_hour:user:test:learn",
             hourly_bucket=0,
             is_anonymous=False,
         )
@@ -1164,7 +1164,7 @@ async def test_messages_trusted_peer_uses_leftmost_forwarded_ip(app_client, monk
 
     fake_supabase = FakeSupabase(
         responses={
-            "conversations": {"id": "conv-ip-trusted", "user_id": user.id, "mode": "learning", "settings": {}},
+            "conversations": {"id": "conv-ip-trusted", "user_id": user.id, "mode": "learn", "settings": {}},
             "messages": [{"id": "assistant-ip-trusted"}],
             "users": {"is_pro": False},
         }
@@ -1183,7 +1183,7 @@ async def test_messages_trusted_peer_uses_leftmost_forwarded_ip(app_client, monk
             "content": "hello",
             "client_generated_id": "a01174ef-82f6-4e83-bcbf-b98f8f95fe0e",
             "assistant_client_id": "77a3d538-f47e-4ab2-befd-d92465274e20",
-            "mode": "learning",
+            "mode": "learn",
             "prompt_mode": "eli5",
         }
 
@@ -1226,7 +1226,7 @@ async def test_messages_stream_performance_guardrails(app_client, monkeypatch, t
 
     fake_supabase = FakeSupabase(
         responses={
-            "conversations": {"id": "conv-perf", "user_id": user.id, "mode": "learning", "settings": {}},
+            "conversations": {"id": "conv-perf", "user_id": user.id, "mode": "learn", "settings": {}},
             "messages": [{"id": "assistant-perf"}],
             "users": {"is_pro": False},
         }
@@ -1245,7 +1245,7 @@ async def test_messages_stream_performance_guardrails(app_client, monkeypatch, t
             "content": "hello",
             "client_generated_id": "03d91f7c-69f9-4c2c-9f6a-3773aa6cd03b",
             "assistant_client_id": "2e3c2a2d-2a7f-4932-8a5c-2d2878aa2c90",
-            "mode": "learning",
+            "mode": "learn",
             "prompt_mode": "eli5",
         }
 

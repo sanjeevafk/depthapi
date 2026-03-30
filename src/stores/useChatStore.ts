@@ -414,7 +414,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     );
     get().setPromptMode(level as PromptMode);
     if (useConversationStore.getState().workspace === "learn") {
-      get().setMode("learning");
+      get().setMode("learn");
     }
   },
 

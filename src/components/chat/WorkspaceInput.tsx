@@ -20,7 +20,7 @@ const WORKSPACE_PLACEHOLDERS: Record<Workspace, string> = {
 };
 
 const MODE_BY_WORKSPACE: Record<Workspace, ChatMode> = {
-  learn: "learning",
+  learn: "learn",
   socratic: "socratic",
   technical: "technical",
 };

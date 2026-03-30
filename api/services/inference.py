@@ -867,14 +867,26 @@ def _extract_socratic_questions(response: str) -> list[str]:
     return unique_questions
 
 
-def _enforce_socratic_response_constraints(response: str) -> str:
+def _should_append_socratic_guidance(conversation_messages: list[dict[str, str]] | None) -> bool:
+    if not conversation_messages:
+        return True
+    return not any(msg.get("role") == "assistant" for msg in conversation_messages)
+
+
+def _enforce_socratic_response_constraints(
+    response: str,
+    *,
+    include_guidance: bool = True,
+) -> str:
     """Return a concise Socratic reply capped to 2-3 progressive questions."""
     questions = _extract_socratic_questions(response)
     if not questions:
         return response
 
     constrained = "\n".join(questions[:3])
-    return f"{constrained}\n\nShare your answer, and I will guide the next step."
+    if include_guidance:
+        return f"{constrained}\n\nShare your answer, and I will guide the next step."
+    return constrained
 
 
 def _extract_usage_dict(usage_obj) -> dict[str, int] | None:
@@ -1114,7 +1126,8 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
             max_tokens=max_tokens,
             **kwargs,
         )
-        return _enforce_socratic_response_constraints(response)
+        include_guidance = _should_append_socratic_guidance(kwargs.get("conversation_messages"))
+        return _enforce_socratic_response_constraints(response, include_guidance=include_guidance)
 
     search_context = await _load_search_context(topic, mode=LEARNING_MODE)
     prompt = build_prompt(level, topic)
@@ -1375,9 +1388,15 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             )
 
         if emitted_questions > 0:
-            yield "\n\nShare your answer, and I will guide the next step."
+            include_guidance = _should_append_socratic_guidance(kwargs.get("conversation_messages"))
+            if include_guidance:
+                yield "\n\nShare your answer, and I will guide the next step."
         else:
-            constrained_response = _enforce_socratic_response_constraints("".join(socratic_raw_chunks))
+            include_guidance = _should_append_socratic_guidance(kwargs.get("conversation_messages"))
+            constrained_response = _enforce_socratic_response_constraints(
+                "".join(socratic_raw_chunks),
+                include_guidance=include_guidance,
+            )
             fallback_response = constrained_response.strip()
             if socratic_error is not None and not fallback_response:
                 fallback_response = "I hit a temporary issue while streaming. Please try again."

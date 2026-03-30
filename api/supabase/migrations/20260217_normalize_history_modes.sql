@@ -2,6 +2,6 @@
 update "public"."history"
 set mode = case
   when mode in ('technical-depth', 'technical_depth') then 'technical'
-  else 'learning'
+  else 'learn'
 end
-where mode not in ('learning', 'technical', 'socratic');
+where mode not in ('learn', 'technical', 'socratic');

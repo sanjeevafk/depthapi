@@ -19,7 +19,7 @@ describe("LoadingState", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<LoadingState mode="learning" level="eli5" topic="math" />);
+    render(<LoadingState mode="learn" level="eli5" topic="math" />);
 
     expect(await screen.findByText(/«Test quote» — Ada/i)).toBeInTheDocument();
   });
@@ -28,7 +28,7 @@ describe("LoadingState", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("fail")));
     vi.spyOn(Math, "random").mockReturnValue(0);
 
-    render(<LoadingState mode="learning" level="eli10" topic="history" />);
+    render(<LoadingState mode="learn" level="eli10" topic="history" />);
 
     const fallbackQuote = FALLBACK_QUOTES[0];
     expect(await screen.findByText(fallbackQuote)).toBeInTheDocument();

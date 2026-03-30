@@ -40,7 +40,7 @@ export function UsageGateProvider({
 
   const checkAction = (
     action: ActionType,
-    mode: string = "learning",
+    mode: string = "learn",
   ): { allowed: boolean; downgraded?: boolean } => {
     // PRO users bypass all limits
     if (isPro) {
@@ -57,7 +57,7 @@ export function UsageGateProvider({
     // SEARCH logic
     if (action === "search") {
       // Learning mode is available to everyone.
-      if (mode === "learning") {
+      if (mode === "learn") {
         return { allowed: true };
       }
 
@@ -73,9 +73,9 @@ export function UsageGateProvider({
     return { allowed: true };
   };
 
-  const recordAction = (action: ActionType, mode: string = "learning") => {
+  const recordAction = (action: ActionType, mode: string = "learn") => {
     if (action === "search") {
-      if (!user && mode !== "learning") {
+      if (!user && mode !== "learn") {
         guestMode.incrementUsage();
       }
     }

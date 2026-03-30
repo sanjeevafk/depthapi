@@ -22,7 +22,7 @@ async def test_analytics_usage_returns_items(app_client, monkeypatch, fake_supab
         return {"user": types.SimpleNamespace(app_metadata={"role": "admin"})}
 
     fake_supabase.responses["llm_requests"] = [
-        {"id": "1", "model_alias": "default-fast", "mode": "learning"}
+        {"id": "1", "model_alias": "default-fast", "mode": "learn"}
     ]
 
     monkeypatch.setattr(auth_module, "get_supabase_admin", lambda: fake_supabase)

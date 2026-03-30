@@ -17,11 +17,11 @@ export {
 };
 
 const SHARED_CONVERSATION_MODES = [
-  "learning",
+  "learn",
   "technical",
   "socratic",
 ] as const;
-const SHARED_FREE_MODES = ["learning", "socratic"] as const;
+const SHARED_FREE_MODES = ["learn", "socratic"] as const;
 const SHARED_PREMIUM_MODES = ["technical"] as const;
 
 const matchesSharedModes = (
@@ -46,7 +46,7 @@ if (import.meta.env.DEV) {
 }
 
 export const CHAT_DEFAULT_MODE: PromptMode = "eli5";
-export const CHAT_DEFAULT_CONVERSATION_MODE: ChatMode = "learning";
+export const CHAT_DEFAULT_CONVERSATION_MODE: ChatMode = "learn";
 
 export const CHAT_MODE_LABELS: Record<ChatMode, string> = {
   eli5: "ELI5",
@@ -54,7 +54,7 @@ export const CHAT_MODE_LABELS: Record<ChatMode, string> = {
   eli12: "ELI12",
   eli15: "ELI15",
   meme: "Meme",
-  learning: "Learning",
+  learn: "Learn",
   technical: "Technical",
   socratic: "Socratic",
 };
@@ -65,7 +65,7 @@ export const CHAT_MODE_DESCRIPTIONS: Record<ChatMode, string> = {
   eli12: "Middle-school friendly depth.",
   eli15: "High-school level clarity.",
   meme: "Punchy, funny analogies.",
-  learning: "General learning with adaptive provider routing and web freshness.",
+  learn: "General learning with adaptive provider routing and web freshness.",
   technical:
     "Technical explanations with search-aware context and structured clarity.",
   socratic: "Guided, question-first learning to build understanding step by step.",
@@ -77,7 +77,7 @@ export const CHAT_MODE_ACCENTS: Record<ChatMode, string> = {
   eli12: "text-blue-200",
   eli15: "text-indigo-200",
   meme: "text-pink-200",
-  learning: "text-cyan-200",
+  learn: "text-cyan-200",
   technical: "text-sky-200",
   socratic: "text-violet-200",
 };
@@ -88,7 +88,7 @@ export const CHAT_MODE_STYLES: Record<ChatMode, string> = {
   eli12: "bg-blue-500/10 text-blue-300 border border-blue-500/20",
   eli15: "bg-indigo-500/10 text-indigo-300 border border-indigo-500/20",
   meme: "bg-pink-500/10 text-pink-300 border border-pink-500/20",
-  learning: "bg-cyan-500/10 text-cyan-300 border border-cyan-500/20",
+  learn: "bg-cyan-500/10 text-cyan-300 border border-cyan-500/20",
   technical: "bg-sky-500/10 text-sky-300 border border-sky-500/20",
   socratic: "bg-violet-500/10 text-violet-300 border border-violet-500/20",
 };
@@ -138,7 +138,7 @@ export const formatModeLabel = (mode?: ConversationMode | null) => {
 };
 
 export const toQueryLevel = (mode: ChatMode | PromptMode) => {
-  if (mode === "learning" || mode === "technical" || mode === "socratic")
+  if (mode === "learn" || mode === "technical" || mode === "socratic")
     return "eli15";
   return mode;
 };
@@ -152,7 +152,7 @@ export const CHAT_DROPDOWN_MODES: ChatMode[] = [
 
 export const CHAT_QUICK_MODES: ChatMode[] = [
   "meme",
-  "learning",
+  "learn",
   "technical",
   "socratic",
 ];

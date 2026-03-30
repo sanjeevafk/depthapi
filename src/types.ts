@@ -9,12 +9,12 @@ export interface QueryRequest {
   levels?: string[];
   premium?: boolean;
   bypass_cache?: boolean;
-  mode?: "learning" | "technical" | "socratic";
+  mode?: "learn" | "technical" | "socratic";
   temperature?: number;
   regenerate?: boolean;
 }
 
-export type Mode = "learning" | "technical" | "socratic";
+export type Mode = "learn" | "technical" | "socratic";
 
 export interface QueryResponse {
   topic: string;

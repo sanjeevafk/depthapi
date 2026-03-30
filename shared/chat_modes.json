@@ -1,11 +1,11 @@
 {
   "chat_modes": [
-    "learning",
+    "learn",
     "technical",
     "socratic"
   ],
   "free_modes": [
-    "learning"
+    "learn"
   ],
   "prompt_modes": [
     "eli5",
@@ -18,4 +18,4 @@
     "technical",
     "socratic"
   ],
-  "default_mode": "learning"}
+  "default_mode": "learn"}

@@ -25,8 +25,8 @@ const MODES: {
   premium: boolean;
 }[] = [
   {
-    id: "learning",
-    label: "Learning",
+    id: "learn",
+    label: "Learn",
     description: "Optimized responses for general learning.",
     icon: BookOpen,
     color: "text-teal-400",

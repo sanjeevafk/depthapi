@@ -96,7 +96,7 @@ async def test_query_degraded_when_provider_keys_missing(app_client, test_settin
     try:
         resp = await app_client.post(
             "/api/query",
-            json={"topic": "provider routing", "levels": ["eli15"], "mode": "learning"},
+            json={"topic": "provider routing", "levels": ["eli15"], "mode": "learn"},
         )
         assert resp.status_code == 503
         payload = resp.json()
@@ -119,7 +119,7 @@ async def test_invalid_provider_key_returns_structured_error(app_client, monkeyp
 
     resp = await app_client.post(
         "/api/query",
-        json={"topic": "provider invalid key", "levels": ["eli15"], "mode": "learning", "bypass_cache": True},
+        json={"topic": "provider invalid key", "levels": ["eli15"], "mode": "learn", "bypass_cache": True},
     )
     assert resp.status_code == 502
     payload = resp.json()

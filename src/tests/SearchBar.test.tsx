@@ -22,7 +22,7 @@ describe("SearchBar", () => {
       <SearchBar
         onSearch={() => {}}
         loading={false}
-        mode="learning"
+        mode="learn"
         onModeChange={() => {}}
       />,
     );
@@ -40,7 +40,7 @@ describe("SearchBar", () => {
       <SearchBar
         onSearch={onSearch}
         loading={false}
-        mode="learning"
+        mode="learn"
         onModeChange={() => {}}
       />,
     );
@@ -55,7 +55,7 @@ describe("SearchBar", () => {
       <SearchBar
         onSearch={() => {}}
         loading
-        mode="learning"
+        mode="learn"
         onModeChange={() => {}}
       />,
     );
