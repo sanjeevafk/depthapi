@@ -3,12 +3,69 @@ import time
 from types import SimpleNamespace
 
 import pytest
+from starlette.requests import Request
 
 import main as main_app
 import routers.messages as messages_module
 import routers.query as query_module
+import services.message_gate as message_gate
+
+def _disable_gatekeeper(monkeypatch):
+    async def _allow(**_kwargs):
+        return message_gate.GatekeeperResult(
+            allowed=True,
+            retry_after=0,
+            idempotency_status=None,
+            idempotency_response=None,
+            degraded=True,
+            redis_eval_ms=0.0,
+        )
+    monkeypatch.setattr(message_gate, "gatekeep_message_request", _allow)
+    monkeypatch.setattr(messages_module, "gatekeep_message_request", _allow)
+
+def _use_test_gatekeeper(monkeypatch, *, stale_seconds: int = 20, ttl_seconds: int = 90):
+    async def _gatekeep(**kwargs):
+        idempotency_key = kwargs.get("idempotency_key")
+        redis = await message_gate.get_redis()
+        now_ts = int(time.time())
+        status = await redis.hget(idempotency_key, "status")
+        if status == "COMPLETED":
+            response = await redis.hget(idempotency_key, "response")
+            return message_gate.GatekeeperResult(
+                allowed=True,
+                retry_after=0,
+                idempotency_status="COMPLETED",
+                idempotency_response=response,
+                degraded=False,
+                redis_eval_ms=0.0,
+            )
+        if status == "PENDING":
+            started_at = int(await redis.hget(idempotency_key, "started_at") or 0)
+            if started_at > 0 and (now_ts - started_at) < stale_seconds:
+                return message_gate.GatekeeperResult(
+                    allowed=False,
+                    retry_after=ttl_seconds,
+                    idempotency_status="PENDING",
+                    idempotency_response=None,
+                    degraded=False,
+                    redis_eval_ms=0.0,
+                )
+            await redis.hset(idempotency_key, "status", "EXPIRED")
+            await redis.hset(idempotency_key, "expired_at", now_ts)
+
+        await redis.hset(idempotency_key, "status", "PENDING")
+        await redis.hset(idempotency_key, "started_at", now_ts)
+        return message_gate.GatekeeperResult(
+            allowed=True,
+            retry_after=0,
+            idempotency_status="PENDING",
+            idempotency_response=None,
+            degraded=False,
+            redis_eval_ms=0.0,
+        )
+    monkeypatch.setattr(message_gate, "gatekeep_message_request", _gatekeep)
+    monkeypatch.setattr(messages_module, "gatekeep_message_request", _gatekeep)
 from conftest import FakeSupabase
-from services.rate_limit import TokenReservation
 
 
 @pytest.mark.asyncio
@@ -167,14 +224,12 @@ async def test_messages_idempotency_replay(app_client, monkeypatch, test_setting
     test_settings.stream_start_timeout_seconds = 0.5
     test_settings.stream_max_seconds = 2
     test_settings.stream_heartbeat_seconds = 0.1
+    _use_test_gatekeeper(monkeypatch)
 
     user = SimpleNamespace(id="user-123", email="user@example.com", user_metadata={})
 
     async def fake_verify_token():
-        return {"user": user}
-
-    async def fake_is_pro(*_args, **_kwargs):
-        return False
+        return {"user": user, "is_pro": False, "exp": time.time() + 600}
 
     async def fast_stream(*_args, **_kwargs):
         yield "hello"
@@ -188,7 +243,6 @@ async def test_messages_idempotency_replay(app_client, monkeypatch, test_setting
     )
 
     main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
-    monkeypatch.setattr(messages_module, "check_is_pro", fake_is_pro)
     monkeypatch.setattr(messages_module, "generate_stream_explanation", fast_stream)
     monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: fake_supabase)
     monkeypatch.setattr(messages_module, "get_settings", lambda: test_settings)
@@ -208,6 +262,7 @@ async def test_messages_idempotency_replay(app_client, monkeypatch, test_setting
         assert "event: delta" in resp.text
         assert "id:" in resp.text
         assert "hello" in resp.text
+        await asyncio.sleep(0)
         assert len(fake_supabase.inserts) == 2
 
         replay = await app_client.post("/api/messages", json=payload)
@@ -219,26 +274,16 @@ async def test_messages_idempotency_replay(app_client, monkeypatch, test_setting
 
 
 @pytest.mark.asyncio
-async def test_messages_reclaims_stale_in_progress_idempotency(app_client, monkeypatch, test_settings):
+async def test_messages_reclaims_stale_in_progress_idempotency(app_client, monkeypatch, test_settings, dummy_redis):
     user = SimpleNamespace(id="user-reclaim", email="user@example.com", user_metadata={})
     stale_started_at = int(time.time()) - 999
+    _use_test_gatekeeper(monkeypatch, stale_seconds=5, ttl_seconds=90)
 
     async def fake_verify_token():
-        return {"user": user}
-
-    async def fake_is_pro(*_args, **_kwargs):
-        return False
+        return {"user": user, "is_pro": False, "exp": time.time() + 600}
 
     async def fast_stream(*_args, **_kwargs):
         yield "ok"
-
-    async def fake_cache_get(key):
-        if str(key).startswith("knowbear:idempotency:"):
-            return {"status": "in_progress", "started_at": stale_started_at}
-        return None
-
-    async def fake_cache_set(_key, _value, ttl=None):
-        return True
 
     fake_supabase = FakeSupabase(
         responses={
@@ -249,14 +294,16 @@ async def test_messages_reclaims_stale_in_progress_idempotency(app_client, monke
     )
 
     main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
-    monkeypatch.setattr(messages_module, "check_is_pro", fake_is_pro)
     monkeypatch.setattr(messages_module, "generate_stream_explanation", fast_stream)
     monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: fake_supabase)
-    monkeypatch.setattr(messages_module, "cache_get", fake_cache_get)
-    monkeypatch.setattr(messages_module, "cache_set", fake_cache_set)
     monkeypatch.setattr(messages_module, "get_settings", lambda: test_settings)
 
     try:
+        idempotency_key = messages_module._idempotency_key(
+            user.id, "8a5f7736-2edb-4f7b-bf45-9b8f2ea1ea1e"
+        )
+        await dummy_redis.hset(idempotency_key, "status", "PENDING")
+        await dummy_redis.hset(idempotency_key, "started_at", stale_started_at)
         payload = {
             "conversation_id": "conv-reclaim",
             "content": "hello",
@@ -367,14 +414,13 @@ async def test_messages_fallback_on_stream_exception(app_client, monkeypatch, te
     test_settings.stream_start_timeout_seconds = 0.1
     test_settings.stream_max_seconds = 2
     test_settings.stream_heartbeat_seconds = 0.05
+    _disable_gatekeeper(monkeypatch)
 
     user = SimpleNamespace(id="user-stream-fallback", email="user@example.com", user_metadata={})
 
     async def fake_verify_token():
-        return {"user": user}
+        return {"user": user, "is_pro": False, "exp": time.time() + 600}
 
-    async def fake_is_pro(*_args, **_kwargs):
-        return False
 
     async def crashing_stream(*_args, **_kwargs):
         raise RuntimeError("stream exploded")
@@ -392,7 +438,6 @@ async def test_messages_fallback_on_stream_exception(app_client, monkeypatch, te
     )
 
     main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
-    monkeypatch.setattr(messages_module, "check_is_pro", fake_is_pro)
     monkeypatch.setattr(messages_module, "generate_stream_explanation", crashing_stream)
     monkeypatch.setattr(messages_module, "generate_explanation", fallback_generate)
     monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: fake_supabase)
@@ -423,11 +468,12 @@ async def test_messages_allows_slow_first_chunk_without_cancel_loop(app_client, 
     test_settings.stream_start_timeout_seconds = 1
     test_settings.stream_max_seconds = 2
     test_settings.stream_heartbeat_seconds = 0.05
+    _disable_gatekeeper(monkeypatch)
 
     user = SimpleNamespace(id="user-slow-first-chunk", email="slow@example.com", user_metadata={})
 
     async def fake_verify_token():
-        return {"user": user}
+        return {"user": user, "is_pro": False, "exp": time.time() + 600}
 
     async def fake_is_pro(*_args, **_kwargs):
         return False
@@ -448,7 +494,6 @@ async def test_messages_allows_slow_first_chunk_without_cancel_loop(app_client, 
     )
 
     main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
-    monkeypatch.setattr(messages_module, "check_is_pro", fake_is_pro)
     monkeypatch.setattr(messages_module, "generate_stream_explanation", slow_first_chunk)
     monkeypatch.setattr(messages_module, "generate_explanation", fallback_generate)
     monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: fake_supabase)
@@ -483,11 +528,12 @@ async def test_messages_fallback_allows_slow_generation_budget(app_client, monke
     test_settings.stream_max_seconds = 3
     test_settings.stream_fallback_budget_seconds = 2
     test_settings.stream_heartbeat_seconds = 0.05
+    _disable_gatekeeper(monkeypatch)
 
     user = SimpleNamespace(id="user-stream-slow-fallback", email="user@example.com", user_metadata={})
 
     async def fake_verify_token():
-        return {"user": user}
+        return {"user": user, "is_pro": False, "exp": time.time() + 600}
 
     async def fake_is_pro(*_args, **_kwargs):
         return False
@@ -509,7 +555,6 @@ async def test_messages_fallback_allows_slow_generation_budget(app_client, monke
     )
 
     main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
-    monkeypatch.setattr(messages_module, "check_is_pro", fake_is_pro)
     monkeypatch.setattr(messages_module, "generate_stream_explanation", crashing_stream)
     monkeypatch.setattr(messages_module, "generate_explanation", slow_fallback_generate)
     monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: fake_supabase)
@@ -544,7 +589,7 @@ async def test_query_stream_partial_failure_returns_done_without_error(app_clien
     user = SimpleNamespace(id="user-query-partial", email="user@example.com", user_metadata={})
 
     async def fake_auth():
-        return {"user": user}
+        return {"user": user, "is_pro": False, "exp": time.time() + 600}
 
     async def fake_is_pro(*_args, **_kwargs):
         return True
@@ -621,14 +666,12 @@ async def test_messages_partial_failure_returns_done_without_error(app_client, m
     test_settings.stream_start_timeout_seconds = 0.1
     test_settings.stream_max_seconds = 2
     test_settings.stream_heartbeat_seconds = 0.05
+    _disable_gatekeeper(monkeypatch)
 
     user = SimpleNamespace(id="user-stream-partial", email="user@example.com", user_metadata={})
 
     async def fake_verify_token():
-        return {"user": user}
-
-    async def fake_is_pro(*_args, **_kwargs):
-        return True
+        return {"user": user, "is_pro": True, "exp": time.time() + 600}
 
     async def partial_then_fail(*_args, **_kwargs):
         yield "partial technical chunk"
@@ -643,7 +686,6 @@ async def test_messages_partial_failure_returns_done_without_error(app_client, m
     )
 
     main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
-    monkeypatch.setattr(messages_module, "check_is_pro", fake_is_pro)
     monkeypatch.setattr(messages_module, "generate_stream_explanation", partial_then_fail)
     monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: fake_supabase)
     monkeypatch.setattr(messages_module, "get_settings", lambda: test_settings)
@@ -748,11 +790,12 @@ async def test_messages_abort_logs_confirmation(app_client, monkeypatch, test_se
     test_settings.stream_start_timeout_seconds = 0.5
     test_settings.stream_max_seconds = 1
     test_settings.stream_heartbeat_seconds = 0.1
+    _disable_gatekeeper(monkeypatch)
 
     user = SimpleNamespace(id="user-999", email="user@example.com", user_metadata={})
 
     async def fake_verify_token():
-        return {"user": user}
+        return {"user": user, "is_pro": False, "exp": time.time() + 600}
 
     async def fake_is_pro(*_args, **_kwargs):
         return False
@@ -775,7 +818,6 @@ async def test_messages_abort_logs_confirmation(app_client, monkeypatch, test_se
         calls.append((event, kwargs))
 
     main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
-    monkeypatch.setattr(messages_module, "check_is_pro", fake_is_pro)
     monkeypatch.setattr(messages_module, "generate_stream_explanation", fast_stream)
     monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: fake_supabase)
     monkeypatch.setattr(messages_module, "get_settings", lambda: test_settings)
@@ -810,11 +852,12 @@ async def test_messages_stream_does_not_hang_when_stream_close_blocks(app_client
     test_settings.stream_start_timeout_seconds = 0.1
     test_settings.stream_max_seconds = 2
     test_settings.stream_heartbeat_seconds = 0.05
+    _disable_gatekeeper(monkeypatch)
 
     user = SimpleNamespace(id="user-close-timeout", email="close@example.com", user_metadata={})
 
     async def fake_verify_token():
-        return {"user": user}
+        return {"user": user, "is_pro": False, "exp": time.time() + 600}
 
     async def fake_is_pro(*_args, **_kwargs):
         return False
@@ -845,7 +888,6 @@ async def test_messages_stream_does_not_hang_when_stream_close_blocks(app_client
     )
 
     main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
-    monkeypatch.setattr(messages_module, "check_is_pro", fake_is_pro)
     monkeypatch.setattr(messages_module, "generate_stream_explanation", hanging_stream)
     monkeypatch.setattr(messages_module, "generate_explanation", fallback_generate)
     monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: fake_supabase)
@@ -881,11 +923,12 @@ async def test_messages_fallback_when_stream_completes_without_chunks(app_client
     test_settings.stream_start_timeout_seconds = 0.2
     test_settings.stream_max_seconds = 2
     test_settings.stream_heartbeat_seconds = 0.05
+    _disable_gatekeeper(monkeypatch)
 
     user = SimpleNamespace(id="user-empty-stream", email="empty@example.com", user_metadata={})
 
     async def fake_verify_token():
-        return {"user": user}
+        return {"user": user, "is_pro": False, "exp": time.time() + 600}
 
     async def fake_is_pro(*_args, **_kwargs):
         return False
@@ -906,7 +949,6 @@ async def test_messages_fallback_when_stream_completes_without_chunks(app_client
     )
 
     main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
-    monkeypatch.setattr(messages_module, "check_is_pro", fake_is_pro)
     monkeypatch.setattr(messages_module, "generate_stream_explanation", empty_stream)
     monkeypatch.setattr(messages_module, "generate_explanation", fallback_generate)
     monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: fake_supabase)
@@ -937,9 +979,10 @@ async def test_messages_fallback_when_stream_completes_without_chunks(app_client
 @pytest.mark.asyncio
 async def test_messages_technical_mode_blocks_free_user(app_client, monkeypatch, test_settings):
     user = SimpleNamespace(id="user-free", email="free@example.com", user_metadata={})
+    _disable_gatekeeper(monkeypatch)
 
     async def fake_verify_token():
-        return {"user": user}
+        return {"user": user, "is_pro": False, "exp": time.time() + 600}
 
     async def fake_is_pro(*_args, **_kwargs):
         return False
@@ -952,7 +995,6 @@ async def test_messages_technical_mode_blocks_free_user(app_client, monkeypatch,
     )
 
     main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
-    monkeypatch.setattr(messages_module, "check_is_pro", fake_is_pro)
     monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: fake_supabase)
     monkeypatch.setattr(messages_module, "get_settings", lambda: test_settings)
 
@@ -976,9 +1018,10 @@ async def test_messages_technical_mode_blocks_free_user(app_client, monkeypatch,
 @pytest.mark.asyncio
 async def test_messages_technical_mode_allows_pro_user(app_client, monkeypatch, test_settings):
     user = SimpleNamespace(id="user-pro", email="pro@example.com", user_metadata={})
+    _disable_gatekeeper(monkeypatch)
 
     async def fake_verify_token():
-        return {"user": user}
+        return {"user": user, "is_pro": True, "exp": time.time() + 600}
 
     async def fake_is_pro(*_args, **_kwargs):
         return True
@@ -995,7 +1038,6 @@ async def test_messages_technical_mode_allows_pro_user(app_client, monkeypatch, 
     )
 
     main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
-    monkeypatch.setattr(messages_module, "check_is_pro", fake_is_pro)
     monkeypatch.setattr(messages_module, "generate_stream_explanation", fast_stream)
     monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: fake_supabase)
     monkeypatch.setattr(messages_module, "get_settings", lambda: test_settings)
@@ -1022,9 +1064,10 @@ async def test_messages_technical_mode_allows_pro_user(app_client, monkeypatch, 
 async def test_messages_regeneration_forwards_temperature(app_client, monkeypatch, test_settings):
     user = SimpleNamespace(id="user-regen", email="regen@example.com", user_metadata={})
     captured = {}
+    _disable_gatekeeper(monkeypatch)
 
     async def fake_verify_token():
-        return {"user": user}
+        return {"user": user, "is_pro": False, "exp": time.time() + 600}
 
     async def fake_is_pro(*_args, **_kwargs):
         return False
@@ -1043,7 +1086,6 @@ async def test_messages_regeneration_forwards_temperature(app_client, monkeypatc
     )
 
     main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
-    monkeypatch.setattr(messages_module, "check_is_pro", fake_is_pro)
     monkeypatch.setattr(messages_module, "generate_stream_explanation", fake_stream)
     monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: fake_supabase)
     monkeypatch.setattr(messages_module, "get_settings", lambda: test_settings)
@@ -1069,136 +1111,34 @@ async def test_messages_regeneration_forwards_temperature(app_client, monkeypatc
         main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
 
 
-@pytest.mark.asyncio
-async def test_messages_untrusted_peer_ignores_forwarded_headers(app_client, monkeypatch, test_settings):
+def test_messages_untrusted_peer_ignores_forwarded_headers(test_settings):
     test_settings.trusted_proxies = "10.10.10.10"
-    user = SimpleNamespace(id="user-ip-untrusted", email="ip@example.com", user_metadata={})
-    captured: dict[str, str] = {}
-
-    async def fake_verify_token():
-        return {"user": user}
-
-    async def fake_is_pro(*_args, **_kwargs):
-        return False
-
-    async def fake_enforce_request_controls(*_args, **kwargs):
-        captured["client_ip"] = str(kwargs.get("client_ip", ""))
-        return TokenReservation(
-            identifier="user:test",
-            mode="learn",
-            reserved_tokens=100,
-            daily_key="knowbear:quota:user:test:learn",
-            hourly_key="knowbear:quota_hour:user:test:learn",
-            hourly_bucket=0,
-            is_anonymous=False,
-        )
-
-    async def fast_stream(*_args, **_kwargs):
-        yield "ok"
-
-    fake_supabase = FakeSupabase(
-        responses={
-            "conversations": {"id": "conv-ip-untrusted", "user_id": user.id, "mode": "learn", "settings": {}},
-            "messages": [{"id": "assistant-ip-untrusted"}],
-            "users": {"is_pro": False},
-        }
-    )
-
-    main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
-    monkeypatch.setattr(messages_module, "check_is_pro", fake_is_pro)
-    monkeypatch.setattr(messages_module, "enforce_request_controls", fake_enforce_request_controls)
-    monkeypatch.setattr(messages_module, "generate_stream_explanation", fast_stream)
-    monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: fake_supabase)
-    monkeypatch.setattr(messages_module, "get_settings", lambda: test_settings)
-
-    try:
-        payload = {
-            "conversation_id": "conv-ip-untrusted",
-            "content": "hello",
-            "client_generated_id": "2c801f77-0ab9-4e7d-a7b6-b95b69f8627e",
-            "assistant_client_id": "d6353ce2-47c3-4c7f-9c1d-6d7f8df6f4ed",
-            "mode": "learn",
-            "prompt_mode": "eli5",
-        }
-
-        resp = await app_client.post(
-            "/api/messages",
-            json=payload,
-            headers={
-                "x-forwarded-for": "203.0.113.10, 198.51.100.8",
-                "x-real-ip": "203.0.113.5",
-            },
-        )
-        assert resp.status_code == 200
-        assert captured.get("client_ip") not in {"203.0.113.10", "198.51.100.8", "203.0.113.5"}
-    finally:
-        main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
+    scope = {
+        "type": "http",
+        "headers": [
+            (b"x-forwarded-for", b"203.0.113.10, 198.51.100.8"),
+            (b"x-real-ip", b"203.0.113.5"),
+        ],
+        "client": ("127.0.0.1", 1234),
+    }
+    request = Request(scope)
+    ip = messages_module._resolve_client_ip(request, trusted_proxies={"10.10.10.10"})
+    assert ip == "127.0.0.1"
 
 
-@pytest.mark.asyncio
-async def test_messages_trusted_peer_uses_leftmost_forwarded_ip(app_client, monkeypatch, test_settings):
+def test_messages_trusted_peer_uses_leftmost_forwarded_ip(test_settings):
     test_settings.trusted_proxies = "127.0.0.1"
-    user = SimpleNamespace(id="user-ip-trusted", email="ip@example.com", user_metadata={})
-    captured: dict[str, str] = {}
-
-    async def fake_verify_token():
-        return {"user": user}
-
-    async def fake_is_pro(*_args, **_kwargs):
-        return False
-
-    async def fake_enforce_request_controls(*_args, **kwargs):
-        captured["client_ip"] = str(kwargs.get("client_ip", ""))
-        return TokenReservation(
-            identifier="user:test",
-            mode="learn",
-            reserved_tokens=100,
-            daily_key="knowbear:quota:user:test:learn",
-            hourly_key="knowbear:quota_hour:user:test:learn",
-            hourly_bucket=0,
-            is_anonymous=False,
-        )
-
-    async def fast_stream(*_args, **_kwargs):
-        yield "ok"
-
-    fake_supabase = FakeSupabase(
-        responses={
-            "conversations": {"id": "conv-ip-trusted", "user_id": user.id, "mode": "learn", "settings": {}},
-            "messages": [{"id": "assistant-ip-trusted"}],
-            "users": {"is_pro": False},
-        }
-    )
-
-    main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
-    monkeypatch.setattr(messages_module, "check_is_pro", fake_is_pro)
-    monkeypatch.setattr(messages_module, "enforce_request_controls", fake_enforce_request_controls)
-    monkeypatch.setattr(messages_module, "generate_stream_explanation", fast_stream)
-    monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: fake_supabase)
-    monkeypatch.setattr(messages_module, "get_settings", lambda: test_settings)
-
-    try:
-        payload = {
-            "conversation_id": "conv-ip-trusted",
-            "content": "hello",
-            "client_generated_id": "a01174ef-82f6-4e83-bcbf-b98f8f95fe0e",
-            "assistant_client_id": "77a3d538-f47e-4ab2-befd-d92465274e20",
-            "mode": "learn",
-            "prompt_mode": "eli5",
-        }
-
-        resp = await app_client.post(
-            "/api/messages",
-            json=payload,
-            headers={
-                "x-forwarded-for": "203.0.113.10, 198.51.100.8",
-                "x-real-ip": "203.0.113.5",
-            },
-        )
-        assert resp.status_code == 200
-        assert captured.get("client_ip") == "203.0.113.10"
-    finally:
-        main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
+    scope = {
+        "type": "http",
+        "headers": [
+            (b"x-forwarded-for", b"203.0.113.10, 198.51.100.8"),
+            (b"x-real-ip", b"203.0.113.5"),
+        ],
+        "client": ("127.0.0.1", 1234),
+    }
+    request = Request(scope)
+    ip = messages_module._resolve_client_ip(request, trusted_proxies={"127.0.0.1"})
+    assert ip == "203.0.113.10"
 
 
 @pytest.mark.asyncio
@@ -1206,12 +1146,13 @@ async def test_messages_stream_performance_guardrails(app_client, monkeypatch, t
     test_settings.stream_start_timeout_seconds = 1
     test_settings.stream_max_seconds = 2
     test_settings.stream_heartbeat_seconds = 0.1
+    _disable_gatekeeper(monkeypatch)
 
     user = SimpleNamespace(id="user-perf", email="perf@example.com", user_metadata={})
     captured: dict[str, float | None] = {}
 
     async def fake_verify_token():
-        return {"user": user}
+        return {"user": user, "is_pro": False, "exp": time.time() + 600}
 
     async def fake_is_pro(*_args, **_kwargs):
         return False
@@ -1233,7 +1174,6 @@ async def test_messages_stream_performance_guardrails(app_client, monkeypatch, t
     )
 
     main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
-    monkeypatch.setattr(messages_module, "check_is_pro", fake_is_pro)
     monkeypatch.setattr(messages_module, "generate_stream_explanation", fast_stream)
     monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: fake_supabase)
     monkeypatch.setattr(messages_module, "get_settings", lambda: test_settings)
