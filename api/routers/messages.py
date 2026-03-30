@@ -302,9 +302,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     selected_mode = normalize_mode(req.mode or conversation.get("mode") or conversation.get("settings", {}).get("mode"))
     if selected_mode not in {LEARNING_MODE, TECHNICAL_MODE, SOCRATIC_MODE}:
         selected_mode = DEFAULT_CHAT_MODE
-    if selected_mode == LEARNING_MODE and not is_prod:
-        stream_start_timeout_seconds = max(raw_start_timeout, float(stream_max_seconds))
-    elif selected_mode == TECHNICAL_MODE:
+    if selected_mode == TECHNICAL_MODE:
         stream_max_seconds = max(
             stream_max_seconds,
             int(getattr(config_settings, "technical_stream_max_seconds", 45)),
@@ -627,7 +625,14 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             close_fn = getattr(stream, "aclose", None)
             if close_fn:
                 try:
-                    await asyncio.wait_for(close_fn(), timeout=close_timeout_seconds)
+                    # Some async iterators can block in `aclose()` and ignore cancellation.
+                    # Run it in its own task and do not await after timeout so we never hang response shutdown.
+                    close_task = asyncio.create_task(close_fn())
+                    try:
+                        await asyncio.wait_for(close_task, timeout=close_timeout_seconds)
+                    except asyncio.TimeoutError:
+                        close_task.cancel()
+                        raise
                 except asyncio.TimeoutError:
                     logger.warning(
                         "messages_stream_close_timeout",
@@ -646,7 +651,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 return
             pending_chunk_task.cancel()
             try:
-                await pending_chunk_task
+                await asyncio.wait_for(pending_chunk_task, timeout=close_timeout_seconds)
             except BaseException:
                 pass
             pending_chunk_task = None
