@@ -1,6 +1,6 @@
 import inspect
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 from collections import OrderedDict
 from types import SimpleNamespace
 from fastapi import HTTPException
@@ -27,24 +27,22 @@ def clear_supabase_client_caches():
 
 @pytest.mark.asyncio
 async def test_verify_token_valid():
-    mock_supabase = MagicMock()
-    mock_user = MagicMock()
-    mock_user.user = {"id": "123", "email": "test@example.com"}
-    mock_supabase.auth.get_user.return_value = mock_user
-
-    with patch("auth.get_supabase", return_value=mock_supabase):
+    with patch("auth.get_settings", return_value=SimpleNamespace(supabase_url="https://example.supabase.co")), \
+        patch("auth.jwt.get_unverified_header", return_value={"kid": "kid1"}), \
+        patch("auth._get_jwks", new=AsyncMock(return_value={"keys": [{"kid": "kid1", "alg": "RS256"}]})), \
+        patch("auth.jwt.algorithms.RSAAlgorithm.from_jwk", return_value=object()), \
+        patch("auth.jwt.decode", return_value={"sub": "123", "email": "test@example.com", "is_pro": True}):
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_token")
         result = await verify_token(creds)
         assert result["token"] == "valid_token"
-        assert result["user"] == {"id": "123", "email": "test@example.com"}
+        assert result["user"].id == "123"
+        assert result["user"].email == "test@example.com"
 
 
 @pytest.mark.asyncio
 async def test_verify_token_invalid():
-    mock_supabase = MagicMock()
-    mock_supabase.auth.get_user.return_value = MagicMock(user=None)
-
-    with patch("auth.get_supabase", return_value=mock_supabase):
+    with patch("auth.get_settings", return_value=SimpleNamespace(supabase_url="https://example.supabase.co")), \
+        patch("auth.jwt.get_unverified_header", side_effect=Exception("bad header")):
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="invalid_token")
         with pytest.raises(HTTPException) as excinfo:
             await verify_token(creds)
@@ -66,10 +64,8 @@ async def test_verify_token_optional_missing_returns_none():
 
 @pytest.mark.asyncio
 async def test_verify_token_optional_invalid_credentials_raise():
-    mock_supabase = MagicMock()
-    mock_supabase.auth.get_user.return_value = MagicMock(user=None)
-
-    with patch("auth.get_supabase", return_value=mock_supabase):
+    with patch("auth.get_settings", return_value=SimpleNamespace(supabase_url="https://example.supabase.co")), \
+        patch("auth.jwt.get_unverified_header", side_effect=Exception("bad header")):
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="invalid_token")
         with pytest.raises(HTTPException) as excinfo:
             await verify_token_optional(creds)
