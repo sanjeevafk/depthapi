@@ -80,18 +80,31 @@ def build_context_messages(
     if not filtered:
         return [], ""
 
+    # Reserve space for an optional summary block up front so the final prompt stays within max_tokens.
+    effective_message_budget = (
+        max_tokens
+        if summary_max_tokens <= 0
+        else max(0, max_tokens - summary_max_tokens)
+    )
+
     # Sliding window by token budget (prioritize newest).
     selected: list[ConversationMessage] = []
     total_tokens = 0
     for msg in reversed(filtered):
         msg_tokens = count_prompt_tokens(msg["content"]) + ROLE_OVERHEAD_TOKENS
-        if total_tokens + msg_tokens > max_tokens and selected:
+        if total_tokens + msg_tokens > effective_message_budget and selected:
             break
-        if msg_tokens > max_tokens:
-            # Single oversized message: truncate content to fit.
-            trimmed_content = _trim_to_token_budget(msg["content"], max_tokens)
+        if msg_tokens > effective_message_budget:
+            # Single oversized message: truncate content to fit (account for role overhead).
+            content_budget = max(0, effective_message_budget - ROLE_OVERHEAD_TOKENS)
+            trimmed_content = _trim_to_token_budget(msg["content"], content_budget)
+            if not trimmed_content:
+                break
             selected.append({"role": msg["role"], "content": trimmed_content})
-            total_tokens = max_tokens
+            total_tokens = min(
+                effective_message_budget,
+                ROLE_OVERHEAD_TOKENS + count_prompt_tokens(trimmed_content),
+            )
             break
         selected.append(msg)
         total_tokens += msg_tokens
@@ -104,7 +117,8 @@ def build_context_messages(
         summary = _summarize_messages(filtered[:dropped_count], summary_max_tokens)
 
     if summary:
-        selected = [{"role": "system", "content": summary}] + selected
+        summary_message: ConversationMessage = {"role": "system", "content": summary}
+        selected = [summary_message, *selected]
 
     signature_base = "\n".join(f"{m['role']}:{m['content']}" for m in selected)
     signature = hashlib.sha256(signature_base.encode("utf-8")).hexdigest()

@@ -19,6 +19,7 @@ from services.analytics import build_llm_request_payload, record_llm_request
 from services.cache import cache_get, cache_set, cache_set_if_absent
 from services.inference import TECHNICAL_MAX_TOKENS, generate_explanation, generate_stream_explanation
 from services.conversation_context import (
+    ConversationMessage,
     build_context_messages,
     build_socratic_context,
     extract_last_turns,
@@ -358,7 +359,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             sampled=False,
         )
 
-    history_messages = [
+    history_messages: list[ConversationMessage] = [
         {"role": str(row.get("role") or ""), "content": str(row.get("content") or "")}
         for row in reversed(history_rows)
     ]
