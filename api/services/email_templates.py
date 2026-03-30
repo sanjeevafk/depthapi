@@ -142,11 +142,19 @@ def build_cancellation_email(
       <p style="margin-top: 24px;">— The {site_name} Team</p>
     </div>
     """
-    text = (
-        f"Your {site_name} subscription has been canceled\n\n"
-        f"Hi {greeting_name}, your subscription has been canceled.\n"
-        f"{f'Access until: {end_label}\n' if end_label else ''}"
-        f"Need help? Email {support_email}.\n\n"
-        f"— The {site_name} Team"
+    text_lines = [
+        f"Your {site_name} subscription has been canceled",
+        "",
+        f"Hi {greeting_name}, your subscription has been canceled.",
+    ]
+    if end_label:
+        text_lines.append(f"Access until: {end_label}")
+    text_lines.extend(
+        [
+            f"Need help? Email {support_email}.",
+            "",
+            f"— The {site_name} Team",
+        ]
     )
+    text = "\n".join(text_lines)
     return EmailContent(subject=subject, html=html.strip(), text=text)
