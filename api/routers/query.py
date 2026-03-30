@@ -22,6 +22,15 @@ from services.llm_errors import LLMError, LLMUnavailable
 from services.rate_limit import enforce_request_controls, refund_tokens
 from services.streaming import SseEventBuilder, SSE_RESPONSE_HEADERS
 from services.token_count import count_prompt_tokens
+from services.conversation_context import (
+    build_context_messages,
+    build_socratic_context,
+    extract_last_turns,
+)
+from services.conversation_intent import (
+    classify_conversation_intent,
+    build_intent_system_prompt,
+)
 from utils import (
     DEFAULT_CHAT_MODE,
     FREE_LEVELS,
@@ -38,6 +47,11 @@ from utils import (
 router = APIRouter(tags=["query"])
 
 
+class HistoryMessage(BaseModel):
+    role: str = Field(..., min_length=1)
+    content: str = Field(default="", max_length=8000)
+
+
 class QueryRequest(BaseModel):
     topic: str = Field(..., min_length=1, max_length=200)
     levels: list[str] = Field(default=FREE_LEVELS)
@@ -47,6 +61,7 @@ class QueryRequest(BaseModel):
     temperature: float = 0.7
     regenerate: bool = False
     message_id: str | None = None
+    history: list[HistoryMessage] | None = None
 
 
 class QueryResponse(BaseModel):
@@ -62,8 +77,28 @@ def _normalize_levels(levels: list[str]) -> list[str]:
     return normalized
 
 
-def _cache_key(topic: str, level: str, mode: str) -> str:
-    return topic_cache_key(topic, level, mode=normalize_mode(mode))
+def _cache_key(
+    topic: str,
+    level: str,
+    mode: str,
+    context_signature: str = "",
+    intent_payload: str = "",
+) -> str:
+    base = topic_cache_key(topic, level, mode=normalize_mode(mode))
+    if not context_signature and not intent_payload:
+        return base
+    digest = hashlib.sha256(
+        f"{base}\x00{context_signature}\x00{intent_payload}".encode("utf-8")
+    ).hexdigest()
+    return f"{base}:{digest}"
+
+
+def _ack_response(mode: str) -> str:
+    if mode == TECHNICAL_MODE:
+        return "Understood. Share the next technical detail or question when ready."
+    if mode == SOCRATIC_MODE:
+        return "Got it. Whenever you're ready, share your next thought."
+    return "Got it. Let me know what you'd like to explore next."
 
 
 def _query_stream_idempotency_key(scope: str, message_id: str) -> str:
@@ -124,6 +159,31 @@ def _build_stream_replay_response(
 
     return StreamingResponse(
         replay_generator(),
+        media_type="text/event-stream",
+        headers=SSE_RESPONSE_HEADERS,
+    )
+
+
+def _build_stream_ack_response(
+    *,
+    topic: str,
+    level: str,
+    mode: str,
+    message_id: str,
+    content: str,
+) -> StreamingResponse:
+    async def ack_generator():
+        builder = SseEventBuilder()
+        yield builder.emit_json(
+            "meta",
+            {"topic": topic, "level": level, "mode": mode, "message_id": message_id},
+        )
+        for index in range(0, len(content), 400):
+            yield builder.emit_json("chunk", {"chunk": content[index : index + 400]})
+        yield builder.emit("done", "[DONE]")
+
+    return StreamingResponse(
+        ack_generator(),
         media_type="text/event-stream",
         headers=SSE_RESPONSE_HEADERS,
     )
@@ -210,6 +270,36 @@ async def query_topic(
     if not levels:
         levels = ["eli15"]
 
+    settings = get_settings()
+    history_messages = [
+        {"role": str(item.role), "content": str(item.content or "")}
+        for item in (req.history or [])
+    ]
+    last_user_message, last_assistant_message = extract_last_turns(history_messages)
+    has_prior = bool(last_user_message or last_assistant_message)
+    intent = classify_conversation_intent(topic, has_prior=has_prior)
+    intent_system_prompt = build_intent_system_prompt(
+        intent,
+        correction_text=topic if intent.type == "correction" else None,
+        clarification_text=topic if intent.type == "clarification" else None,
+    )
+    context_messages, context_signature = build_context_messages(
+        history_messages,
+        max_tokens=max(int(getattr(settings, "conversation_context_max_tokens", 1200)), 1),
+        summary_max_tokens=max(int(getattr(settings, "conversation_context_summary_tokens", 240)), 0),
+    )
+    socratic_context = build_socratic_context(history_messages)
+
+    effective_topic = topic
+    if intent.type in {"correction", "clarification"} and last_user_message:
+        effective_topic = last_user_message
+    intent_payload = topic if intent.type in {"correction", "clarification"} else ""
+    intent_payload = topic if intent.type in {"correction", "clarification"} else ""
+
+    if intent.type == "acknowledgment":
+        ack = _ack_response(mode)
+        return QueryResponse(topic=topic, explanations={lvl: ack for lvl in levels}, cached=False)
+
     effective_user_id = auth_data["user"].id if auth_data else None
     user_id_raw = str(effective_user_id) if effective_user_id else None
     user_id_hash = anonymize_user_id(user_id_raw)
@@ -221,7 +311,7 @@ async def query_topic(
     else:
         max_output_tokens = int(getattr(get_settings(), "max_output_tokens_learning", 1024))
 
-    prompt_tokens = count_prompt_tokens(topic)
+    prompt_tokens = count_prompt_tokens(effective_topic)
     level_count = max(len(levels), 1)
     reserved_tokens = max(prompt_tokens + (max_output_tokens * level_count), 1)
     quota_reservation = await enforce_request_controls(
@@ -237,7 +327,9 @@ async def query_topic(
 
     if not req.bypass_cache:
         for level in levels:
-            cached = await cache_get(_cache_key(topic, level, mode))
+            cached = await cache_get(
+                _cache_key(effective_topic, level, mode, context_signature, intent_payload)
+            )
             if cached:
                 explanations[level] = cached.get("text", "")
             else:
@@ -253,7 +345,7 @@ async def query_topic(
     level_telemetry = {level: {} for level in missing_levels}
     tasks = {
         level: generate_explanation(
-            topic,
+            effective_topic,
             level,
             mode=mode,
             temperature=req.temperature,
@@ -262,6 +354,9 @@ async def query_topic(
             user_id=user_id_raw,
             is_pro=is_verified_pro,
             telemetry_sink=level_telemetry[level],
+            conversation_messages=context_messages,
+            conversation_context=socratic_context,
+            intent_system_prompt=intent_system_prompt,
         )
         for level in missing_levels
     }
@@ -270,7 +365,10 @@ async def query_topic(
     for level, result in zip(tasks.keys(), results):
         if isinstance(result, str):
             explanations[level] = result
-            await cache_set(_cache_key(topic, level, mode), {"text": result})
+            await cache_set(
+                _cache_key(effective_topic, level, mode, context_signature, intent_payload),
+                {"text": result},
+            )
         else:
             if isinstance(result, LLMError):
                 raise result
@@ -380,6 +478,40 @@ async def query_topic_stream(
     normalized_levels = [level for level in _normalize_levels(req.levels) if level in allowed_levels]
     level = normalized_levels[0] if normalized_levels else "eli15"
 
+    settings = get_settings()
+    history_messages = [
+        {"role": str(item.role), "content": str(item.content or "")}
+        for item in (req.history or [])
+    ]
+    last_user_message, last_assistant_message = extract_last_turns(history_messages)
+    has_prior = bool(last_user_message or last_assistant_message)
+    intent = classify_conversation_intent(topic, has_prior=has_prior)
+    intent_system_prompt = build_intent_system_prompt(
+        intent,
+        correction_text=topic if intent.type == "correction" else None,
+        clarification_text=topic if intent.type == "clarification" else None,
+    )
+    context_messages, context_signature = build_context_messages(
+        history_messages,
+        max_tokens=max(int(getattr(settings, "conversation_context_max_tokens", 1200)), 1),
+        summary_max_tokens=max(int(getattr(settings, "conversation_context_summary_tokens", 240)), 0),
+    )
+    socratic_context = build_socratic_context(history_messages)
+
+    effective_topic = topic
+    if intent.type in {"correction", "clarification"} and last_user_message:
+        effective_topic = last_user_message
+
+    if intent.type == "acknowledgment":
+        ack = _ack_response(mode)
+        return _build_stream_ack_response(
+            topic=topic,
+            level=level,
+            mode=mode,
+            message_id=req.message_id or "",
+            content=ack,
+        )
+
     effective_user_id = auth_data["user"].id if auth_data else None
     user_id_raw = str(effective_user_id) if effective_user_id else None
     user_id_hash = anonymize_user_id(user_id_raw)
@@ -391,7 +523,7 @@ async def query_topic_stream(
     else:
         max_output_tokens = int(getattr(get_settings(), "max_output_tokens_learning", 1024))
 
-    prompt_tokens = count_prompt_tokens(topic)
+    prompt_tokens = count_prompt_tokens(effective_topic)
     reserved_tokens = max(prompt_tokens + max_output_tokens, 1)
     quota_reservation = await enforce_request_controls(
         user_id=str(effective_user_id) if effective_user_id else None,
@@ -646,11 +778,18 @@ async def query_topic_stream(
         try:
             yield emit(
                 "meta",
-                {"topic": topic, "level": level, "mode": mode, "message_id": message_id},
+                {
+                    "topic": effective_topic,
+                    "level": level,
+                    "mode": mode,
+                    "message_id": message_id,
+                },
             )
 
             if not req.bypass_cache:
-                cached = await cache_get(_cache_key(topic, level, mode))
+                cached = await cache_get(
+                    _cache_key(effective_topic, level, mode, context_signature, intent_payload)
+                )
                 if cached and cached.get("text"):
                     content = cached["text"]
                     for index in range(0, len(content), chunk_size):
@@ -663,7 +802,7 @@ async def query_topic_stream(
                     return
 
             stream = generate_stream_explanation(
-                topic,
+                effective_topic,
                 level,
                 mode=mode,
                 temperature=req.temperature,
@@ -672,6 +811,9 @@ async def query_topic_stream(
                 user_id=user_id_raw,
                 is_pro=is_verified_pro,
                 telemetry_sink=telemetry_sink,
+                conversation_messages=context_messages,
+                conversation_context=socratic_context,
+                intent_system_prompt=intent_system_prompt,
             )
             stream_iter = _stream_chunks(stream)
             start_deadline = start_time + stream_start_timeout_seconds
@@ -722,7 +864,7 @@ async def query_topic_stream(
                 try:
                     fallback_content = await asyncio.wait_for(
                         generate_explanation(
-                            topic,
+                            effective_topic,
                             level,
                             mode=mode,
                             temperature=req.temperature,
@@ -731,6 +873,9 @@ async def query_topic_stream(
                             user_id=user_id_raw,
                             is_pro=is_verified_pro,
                             telemetry_sink=telemetry_sink,
+                            conversation_messages=context_messages,
+                            conversation_context=socratic_context,
+                            intent_system_prompt=intent_system_prompt,
                         ),
                         timeout=fallback_timeout_seconds,
                     )
@@ -758,7 +903,10 @@ async def query_topic_stream(
                 if done_event:
                     yield done_event
                 if full_content.strip():
-                    await cache_set(_cache_key(topic, level, mode), {"text": full_content})
+                    await cache_set(
+                        _cache_key(effective_topic, level, mode, context_signature, intent_payload),
+                        {"text": full_content},
+                    )
                 if auth_data:
                     await _persist_history_safely(auth_data["user"], topic, [level], mode)
                 return
@@ -769,7 +917,10 @@ async def query_topic_stream(
                 yield emit("chunk", {"chunk": cutoff_message})
 
             if full_content.strip():
-                await cache_set(_cache_key(topic, level, mode), {"text": full_content})
+                await cache_set(
+                    _cache_key(effective_topic, level, mode, context_signature, intent_payload),
+                    {"text": full_content},
+                )
             if auth_data:
                 await _persist_history_safely(auth_data["user"], topic, [level], mode)
 
@@ -792,7 +943,7 @@ async def query_topic_stream(
                 try:
                     fallback_content = await asyncio.wait_for(
                         generate_explanation(
-                            topic,
+                            effective_topic,
                             level,
                             mode=mode,
                             temperature=req.temperature,
@@ -801,6 +952,9 @@ async def query_topic_stream(
                             user_id=user_id_raw,
                             is_pro=is_verified_pro,
                             telemetry_sink=telemetry_sink,
+                            conversation_messages=context_messages,
+                            conversation_context=socratic_context,
+                            intent_system_prompt=intent_system_prompt,
                         ),
                         timeout=fallback_timeout_seconds,
                     )
@@ -812,7 +966,10 @@ async def query_topic_stream(
                     if done_event:
                         yield done_event
                     if full_content.strip():
-                        await cache_set(_cache_key(topic, level, mode), {"text": full_content})
+                        await cache_set(
+                            _cache_key(effective_topic, level, mode, context_signature, intent_payload),
+                            {"text": full_content},
+                        )
                     if auth_data:
                         await _persist_history_safely(auth_data["user"], topic, [level], mode)
                     return
@@ -835,7 +992,10 @@ async def query_topic_stream(
                 if done_event:
                     yield done_event
                 if full_content.strip():
-                    await cache_set(_cache_key(topic, level, mode), {"text": full_content})
+                    await cache_set(
+                        _cache_key(effective_topic, level, mode, context_signature, intent_payload),
+                        {"text": full_content},
+                    )
                 if auth_data:
                     await _persist_history_safely(auth_data["user"], topic, [level], mode)
                 return
