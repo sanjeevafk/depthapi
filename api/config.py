@@ -95,6 +95,8 @@ class Settings(BaseSettings):
     dodo_environment: str = "test_mode"
     checkout_rate_limit_per_minute: int = 10
     email_rate_limit_per_minute: int = 5
+    slowapi_enabled: bool = True
+    slowapi_default_limit_per_minute: int = 120
 
     class Config:
         env_file = (".env", "../.env")
