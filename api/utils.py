@@ -10,7 +10,7 @@ MAX_TOPIC_LENGTH = 200
 ALLOWED_PATTERN = re.compile(r"^[\w\s\-.,!?'\"()]+$", re.UNICODE)
 _logger = logging.getLogger(__name__)
 
-LEARNING_MODE = "learning"
+LEARNING_MODE = "learn"
 TECHNICAL_MODE = "technical"
 SOCRATIC_MODE = "socratic"
 
@@ -21,7 +21,6 @@ PROMPT_LEVELS = FREE_LEVELS
 MODE_ALIASES = {
     "technical": TECHNICAL_MODE,
     "learn": LEARNING_MODE,
-    "learning": LEARNING_MODE,
     "socratic": SOCRATIC_MODE,
 }
 

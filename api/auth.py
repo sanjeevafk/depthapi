@@ -61,7 +61,10 @@ def get_supabase_admin() -> Client | None:
     if not settings.supabase_url or not settings.supabase_service_role_key:
         logger.warning("auth_supabase_service_role_key_missing")
         return None
-    return create_client(settings.supabase_url, settings.supabase_service_role_key)
+    service_key = settings.supabase_service_role_key
+    if hasattr(service_key, "get_secret_value"):
+        service_key = service_key.get_secret_value()
+    return create_client(settings.supabase_url, service_key)
 
 async def verify_token(credentials: HTTPAuthorizationCredentials = Security(security)):
     """Verify the Supabase JWT token."""

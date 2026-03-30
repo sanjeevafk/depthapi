@@ -65,13 +65,13 @@ const WORKSPACE_OPTIONS: WorkspaceOption[] = [
   },
 ];
 
-const MODE_BADGE_LABELS: Record<Conversation["mode"], string> = {
+const MODE_BADGE_LABELS: Record<"learn" | "technical" | "socratic", string> = {
   learn: "Learn",
   technical: "Technical",
   socratic: "Socratic",
 };
 
-const MODE_BADGE_STYLES: Record<Conversation["mode"], string> = {
+const MODE_BADGE_STYLES: Record<"learn" | "technical" | "socratic", string> = {
   learn:
     "border-cyan-200 bg-cyan-100 text-cyan-900 dark:border-cyan-500/30 dark:bg-cyan-500/10 dark:text-cyan-200",
   technical:

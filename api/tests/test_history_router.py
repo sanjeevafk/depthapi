@@ -12,7 +12,7 @@ async def test_get_history(app_client, monkeypatch, fake_user, fake_supabase):
             "id": "h1",
             "topic": "Cats",
             "levels": ["eli5"],
-            "mode": "learning",
+            "mode": "learn",
             "created_at": "2024-01-01T00:00:00Z"
         }
     ]

@@ -32,7 +32,7 @@ async def test_generate_explanation_learning_injects_search_context(monkeypatch)
     monkeypatch.setattr(inference_module.search_service, "get_search_context", fake_search_context)
     monkeypatch.setattr(inference_module, "call_model", fake_call_model)
 
-    result = await inference_module.generate_explanation("dns caching", "eli5", mode="learning")
+    result = await inference_module.generate_explanation("dns caching", "eli5", mode="learn")
     assert "detailed explanation" in result
     assert "External web context" in captured["prompt"]
     assert "search context for learning" in captured["prompt"]
@@ -104,7 +104,7 @@ async def test_generate_explanation_search_failure_is_fail_soft(monkeypatch):
     monkeypatch.setattr(inference_module.search_service, "get_search_context", broken_search)
     monkeypatch.setattr(inference_module, "call_model", fake_call_model)
 
-    result = await inference_module.generate_explanation("tcp", "eli10", mode="learning")
+    result = await inference_module.generate_explanation("tcp", "eli10", mode="learn")
     assert "without external search" in result
     assert calls["count"] == 1
 
@@ -123,7 +123,7 @@ async def test_learning_length_policy_default_adds_cue_when_trimmed(monkeypatch)
     result = await inference_module.generate_explanation(
         "volcanoes",
         "eli10",
-        mode="learning",
+        mode="learn",
     )
 
     words = result.split()
@@ -145,7 +145,7 @@ async def test_learning_length_policy_expanded_allows_more(monkeypatch):
     result = await inference_module.generate_explanation(
         "volcanoes explain more",
         "eli10",
-        mode="learning",
+        mode="learn",
     )
 
     words = result.split()
@@ -167,7 +167,7 @@ async def test_learning_length_constraint_uses_complete_sentence(monkeypatch):
     result = await inference_module.generate_explanation(
         "ocean currents in 50 words",
         "eli10",
-        mode="learning",
+        mode="learn",
     )
 
     words = result.split()
@@ -189,7 +189,7 @@ async def test_generate_stream_explanation_passes_temperature(monkeypatch):
     async for chunk in inference_module.generate_stream_explanation(
         "topic",
         "eli5",
-        mode="learning",
+        mode="learn",
         regenerate=True,
         temperature=0.8,
     ):
@@ -342,7 +342,7 @@ async def test_generate_stream_explanation_learning_stream_failure_is_graceful(m
     async for chunk in inference_module.generate_stream_explanation(
         "dns",
         "eli5",
-        mode="learning",
+        mode="learn",
         telemetry_sink=telemetry_sink,
         request_id="req-learning-fail",
     ):
@@ -563,7 +563,7 @@ def test_weighted_routing_prefers_technical_model_for_complex_queries():
 def test_weighted_routing_prefers_fast_model_for_latency_queries():
     ranked = inference_module.route_model_aliases(
         "Give me a quick brief summary of DNS.",
-        mode="learning",
+        mode="learn",
         level="eli5",
     )
     assert ranked[0] in {"learn-groq-llama8b", "learn-gemini-flash"}
@@ -654,7 +654,7 @@ async def test_learning_quality_retry_uses_next_alias_once(monkeypatch):
     result = await inference_module.generate_explanation(
         "explain dns",
         "eli10",
-        mode="learning",
+        mode="learn",
     )
 
     assert "Detailed response." in result

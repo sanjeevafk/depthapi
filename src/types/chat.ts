@@ -4,7 +4,7 @@ export const CHAT_MODES = [
   "eli12",
   "eli15",
   "meme",
-  "learning",
+  "learn",
   "technical",
   "socratic",
 ] as const;
@@ -15,7 +15,7 @@ export const CHAT_FREE_MODES = [
   "eli12",
   "eli15",
   "meme",
-  "learning",
+  "learn",
   "socratic",
 ] as const;
 

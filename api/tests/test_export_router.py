@@ -34,7 +34,7 @@ async def test_export_requires_pro(app_client, monkeypatch, fake_user):
             "explanations": {"eli5": "Meow"},
             "format": "txt",
             "premium": True,
-            "mode": "learning"
+            "mode": "learn"
         }
     )
     assert resp.status_code == 403
@@ -59,7 +59,7 @@ async def test_export_txt_success(app_client, monkeypatch, fake_user):
             "explanations": {"eli5": "Meow"},
             "format": "txt",
             "premium": True,
-            "mode": "learning"
+            "mode": "learn"
         }
     )
 
@@ -97,7 +97,7 @@ async def test_export_missing_levels_triggers_generation(app_client, monkeypatch
             "explanations": {"eli5": "Meow"},
             "format": "md",
             "premium": True,
-            "mode": "learning"
+            "mode": "learn"
         }
     )
 
@@ -124,7 +124,7 @@ async def test_export_invalid_format(app_client, monkeypatch, fake_user):
             "explanations": {"eli5": "Meow"},
             "format": "pdf",
             "premium": True,
-            "mode": "learning"
+            "mode": "learn"
         }
     )
     assert resp.status_code == 422

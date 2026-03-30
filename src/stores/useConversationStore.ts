@@ -57,7 +57,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   isLoading: false,
   workspace: "learn",
   depthLevel: DEFAULT_DEPTH_LEVEL,
-  currentMode: "learning",
+  currentMode: "learn",
   currentPromptMode: DEFAULT_DEPTH_LEVEL as PromptMode,
   selectedLevel: DEFAULT_DEPTH_LEVEL as Level,
 
@@ -105,7 +105,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           isDraftThread: true,
           workspace: "learn" as Workspace,
           depthLevel: DEFAULT_DEPTH_LEVEL,
-          currentMode: "learning" as ChatMode,
+          currentMode: "learn" as ChatMode,
           currentPromptMode: DEFAULT_DEPTH_LEVEL as PromptMode,
           selectedLevel: DEFAULT_DEPTH_LEVEL as Level,
         };

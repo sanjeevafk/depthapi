@@ -261,7 +261,7 @@ export default function Sidebar({
                             ? "technical"
                             : item.mode === "socratic"
                               ? "socratic"
-                              : "learning";
+                              : "learn";
                         const firstLevel = item.levels?.[0];
                         onSelectTopic(
                           item.topic,

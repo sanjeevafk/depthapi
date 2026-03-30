@@ -3,17 +3,17 @@ update public.history
 set mode = case
   when mode in ('technical-depth', 'technical_depth') then 'technical'
   when mode = 'socratic' then 'socratic'
-  else 'learning'
+  else 'learn'
 end
-where mode is null or mode not in ('learning', 'technical', 'socratic');
+where mode is null or mode not in ('learn', 'technical', 'socratic');
 
 update public.conversations
 set mode = case
   when mode in ('technical-depth', 'technical_depth') then 'technical'
   when mode = 'socratic' then 'socratic'
-  else 'learning'
+  else 'learn'
 end
-where mode is null or mode not in ('learning', 'technical', 'socratic');
+where mode is null or mode not in ('learn', 'technical', 'socratic');
 
 update public.conversations
 set settings = jsonb_set(
@@ -23,9 +23,9 @@ set settings = jsonb_set(
     case
       when coalesce(settings->>'mode', mode) in ('technical-depth', 'technical_depth') then 'technical'
       when coalesce(settings->>'mode', mode) = 'socratic' then 'socratic'
-      else 'learning'
+      else 'learn'
     end
   ),
   true
 )
-where coalesce(settings->>'mode', '') not in ('', 'learning', 'technical', 'socratic');
+where coalesce(settings->>'mode', '') not in ('', 'learn', 'technical', 'socratic');
