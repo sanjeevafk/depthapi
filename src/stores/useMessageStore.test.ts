@@ -36,7 +36,7 @@ describe("useMessageStore merge behavior", () => {
       content: "Partial",
       created_at: "2026-03-28T00:00:00.000Z",
       clientGeneratedId: "assistant-client-2",
-      metadata: { assistant_client_id: "assistant-client-2", mode: "learning" },
+      metadata: { assistant_client_id: "assistant-client-2", mode: "learn" },
     });
 
     useMessageStore.getState().addMessage({
@@ -44,7 +44,7 @@ describe("useMessageStore merge behavior", () => {
       role: "assistant",
       content: "Partial + final",
       created_at: "2026-03-28T00:00:01.000Z",
-      metadata: { assistant_client_id: "assistant-client-2", mode: "learning" },
+      metadata: { assistant_client_id: "assistant-client-2", mode: "learn" },
     });
 
     const state = useMessageStore.getState();

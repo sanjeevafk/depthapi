@@ -119,7 +119,7 @@ export const resolveWorkspaceState = (
 
   return {
     workspace: "learn" as Workspace,
-    mode: "learning" as ChatMode,
+    mode: "learn" as ChatMode,
     promptMode: nextDepth as PromptMode,
     depthLevel: nextDepth,
   };
@@ -151,7 +151,7 @@ export const persistTheme = (theme: ThemeMode) => {
 export const getModeForWorkspace = (workspace: Workspace): ChatMode => {
   if (workspace === "socratic") return "socratic";
   if (workspace === "technical") return "technical";
-  return "learning";
+  return "learn";
 };
 
 export const asString = (value: unknown): string | undefined => {

@@ -28,8 +28,8 @@ const seedConversation = () => {
       {
         id: "local-test",
         title: "Test",
-        mode: "learning",
-        settings: { mode: "learning", prompt_mode: "eli5" },
+        mode: "learn",
+        settings: { mode: "learn", prompt_mode: "eli5" },
         created_at: now,
         updated_at: now,
       },
@@ -292,7 +292,7 @@ describe("useChatStore regeneration", () => {
           content: "Old response",
           created_at: now,
           clientGeneratedId: "assistant-client-1",
-          metadata: { temperature: 0.6, mode: "learning", prompt_mode: "eli5" },
+          metadata: { temperature: 0.6, mode: "learn", prompt_mode: "eli5" },
         },
       },
       messageIds: ["user1", "assistant1"],
@@ -329,7 +329,7 @@ describe("useChatStore workspace + learn depth switching", () => {
 
     useChatStore.getState().setWorkspace("learn");
     expect(useChatStore.getState().workspace).toBe("learn");
-    expect(useChatStore.getState().currentMode).toBe("learning");
+    expect(useChatStore.getState().currentMode).toBe("learn");
   });
 
   it("updates learn depth without leaving learn workspace", () => {
@@ -337,7 +337,7 @@ describe("useChatStore workspace + learn depth switching", () => {
     useChatStore.getState().setDepthLevel("eli5");
 
     expect(useChatStore.getState().workspace).toBe("learn");
-    expect(useChatStore.getState().currentMode).toBe("learning");
+    expect(useChatStore.getState().currentMode).toBe("learn");
     expect(useChatStore.getState().depthLevel).toBe("eli5");
     expect(useChatStore.getState().currentPromptMode).toBe("eli5");
 

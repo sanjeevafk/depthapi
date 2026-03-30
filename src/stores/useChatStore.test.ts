@@ -109,7 +109,7 @@ describe("useChatStore", () => {
 
     useConversationStore.setState({
       currentConversationId: "local-conv-1",
-      currentMode: "learning",
+      currentMode: "learn",
       currentPromptMode: "eli12",
       depthLevel: "eli12",
       workspace: "learn",
@@ -117,8 +117,8 @@ describe("useChatStore", () => {
         {
           id: "local-conv-1",
           title: "Thread",
-          mode: "learning",
-          settings: { mode: "learning", prompt_mode: "eli12" },
+          mode: "learn",
+          settings: { mode: "learn", prompt_mode: "eli12" },
           created_at: "2026-01-01T00:00:00.000Z",
           updated_at: "2026-01-01T00:00:00.000Z",
         },
@@ -152,8 +152,8 @@ describe("useChatStore", () => {
         {
           id: "local-old",
           title: "Old",
-          mode: "learning",
-          settings: { mode: "learning" },
+          mode: "learn",
+          settings: { mode: "learn" },
           created_at: "2026-01-01T00:00:00.000Z",
           updated_at: "2026-01-01T00:00:00.000Z",
         },
@@ -183,8 +183,8 @@ describe("useChatStore", () => {
         {
           id: "local-only",
           title: "Only conversation",
-          mode: "learning",
-          settings: { mode: "learning" },
+          mode: "learn",
+          settings: { mode: "learn" },
           created_at: "2026-01-01T00:00:00.000Z",
           updated_at: "2026-01-02T00:00:00.000Z",
         },
@@ -206,8 +206,8 @@ describe("useChatStore", () => {
         {
           id: "conv-a",
           title: "A",
-          mode: "learning",
-          settings: { mode: "learning" },
+          mode: "learn",
+          settings: { mode: "learn" },
           created_at: "2026-01-01T00:00:00.000Z",
           updated_at: "2026-01-02T00:00:00.000Z",
         },
@@ -305,8 +305,8 @@ describe("useChatStore", () => {
         {
           id: "local-conv-1",
           title: "Thread",
-          mode: "learning",
-          settings: { mode: "learning", prompt_mode: "eli12" },
+          mode: "learn",
+          settings: { mode: "learn", prompt_mode: "eli12" },
           created_at: "2026-01-01T00:00:00.000Z",
           updated_at: "2026-01-01T00:00:00.000Z",
         },
@@ -322,7 +322,7 @@ describe("useChatStore", () => {
           created_at: "2026-01-01T00:00:00.000Z",
           metadata: {
             client_id: "user-client-1",
-            mode: "learning",
+            mode: "learn",
             prompt_mode: "eli12",
           },
         },
@@ -333,7 +333,7 @@ describe("useChatStore", () => {
           created_at: "2026-01-01T00:00:00.000Z",
           clientGeneratedId: "assistant-client-old",
           metadata: {
-            mode: "learning",
+            mode: "learn",
             prompt_mode: "eli12",
             temperature: 0.7,
             assistant_client_id: "assistant-client-old",
@@ -349,7 +349,7 @@ describe("useChatStore", () => {
     const payload = JSON.parse(String(fetchInit.body));
     const requestedText = payload.content ?? payload.topic;
     expect(requestedText).toBe("Explain gravity simply");
-    expect(payload.mode).toBe("learning");
+    expect(payload.mode).toBe("learn");
     const outboundMessageId =
       payload.client_generated_id ?? payload.message_id;
     expect(typeof outboundMessageId).toBe("string");
@@ -531,8 +531,8 @@ const seedConversation = () => {
       {
         id: "local-test",
         title: "Test",
-        mode: "learning",
-        settings: { mode: "learning", prompt_mode: "eli5" },
+        mode: "learn",
+        settings: { mode: "learn", prompt_mode: "eli5" },
         created_at: now,
         updated_at: now,
       },

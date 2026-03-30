@@ -31,7 +31,7 @@ async def test_query_cache_hit_returns_cached(app_client, monkeypatch):
 
     resp = await app_client.post(
         "/api/query",
-        json={"topic": "Cats", "levels": ["eli5"], "mode": "learning"}
+        json={"topic": "Cats", "levels": ["eli5"], "mode": "learn"}
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -68,7 +68,7 @@ async def test_query_waits_for_history_persistence(app_client, monkeypatch, fake
     start = asyncio.get_event_loop().time()
     resp = await app_client.post(
         "/api/query",
-        json={"topic": "Persistence", "levels": ["eli5"], "mode": "learning"},
+        json={"topic": "Persistence", "levels": ["eli5"], "mode": "learn"},
     )
     elapsed = asyncio.get_event_loop().time() - start
 
@@ -99,7 +99,7 @@ async def test_save_to_history_logs_error_and_returns_when_supabase_unavailable(
     monkeypatch.setattr(query_module.logger, "error", fake_log_error)
 
     # Must not raise
-    await query_module.save_to_history(user, "topic", ["eli5"], "learning")
+    await query_module.save_to_history(user, "topic", ["eli5"], "learn")
 
     assert any("no_supabase_admin" in e for e in errors_logged)
 
@@ -127,7 +127,7 @@ async def test_save_to_history_logs_error_on_fetch_failure(monkeypatch):
     monkeypatch.setattr(query_module, "get_supabase_admin", fake_get_supabase_admin)
     monkeypatch.setattr(query_module.logger, "error", fake_log_error)
 
-    await query_module.save_to_history(user, "topic", ["eli5"], "learning")
+    await query_module.save_to_history(user, "topic", ["eli5"], "learn")
 
     assert any("fetch_failed" in e for e in errors_logged)
 
@@ -191,7 +191,7 @@ async def test_save_to_history_scopes_topic_lookup_by_mode(monkeypatch):
 async def test_query_invalid_topic(app_client):
     resp = await app_client.post(
         "/api/query",
-        json={"topic": "bad<topic>", "levels": ["eli5"], "mode": "learning"}
+        json={"topic": "bad<topic>", "levels": ["eli5"], "mode": "learn"}
     )
     assert resp.status_code == 400
 
@@ -271,7 +271,7 @@ async def test_query_stream_emits_done(app_client, monkeypatch):
 
     resp = await app_client.post(
         "/api/query/stream",
-        json={"topic": "Ocean", "levels": ["eli5"], "mode": "learning"}
+        json={"topic": "Ocean", "levels": ["eli5"], "mode": "learn"}
     )
     assert resp.status_code == 200
     text = resp.text
@@ -301,13 +301,13 @@ async def test_query_anonymous_rate_limit_exceeded(app_client, monkeypatch, test
 
     first = await app_client.post(
         "/api/query",
-        json={"topic": "rate", "levels": ["eli5"], "mode": "learning"},
+        json={"topic": "rate", "levels": ["eli5"], "mode": "learn"},
     )
     assert first.status_code == 200
 
     second = await app_client.post(
         "/api/query",
-        json={"topic": "rate", "levels": ["eli5"], "mode": "learning"},
+        json={"topic": "rate", "levels": ["eli5"], "mode": "learn"},
     )
     assert second.status_code == 429
     assert second.json()["detail"]["type"] == "rate_limit_exceeded"
@@ -342,7 +342,7 @@ async def test_query_quota_exhaustion_blocks_inference(app_client, monkeypatch, 
     try:
         resp = await app_client.post(
             "/api/query",
-            json={"topic": "quota", "levels": ["eli5"], "mode": "learning"},
+            json={"topic": "quota", "levels": ["eli5"], "mode": "learn"},
         )
         assert resp.status_code == 429
         detail = resp.json()["detail"]
@@ -371,7 +371,7 @@ async def test_query_circuit_breaker_trigger_rejects(app_client, monkeypatch, te
 
     resp = await app_client.post(
         "/api/query",
-        json={"topic": "breaker", "levels": ["eli5"], "mode": "learning"},
+        json={"topic": "breaker", "levels": ["eli5"], "mode": "learn"},
     )
     assert resp.status_code == 503
     assert resp.json()["detail"]["type"] == "circuit_breaker_open"

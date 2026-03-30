@@ -69,7 +69,7 @@ async def test_authenticated_requests_fail_open_when_store_unavailable(monkeypat
         user_id="user-1",
         client_ip="127.0.0.1",
         reserved_tokens=100,
-        mode="learning",
+        mode="learn",
     )
 
 
@@ -89,7 +89,7 @@ async def test_anonymous_requests_fail_closed_when_store_unavailable(monkeypatch
             user_id=None,
             client_ip="127.0.0.1",
             reserved_tokens=100,
-            mode="learning",
+            mode="learn",
         )
 
     assert getattr(exc_info.value, "status_code", None) == 503
@@ -109,17 +109,17 @@ async def test_quota_does_not_consume_tokens_on_reject(monkeypatch, test_setting
     monkeypatch.setattr(rate_limit_module, "get_redis", get_fake_redis)
 
     result = await rate_limit_module.check_daily_quota(
-        key="knowbear:quota:user-1:learning",
+        key="knowbear:quota:user-1:learn",
         limit=10,
         requested=15,
         window_seconds=100,
     )
     assert result.allowed is False
     assert result.consumed == 0
-    assert "knowbear:quota:user-1:learning" not in fake_redis.hashes
+    assert "knowbear:quota:user-1:learn" not in fake_redis.hashes
 
     allowed = await rate_limit_module.check_daily_quota(
-        key="knowbear:quota:user-1:learning",
+        key="knowbear:quota:user-1:learn",
         limit=10,
         requested=5,
         window_seconds=100,
@@ -167,7 +167,7 @@ async def test_quota_check_failed_log_uses_user_id_hash_only(monkeypatch, test_s
         user_id="user-123",
         client_ip="127.0.0.1",
         reserved_tokens=100,
-        mode="learning",
+        mode="learn",
     )
 
     quota_warning_payload = next(payload for event, payload in warnings if event == "quota_check_failed")
