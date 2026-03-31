@@ -226,8 +226,10 @@ class DummyRedis:
                     return [0, circuit_open_seconds, "CIRCUIT_OPEN", None]
 
                 if capacity > 0 and refill_per_sec > 0:
-                    tokens = float(await self.hget(token_bucket_key, "tokens") or capacity)
-                    last_ts = int(await self.hget(token_bucket_key, "last_ts") or now_ts)
+                    raw_tokens = await self.hget(token_bucket_key, "tokens")
+                    tokens = float(raw_tokens) if raw_tokens is not None else capacity
+                    raw_last_ts = await self.hget(token_bucket_key, "last_ts")
+                    last_ts = int(raw_last_ts) if raw_last_ts is not None else now_ts
                     delta = max(0, now_ts - last_ts)
                     refill = delta * refill_per_sec
                     new_tokens = min(capacity, tokens + refill)

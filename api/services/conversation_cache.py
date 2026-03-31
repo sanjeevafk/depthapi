@@ -67,6 +67,8 @@ async def warm_conversation_snapshot(conversation_id: str, user_id: str | None) 
     }
 
     redis = await get_redis()
+    if not redis:
+        return
     try:
         await redis.pipeline(
             [

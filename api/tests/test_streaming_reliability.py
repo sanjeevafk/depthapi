@@ -29,8 +29,11 @@ def _use_test_gatekeeper(monkeypatch, *, stale_seconds: int = 20, ttl_seconds: i
         redis = await message_gate.get_redis()
         now_ts = int(time.time())
         status = await redis.hget(idempotency_key, "status")
+        response_value = await redis.hget(idempotency_key, "response")
+        if response_value and status != "COMPLETED":
+            status = "COMPLETED"
         if status == "COMPLETED":
-            response = await redis.hget(idempotency_key, "response")
+            response = response_value if response_value is not None else await redis.hget(idempotency_key, "response")
             return message_gate.GatekeeperResult(
                 allowed=True,
                 retry_after=0,

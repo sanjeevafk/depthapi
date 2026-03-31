@@ -419,9 +419,10 @@ def _enforce_length_constraint(text: str, constraint: tuple[str, int] | None) ->
         selected = []
         chars_used = 0
         for sentence in sentences:
-            if chars_used + len(sentence) <= count:
+            space_needed = 1 if selected else 0
+            if chars_used + space_needed + len(sentence) <= count:
                 selected.append(sentence)
-                chars_used += len(sentence) + (1 if selected else 0)
+                chars_used += space_needed + len(sentence)
             else:
                 break
         if selected:
