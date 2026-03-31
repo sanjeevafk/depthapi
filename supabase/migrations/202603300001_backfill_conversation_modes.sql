@@ -9,13 +9,7 @@ update public.conversations
 set settings = jsonb_set(
   coalesce(settings, '{}'::jsonb),
   '{mode}',
-  to_jsonb(
-    case
-      when coalesce(settings->>'mode', mode) = 'technical' then 'technical'
-      when coalesce(settings->>'mode', mode) = 'socratic' then 'socratic'
-      else 'learn'
-    end
-  ),
+  to_jsonb(mode),
   true
 )
 where coalesce(settings->>'mode', '') not in ('learn', 'technical', 'socratic');

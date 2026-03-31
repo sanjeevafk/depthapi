@@ -244,7 +244,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     exp = auth_data.get("exp")
     if isinstance(exp, (int, float)):
         exp_delta = float(exp) - time.time()
-        if exp_delta > 900:
+        if exp_delta < 900:
             is_pro = False
         if exp_delta < 120:
             asyncio.create_task(refresh_is_pro_cache(user_id))

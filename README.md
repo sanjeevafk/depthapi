@@ -13,7 +13,7 @@ KnowBear is an AI-powered product that delivers explanations at exactly the righ
 ## Core Features
 
 - Layered explanation levels: ELI5, ELI10, ELI12, ELI15, Meme
-- Dedicated modes: learn, technical, socratic
+- Dedicated modes: Learning, Technical, Socratic
 - Technical mode v2 with intent detection (explain, compare, brainstorm), depth control, and optional diagram guidance
 - Stable alias-based model routing through native provider fallback chains
 - Production chat sidebar with full thread history, New Thread reset, Go to Home action, and auth-aware sign in/out controls
