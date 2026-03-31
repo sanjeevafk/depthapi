@@ -470,7 +470,6 @@ def patch_settings(monkeypatch, test_settings):
     monkeypatch.setattr(cache_module, "get_settings", lambda: test_settings)
     monkeypatch.setattr(auth_module, "get_settings", lambda: test_settings)
     monkeypatch.setattr(llm_client_module, "get_settings", lambda: test_settings)
-    search_module.settings = test_settings
     return test_settings
 
 

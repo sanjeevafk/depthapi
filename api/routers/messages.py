@@ -704,7 +704,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 "message_id": client_message_id,
             }
             if cached_response:
-                meta_payload["replay"] = True
+                meta_payload["replay"] = "true"
             yield emit("meta", meta_payload)
 
             user_payload = {
