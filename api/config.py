@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_anon_key: str = ""
     supabase_service_role_key: SecretStr = SecretStr("")
+    supabase_jwt_secret: SecretStr = SecretStr("")
     supabase_auth_webhook_secret: SecretStr = SecretStr("")    
     tavily_api_key: str = ""
     serper_api_key: str = ""
