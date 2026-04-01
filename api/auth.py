@@ -4,11 +4,12 @@ import time
 from collections import OrderedDict
 from functools import lru_cache
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 import json
 
 import httpx
 import jwt
+from jwt.algorithms import ECAlgorithm, RSAAlgorithm
 from fastapi import HTTPException, Security, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from config import get_settings
@@ -83,6 +84,9 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Security(secu
     if not settings.supabase_url:
         raise HTTPException(status_code=500, detail="Server configuration error: Auth unavailable")
 
+    alg = ""
+    kid: str | None = None
+    decoded: dict[str, Any] | None = None
     try:
         header = jwt.get_unverified_header(token)
         kid = header.get("kid")
@@ -93,15 +97,19 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Security(secu
             jwks = await _get_jwks(str(settings.supabase_url))
             keys = jwks.get("keys") if isinstance(jwks, dict) else None
             key_data = next((item for item in keys or [] if item.get("kid") == kid), None)
-            if not key_data:
+            if not isinstance(key_data, dict):
                 logger.warning("auth_jwks_kid_not_found")
                 raise HTTPException(status_code=401, detail="Invalid token")
 
-            public_key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key_data))
+            key_alg = str(key_data.get("alg", "RS256")).upper()
+            if key_alg.startswith("ES"):
+                public_key = ECAlgorithm.from_jwk(json.dumps(key_data))
+            else:
+                public_key = RSAAlgorithm.from_jwk(json.dumps(key_data))
             decoded = jwt.decode(
                 token,
-                key=public_key,
-                algorithms=[key_data.get("alg", "RS256")],
+                key=cast(Any, public_key),
+                algorithms=[key_alg],
                 options={"verify_aud": False},
                 issuer=issuer,
             )
@@ -129,16 +137,23 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Security(secu
         logger.warning(
             "auth_verify_token_validation_error",
             error_type=type(e).__name__,
+            error=str(e),
+            token_alg=alg,
+            token_kid=kid,
         )
         raise HTTPException(status_code=401, detail="Invalid authentication credentials")
 
-    user_id = str(decoded.get("sub") or "").strip()
+    if not isinstance(decoded, dict):
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    decoded_payload = cast(dict[str, Any], decoded)
+    user_id = str(decoded_payload.get("sub") or "").strip()
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token")
-    email = str(decoded.get("email") or "") or None
-    app_metadata = decoded.get("app_metadata") if isinstance(decoded.get("app_metadata"), dict) else {}
-    user_metadata = decoded.get("user_metadata") if isinstance(decoded.get("user_metadata"), dict) else {}
-    is_pro = bool(decoded.get("is_pro") or app_metadata.get("is_pro") or False)
+    email = str(decoded_payload.get("email") or "") or None
+    app_metadata = decoded_payload.get("app_metadata") if isinstance(decoded_payload.get("app_metadata"), dict) else {}
+    user_metadata = decoded_payload.get("user_metadata") if isinstance(decoded_payload.get("user_metadata"), dict) else {}
+    is_pro = bool(decoded_payload.get("is_pro") or app_metadata.get("is_pro") or False)
 
     user = SimpleNamespace(
         id=user_id,
@@ -151,7 +166,7 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Security(secu
         email_hash=hash_for_monitoring(email) if email else None,
         token_hash=hash_for_monitoring(token),
     )
-    return {"user": user, "token": token, "is_pro": is_pro, "exp": decoded.get("exp")}
+    return {"user": user, "token": token, "is_pro": is_pro, "exp": decoded_payload.get("exp")}
 
 
 def _is_admin_user(user: object) -> bool:
@@ -184,9 +199,16 @@ async def _get_jwks(supabase_url: str) -> dict[str, Any]:
         if _JWKS_CACHE and _JWKS_CACHE_EXP and _JWKS_CACHE_EXP > now:
             return _JWKS_CACHE
 
-    url = f"{supabase_url.rstrip('/')}/auth/v1/keys"
+    settings = get_settings()
+    apikey = str(getattr(settings, "supabase_publishable_key", "") or "").strip()
+    base = supabase_url.rstrip("/")
+    primary_url = f"{base}/auth/v1/keys"
+    fallback_url = f"{base}/auth/v1/.well-known/jwks.json"
     async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=0.75)) as client:
-        response = await client.get(url)
+        headers = {"apikey": apikey} if apikey else None
+        response = await client.get(primary_url, headers=headers)
+        if response.status_code == 404:
+            response = await client.get(fallback_url, headers=headers)
         response.raise_for_status()
         jwks = response.json()
 
