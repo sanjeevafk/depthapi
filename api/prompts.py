@@ -204,7 +204,8 @@ Rules:
 
 {uncertainty_clause}
 
-Output: plain text only. No labels, no bullet points, no markdown.
+Output: plain text only. no bullet points, no markdown.
+For single-question responses, output only the question — no labels, no preamble or follow-up.
 If providing a direct answer, format exactly:
 [Direct answer]
 
