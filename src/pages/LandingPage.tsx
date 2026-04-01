@@ -4,7 +4,6 @@ import { useSearchParams } from "react-router-dom";
 import {
   ArrowRight,
   Search,
-  Cpu,
   Layers,
   CheckCircle2,
   Brain,
