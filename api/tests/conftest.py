@@ -1,4 +1,5 @@
 import sys
+import json
 from pathlib import Path
 import base64
 import os
@@ -272,13 +273,15 @@ class DummyRedis:
             msgs = await self.lrange(list_key, -max_messages, -1)
             return [meta, msgs]
 
-        if "RPUSH" in script_text and "__SEQ__" in script_text:
+        if "RPUSH" in script_text and "cjson.decode" in script_text:
             seq_key = str(args[0])
             list_key = str(args[1])
             message_json = str(args[2])
             max_messages = int(args[3])
             seq = await self.incr(seq_key)
-            payload = message_json.replace("__SEQ__", str(seq))
+            payload_obj = json.loads(message_json)
+            payload_obj["sequence_id"] = seq
+            payload = json.dumps(payload_obj)
             await self.rpush(list_key, payload)
             if max_messages > 0:
                 await self.ltrim(list_key, -max_messages, -1)
