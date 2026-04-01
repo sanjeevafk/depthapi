@@ -128,7 +128,7 @@ export const verifyPaymentStatus = async (): Promise<PaymentStatus> => {
         status: "request_failed",
         http_status: response.status,
       });
-      return false;
+      return { isPro: false };
     }
 
     const data = (await response.json()) as { is_pro?: boolean; plan?: string };
