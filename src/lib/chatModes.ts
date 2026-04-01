@@ -21,8 +21,8 @@ const SHARED_CONVERSATION_MODES = [
   "technical",
   "socratic",
 ] as const;
-const SHARED_FREE_MODES = ["learn", "socratic"] as const;
-const SHARED_PREMIUM_MODES = ["technical"] as const;
+const SHARED_FREE_MODES = ["learn"] as const;
+const SHARED_PREMIUM_MODES = ["technical", "socratic"] as const;
 
 const matchesSharedModes = (
   label: string,
