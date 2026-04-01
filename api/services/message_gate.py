@@ -134,11 +134,17 @@ APPEND_MESSAGE_LUA = """
 -- ARGV:
 -- 1) message_json
 -- 2) max_messages
+-- 3) ttl_seconds
 local seq = redis.call('INCR', KEYS[1])
 local payload = string.gsub(ARGV[1], '__SEQ__', tostring(seq))
 redis.call('RPUSH', KEYS[2], payload)
 if tonumber(ARGV[2]) > 0 then
   redis.call('LTRIM', KEYS[2], -tonumber(ARGV[2]), -1)
+end
+local ttl = tonumber(ARGV[3])
+if ttl > 0 then
+  redis.call('EXPIRE', KEYS[1], ttl)
+  redis.call('EXPIRE', KEYS[2], ttl)
 end
 return seq
 """
@@ -255,6 +261,7 @@ async def append_conversation_message(
     max_messages: int,
     timeout_seconds: float = 0.05,
 ) -> int | None:
+    settings = get_settings()
     seq_key = f"knowbear:conversation:{conversation_id}:seq"
     list_key = f"knowbear:conversation:{conversation_id}:messages"
     redis = await get_redis()
@@ -267,6 +274,7 @@ async def append_conversation_message(
                 list_key,
                 message_json,
                 max_messages,
+                settings.message_cache_ttl_seconds,
             ),
             timeout=timeout_seconds,
         )

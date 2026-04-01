@@ -70,6 +70,34 @@ def sanitize_filename(value: str) -> str:
     return cleaned.lower() or "export"
 
 
+def escape_for_prompt(value: str, max_length: int = 500) -> str:
+    """Sanitize user input for safe embedding in system prompts to prevent injection attacks.
+    
+    Args:
+        value: Raw user input string
+        max_length: Maximum allowed length (default 500 chars)
+    
+    Returns:
+        Escaped string safe for embedding in prompt strings
+    """
+    if not isinstance(value, str):
+        return ""
+    
+    # Truncate to max length first
+    safe = value.strip()[:max_length]
+    
+    # Escape backslashes first (must be first to avoid double-escaping)
+    safe = safe.replace("\\", "\\\\")
+    
+    # Escape double quotes to prevent breaking out of quoted strings
+    safe = safe.replace('"', '\\"')
+    
+    # Escape newlines to prevent multi-line injection
+    safe = safe.replace("\n", "\\n").replace("\r", "\\r")
+    
+    return safe
+
+
 def _load_chat_modes():
     path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "shared", "chat_modes.json"))
     try:

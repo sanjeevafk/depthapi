@@ -3,7 +3,7 @@ import time
 import orjson
 import pytest
 
-from services import message_gate as gate_module
+from services import message_gate as gate_module # type: ignore
 
 
 @pytest.mark.asyncio
