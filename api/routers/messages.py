@@ -243,12 +243,15 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         raise HTTPException(status_code=401, detail="Authenticated user id is missing")
     is_pro = bool(auth_data.get("is_pro"))
     exp = auth_data.get("exp")
+    exp_delta = None
     if isinstance(exp, (int, float)):
         exp_delta = float(exp) - time.time()
         if exp_delta < 900:
             asyncio.create_task(refresh_is_pro_cache(user_id))
-        if exp_delta < 120:
-            is_pro = False
+    # Align with query router: verify pro status server-side when token claim is missing
+    # or the token is nearing expiry, so active Pro users are not blocked.
+    if not is_pro or (exp_delta is not None and exp_delta < 120):
+        is_pro = await check_is_pro(user_id)
 
     content = (req.content or "").strip()
     user_id_hash = anonymize_user_id(user_id)
