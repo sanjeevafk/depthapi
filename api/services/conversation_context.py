@@ -95,22 +95,39 @@ def build_context_messages(
         else max(0, max_tokens - summary_max_tokens)
     )
 
-    # Sliding window by token budget (prioritize newest).
+    PRESERVE_FIRST_TURNS = 4
+    preserved: list[ConversationMessage] = []
+    non_preserved: list[ConversationMessage] = []
+
+    non_system_count = 0
+    for msg in filtered:
+        if msg["role"] == "user":
+            non_system_count += 1
+        if non_system_count <= PRESERVE_FIRST_TURNS:
+            preserved.append(msg)
+        else:
+            non_preserved.append(msg)
+
+    preserved_tokens = sum(
+        count_prompt_tokens(msg["content"]) + ROLE_OVERHEAD_TOKENS for msg in preserved
+    )
+    preserve_budget = max(0, effective_message_budget - preserved_tokens)
+
+    # Sliding window by token budget over non-preserved messages (prioritize newest).
     selected: list[ConversationMessage] = []
     total_tokens = 0
-    for msg in reversed(filtered):
+    for msg in reversed(non_preserved):
         msg_tokens = count_prompt_tokens(msg["content"]) + ROLE_OVERHEAD_TOKENS
-        if total_tokens + msg_tokens > effective_message_budget and selected:
+        if total_tokens + msg_tokens > preserve_budget and selected:
             break
-        if msg_tokens > effective_message_budget:
-            # Single oversized message: truncate content to fit (account for role overhead).
-            content_budget = max(0, effective_message_budget - ROLE_OVERHEAD_TOKENS)
+        if msg_tokens > preserve_budget:
+            content_budget = max(0, preserve_budget - ROLE_OVERHEAD_TOKENS)
             trimmed_content = _trim_to_token_budget(msg["content"], content_budget)
             if not trimmed_content:
                 break
             selected.append({"role": msg["role"], "content": trimmed_content})
             total_tokens = min(
-                effective_message_budget,
+                preserve_budget,
                 ROLE_OVERHEAD_TOKENS + count_prompt_tokens(trimmed_content),
             )
             break
@@ -118,19 +135,20 @@ def build_context_messages(
         total_tokens += msg_tokens
 
     selected = list(reversed(selected))
+    final_messages = preserved + selected
 
-    dropped_count = len(filtered) - len(selected)
+    dropped_count = len(filtered) - len(final_messages)
     summary = ""
     if dropped_count > 0 and summary_max_tokens > 0:
         summary = _summarize_messages(filtered[:dropped_count], summary_max_tokens)
 
     if summary:
         summary_message: ConversationMessage = {"role": "system", "content": summary}
-        selected = [summary_message, *selected]
+        final_messages = [summary_message, *final_messages]
 
-    signature_base = "\n".join(f"{m['role']}:{m['content']}" for m in selected)
+    signature_base = "\n".join(f"{m['role']}:{m['content']}" for m in final_messages)
     signature = hashlib.sha256(signature_base.encode("utf-8")).hexdigest()
-    return selected, signature
+    return final_messages, signature
 
 
 def extract_last_turns(messages: list[ConversationMessage]) -> tuple[str | None, str | None]:
