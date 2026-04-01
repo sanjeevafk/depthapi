@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from utils import escape_for_prompt
+
 
 ConversationIntentType = Literal[
     "new_query",
@@ -146,7 +148,7 @@ def build_intent_system_prompt(
     clarification_text: str | None = None,
 ) -> str | None:
     if intent.type == "correction":
-        correction = (correction_text or "").strip()
+        correction = escape_for_prompt(correction_text or "")
         if correction:
             return (
                 "User correction (authoritative): "
@@ -156,7 +158,7 @@ def build_intent_system_prompt(
         return "The user is correcting earlier information. Treat the correction as authoritative."
 
     if intent.type == "clarification":
-        clarification = (clarification_text or "").strip()
+        clarification = escape_for_prompt(clarification_text or "")
         style = intent.clarification_style or "clarify"
         if clarification:
             return (

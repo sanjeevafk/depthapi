@@ -1,3 +1,5 @@
+import sys
+from pathlib import Path
 import base64
 import os
 import time
@@ -5,6 +7,9 @@ import types
 from types import SimpleNamespace
 import pytest
 import httpx
+
+# Add parent directory to path so 'api' module is importable
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 os.environ.setdefault("LOG_USER_HASH_SALT", "test-log-salt")
 _RUN_REAL_PROVIDER_TESTS = os.getenv("RUN_REAL_PROVIDER_TESTS", "").strip() == "1"
@@ -488,10 +493,10 @@ def patch_llm_client(monkeypatch):
             self.model = model
             self.usage = None
 
-    async def fake_create_chat_completion(model, _messages, **_kwargs):
+    async def fake_create_chat_completion(model: str, messages: list, **_kwargs):
         return DummyResponse("ok", model)
 
-    async def fake_stream_chat_completion(_model, _messages, **_kwargs):
+    async def fake_stream_chat_completion(model: str, messages: list, **_kwargs):
         yield "ok"
 
     monkeypatch.setattr(llm_client_module, "create_chat_completion", fake_create_chat_completion)
