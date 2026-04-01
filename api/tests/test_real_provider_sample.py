@@ -27,7 +27,7 @@ async def test_real_provider_client_sampled_smoke():
                 "content": "Reply with exactly: KNOWBEAR_PROVIDER_OK",
             }
         ],
-        max_tokens=24,
+        max_tokens=300,
         temperature=0,
     )
 
