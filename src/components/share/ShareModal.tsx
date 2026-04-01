@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import FocusTrap from "focus-trap-react";
 import {
   Check,
   Copy,
@@ -67,6 +68,9 @@ export default function ShareModal({
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const titleId = useId();
+  const modalRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   const accessDescription = ACCESS_OPTIONS[0]?.description;
 
@@ -77,7 +81,23 @@ export default function ShareModal({
     setCopied(false);
     setIsSubmitting(false);
     setShareKind(defaultKind);
-  }, [open, messageId, defaultKind]);
+  }, [open, messageId, conversationId, defaultKind]);
+
+  useEffect(() => {
+    if (!open) return;
+    closeButtonRef.current?.focus();
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [open, onClose]);
 
   if (!open) return null;
 
@@ -129,22 +149,42 @@ export default function ShareModal({
         className="absolute inset-0 bg-black/80 backdrop-blur-md"
         onClick={onClose}
       ></div>
-      <div className="relative w-full max-w-lg rounded-2xl border border-dark-600 bg-dark-800 p-6 shadow-2xl">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h3 className="text-lg font-semibold text-white">Share</h3>
-            <p className="text-sm text-gray-400">
-              Create a secure link to share.
-            </p>
+      <FocusTrap
+        active={open}
+        focusTrapOptions={{
+          initialFocus: () => closeButtonRef.current ?? modalRef.current,
+          fallbackFocus: () => modalRef.current ?? document.body,
+          returnFocusOnDeactivate: true,
+          escapeDeactivates: false,
+          clickOutsideDeactivates: false,
+        }}
+      >
+        <div
+          ref={modalRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          tabIndex={-1}
+          className="relative w-full max-w-lg rounded-2xl border border-dark-600 bg-dark-800 p-6 shadow-2xl"
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 id={titleId} className="text-lg font-semibold text-white">
+                Share
+              </h3>
+              <p className="text-sm text-gray-400">
+                Create a secure link to share.
+              </p>
+            </div>
+            <button
+              ref={closeButtonRef}
+              onClick={onClose}
+              className="text-gray-400 hover:text-white transition-colors text-sm"
+              aria-label="Close share dialog"
+            >
+              Close
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-white transition-colors text-sm"
-            aria-label="Close share dialog"
-          >
-            Close
-          </button>
-        </div>
 
         <div className="mt-5 space-y-4">
           {allowKindSelection && (
@@ -243,23 +283,24 @@ export default function ShareModal({
           </div>
         )}
 
-        <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-end">
-          <button
-            onClick={onClose}
-            className="rounded-xl border border-white/10 px-4 py-2 text-sm text-gray-300 hover:text-white"
-          >
-            Done
-          </button>
-          <button
-            onClick={handleCreateShare}
-            disabled={isSubmitting}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-cyan-400 disabled:opacity-60"
-          >
-            <LinkIcon className="h-4 w-4" />
-            {isSubmitting ? "Creating..." : "Create link"}
-          </button>
+          <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-end">
+            <button
+              onClick={onClose}
+              className="rounded-xl border border-white/10 px-4 py-2 text-sm text-gray-300 hover:text-white"
+            >
+              Done
+            </button>
+            <button
+              onClick={handleCreateShare}
+              disabled={isSubmitting}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-cyan-400 disabled:opacity-60"
+            >
+              <LinkIcon className="h-4 w-4" />
+              {isSubmitting ? "Creating..." : "Create link"}
+            </button>
+          </div>
         </div>
-      </div>
+      </FocusTrap>
     </div>
   );
 }
