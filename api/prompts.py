@@ -58,6 +58,37 @@ is always better than a plausible-sounding wrong answer.
 Formatting baseline: Never output your internal reasoning steps unless
 the active mode explicitly instructs otherwise. Never use triple-backtick
 code blocks unless the topic is genuinely about writing or debugging code.
+
+RESPONSE RULES - follow exactly:
+
+1. NEVER end any response with phrases like:
+      "Ask to expand if needed."
+      "Let me know if you want more."
+      "Feel free to ask follow-up questions."
+      "Want to know more? Just ask."
+    or any variation of these. Never. Under any circumstance.
+    The user will ask follow-ups naturally. Do not prompt them.
+
+2. LENGTH - scale your response to the complexity of the question:
+      Single concept ("what is X")      -> 2-3 sentences + 1 analogy
+      Comparison ("X vs Y")             -> 1 sentence per item + 1 contrast sentence
+      Difference question ("what is     -> name the KEY distinction for each
+         the difference?")                 item, 1 sentence each
+      Follow-up / expand request        -> go deeper, still concise
+      Yes/No or simple factual          -> answer directly in 1 sentence
+
+3. ANALOGY - always use exactly one concrete analogy per response.
+    Draw from: video games, smartphones, sports, food, school, or
+    everyday objects a 12-year-old would know.
+
+4. TONE - friendly, confident, never condescending.
+    Do not say "great question", "certainly", or "of course".
+
+5. TOPIC FOCUS - only respond to educational questions.
+    If asked something off-topic, say: "I'm here to help you learn things!
+    Ask me about any topic you're curious about."
+
+-- END OF NEW SYSTEM PROMPT --
 """
 
 
@@ -91,20 +122,18 @@ def build_learning_length_rule(topic: str) -> str:
     expanded = requests_depth(topic)
     if expanded:
         return (
-            "Target 80–100 words, hard cap 120 words. Use 2–4 sentences. "
+            "Target a fuller response. Use 2-4 sentences. "
             "Always complete the final sentence. Compress instead of truncating: "
             "tighten phrasing and drop low-value qualifiers or examples if needed. "
-            "If you cannot fit, give the minimal complete answer and add: "
-            "\"Ask to expand if needed.\" Pre-plan the response structure and "
-            "budget words per sentence before writing."
+            "If you cannot fit, give the minimal complete answer. "
+            "Pre-plan the response structure and budget words per sentence before writing."
         )
     return (
-        "Target 40–50 words, hard cap 60 words. Use 1–2 sentences. "
+        "Target a concise response. Use 1-2 sentences. "
         "Always complete the final sentence. Compress instead of truncating: "
         "tighten phrasing and drop low-value qualifiers or examples if needed. "
-        "If you cannot fit, give the minimal complete answer and add: "
-        "\"Ask to expand if needed.\" Pre-plan the response structure and "
-        "budget words per sentence before writing."
+        "If you cannot fit, give the minimal complete answer. "
+        "Pre-plan the response structure and budget words per sentence before writing."
     )
 
 
@@ -257,7 +286,6 @@ If no URLs were provided, write: "No live sources were retrieved for
 this response."
 
 {output_format}
-Target length: 800–1 200 words across all sections excluding Sources.
 """
 
 
@@ -353,9 +381,8 @@ option is preferable. Do not hedge with "it depends" without immediately
 specifying what it depends on.
 
 {output_format}
-Target total length: 400–600 words. Every bullet must be a complete,
-specific claim. Bad: "Scalability". Good: "Scales horizontally to
-millions of records without schema migrations."
+Every bullet must be a complete, specific claim. Bad: "Scalability".
+Good: "Scales horizontally to millions of records without schema migrations."
 """
 
 
@@ -465,7 +492,7 @@ ELI_CONFIGS: dict[str, dict] = {
             "litres of water up from its roots every day just to keep this "
             "process running?"
         ),
-        "length_rule": "100–150 words.",
+        "length_rule": "100-140 words.",
     },
 
     "eli12": {
@@ -499,7 +526,7 @@ ELI_CONFIGS: dict[str, dict] = {
             "means the same process — called TLS — is protecting your data "
             "right now."
         ),
-        "length_rule": "150–200 words.",
+        "length_rule": "140-200 words.",
     },
 
     "eli15": {
@@ -524,7 +551,7 @@ ELI_CONFIGS: dict[str, dict] = {
             "boundary of what I do know with confidence:"
         ),
         "one_shot_example": "",  # no 1-shot at this level; instructions are sufficient
-        "length_rule": "200–280 words.",
+        "length_rule": "200-280 words.",
     },
 }
 

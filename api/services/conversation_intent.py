@@ -35,7 +35,6 @@ CORRECTION_PATTERNS = (
 
 CLARIFICATION_PATTERNS: list[tuple[str, str]] = [
     (r"\bshorter\b", "shorter"),
-    (r"\bbrief\b", "shorter"),
     (r"\btldr\b|\btl;dr\b", "shorter"),
     (r"\bsimpler\b|\bmore simply\b", "simpler"),
     (r"\bexplain again\b|\brephrase\b|\breword\b", "rephrase"),
