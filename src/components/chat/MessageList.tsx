@@ -6,12 +6,14 @@ import remarkGfm from "remark-gfm";
 import Mermaid from "../Mermaid";
 import SafeImage from "../SafeImage";
 import MessageActionToolbar from "./MessageActionToolbar";
+import ShareModal from "../share/ShareModal";
 import { useChatStore } from "../../stores/useChatStore";
 import { useConversationStore } from "../../stores/useConversationStore";
 import { useMessageStore } from "../../stores/useMessageStore";
 import { formatModeLabel } from "../../lib/chatModes";
 import type { ConversationMode, PromptMode } from "../../types/chat";
 import { getStreamingVerbs } from "../streamingVerbs";
+import { notifyToast } from "../../lib/toast";
 
 const markdownComponents: Components = {
   code({ className, children, ...props }) {
@@ -58,6 +60,8 @@ export default function MessageList(): JSX.Element {
   const messageIds = useMessageStore((state) => state.messageIds);
   const isLoading = useConversationStore((state) => state.isLoading);
   const messagesById = useMessageStore((state) => state.messagesById);
+  const [shareMessageId, setShareMessageId] = useState<string | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
 
@@ -94,7 +98,14 @@ export default function MessageList(): JSX.Element {
         ) : (
           <AnimatePresence initial={false}>
             {messageIds.map((messageId) => (
-              <MessageItem key={messageId} messageId={messageId} />
+              <MessageItem
+                key={messageId}
+                messageId={messageId}
+                onShare={(targetId) => {
+                  setShareMessageId(targetId);
+                  setShareOpen(true);
+                }}
+              />
             ))}
           </AnimatePresence>
         )}
@@ -103,11 +114,27 @@ export default function MessageList(): JSX.Element {
           <div className="text-xs text-gray-500">Loading messages...</div>
         )}
       </div>
+      <ShareModal
+        open={shareOpen}
+        messageId={shareMessageId}
+        defaultKind="response"
+        allowKindSelection={false}
+        onClose={() => {
+          setShareOpen(false);
+          setShareMessageId(null);
+        }}
+      />
     </div>
   );
 }
 
-function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
+function MessageItem({
+  messageId,
+  onShare,
+}: {
+  messageId: string;
+  onShare: (targetId: string) => void;
+}): JSX.Element | null {
   const message = useMessageStore((state) => state.messagesById[messageId]);
   const regenerateMessage = useChatStore((state) => state.regenerateMessage);
   const retrySync = useChatStore((state) => state.retrySync);
@@ -121,6 +148,7 @@ function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
   if (assistantLabel && assistantMode === "learn" && assistantPromptMode) {
     assistantLabel = `${assistantLabel}-${assistantPromptMode.toUpperCase()}`;
   }
+  const shareTargetId = resolveShareMessageId(message);
 
   return (
     <motion.div
@@ -142,6 +170,13 @@ function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
             content={message.content}
             disabled={message.isStreaming || message.isRegenerating}
             onRegenerate={() => void regenerateMessage(messageId)}
+            onShare={() => {
+              if (shareTargetId) {
+                onShare(shareTargetId);
+              } else {
+                notifyToast("Share link available once the message is saved.", "info");
+              }
+            }}
           />
         )}
         {assistantLabel && (
@@ -186,6 +221,20 @@ function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
         )}
       </div>
     </motion.div>
+  );
+}
+
+function resolveShareMessageId(message: {
+  id?: string;
+  serverMessageId?: string;
+}): string | null {
+  const candidate = message.serverMessageId || message.id || "";
+  return isUuid(candidate) ? candidate : null;
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value,
   );
 }
 
