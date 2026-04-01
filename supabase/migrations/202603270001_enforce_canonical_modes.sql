@@ -1,5 +1,9 @@
 -- Enforce canonical V2 conversation/history modes only.
 
+-- Drop constraint before updates to allow mode changes
+alter table public.conversations
+  drop constraint if exists conversations_mode_check;
+
 update public.history
 set mode = case
   when mode = 'technical' then 'technical'
@@ -38,9 +42,6 @@ set settings = jsonb_set(
   true
 )
 where coalesce(settings->>'mode', '') not in ('', 'learn', 'technical', 'socratic');
-
-alter table public.conversations
-  drop constraint if exists conversations_mode_check;
 
 alter table public.conversations
   add constraint conversations_mode_check
