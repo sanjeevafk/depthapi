@@ -41,9 +41,9 @@ async def warm_conversation_snapshot(conversation_id: str, user_id: str | None) 
 
         history_resp = await asyncio.to_thread(
             lambda: supabase.table("messages")
-            .select("role, content, created_at, metadata")
+            .select("id, role, content, created_at, metadata, sequence_id")
             .eq("conversation_id", conversation_id)
-            .order("created_at", desc=True)
+            .order("sequence_id", desc=True)
             .limit(history_limit)
             .execute()
         )

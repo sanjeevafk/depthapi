@@ -1089,7 +1089,6 @@ def _build_messages(
     messages.append({"role": "user", "content": prompt})
     assert messages[-1].get("role") == "user"
     assert messages[-1].get("content") == prompt
-    print("FINAL PROMPT:", messages)
     return messages
 
 
