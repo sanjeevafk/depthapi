@@ -22,13 +22,14 @@ from services.intent import (
 )
 from utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE, normalize_mode, requests_depth
 from services.llm_client import close_llm_client, create_chat_completion, stream_chat_completion
+from services.token_count import count_prompt_tokens
 
 _tech_logger = structlog.get_logger(__name__)
 
 TECHNICAL_MODEL_PRIMARY = "technical-primary"
 TECHNICAL_MODEL_FALLBACK = "technical-fallback"
 TECHNICAL_TEMPERATURE = 0.4
-TECHNICAL_MAX_TOKENS = 1400
+TECHNICAL_MAX_TOKENS = 2048
 
 LEARNING_MODEL_SIMPLE = "default-fast"
 LEARNING_MODEL_DETAILED = "learning-detailed"
@@ -434,6 +435,18 @@ def _learning_length_policy(topic: str) -> tuple[int, str | None]:
     if requests_depth(topic):
         return (120, None)
     return (60, None)
+
+
+def _is_large_input(text: str) -> bool:
+    settings = get_settings()
+    char_threshold = int(getattr(settings, "large_input_char_threshold", 5000))
+    token_threshold = int(getattr(settings, "large_input_token_threshold", 5000))
+    if len(text) > char_threshold:
+        return True
+    try:
+        return count_prompt_tokens(text) > token_threshold
+    except Exception:
+        return False
 
 
 def _drain_complete_sentences(buffer: str) -> tuple[list[str], str]:
@@ -1214,7 +1227,8 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
             ).get("complexity", 0.0)
             or 0.0
         )
-        max_tokens = 500
+        settings = get_settings()
+        max_tokens = int(getattr(settings, "max_output_tokens_socratic", 1024))
         response = await _call_with_quality_escalation(
             [model] if model else routed_aliases,
             prompt,
@@ -1233,6 +1247,7 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
     prompt = _append_search_context(prompt, search_context)
     length_constraint = _extract_length_constraint(topic)
     prompt = _apply_length_constraint(prompt, length_constraint)
+    is_large_input = _is_large_input(topic)
     learn_cap, learn_cue = _learning_length_policy(topic)
         
     routed_aliases = route_model_aliases(
@@ -1250,7 +1265,7 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
         ).get("complexity", 0.0)
         or 0.0
     )
-    max_tokens = 300
+    max_tokens = int(getattr(get_settings(), "max_output_tokens_learning", 1024))
     response = await _call_with_quality_escalation(
         [model] if model else routed_aliases,
         prompt,
@@ -1260,6 +1275,8 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
     )
     if length_constraint:
         return _enforce_length_constraint(response, length_constraint)
+    if is_large_input:
+        return response
     return _enforce_word_limit(response, learn_cap, cue=learn_cue)
 async def generate_stream_explanation(topic: str, level: str, model: str | None = None, **kwargs):
     """Stream explanation for topic at given level."""
@@ -1438,7 +1455,8 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         footer = "Share your answer, and I will guide the next step."
 
         try:
-            max_tokens = 500
+            settings = get_settings()
+            max_tokens = int(getattr(settings, "max_output_tokens_socratic", 1024))
             async for chunk in stream_chat_completion(
                 model=alias,
                 messages=cast(
@@ -1522,16 +1540,17 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         cue: str | None = None
         emitted_any = False
         trimmed_for_limit = False
+        is_large_input = _is_large_input(topic)
         if length_constraint:
             unit, count = length_constraint
             if unit == "chars":
                 remaining_chars = count
             else:
                 target_words = count
-        else:
+        elif not is_large_input:
             target_words, cue = _learning_length_policy(topic)
         try:
-            max_tokens = 300
+            max_tokens = int(getattr(get_settings(), "max_output_tokens_learning", 1024))
             async for chunk in stream_chat_completion(
                 model=alias,
                 messages=cast(
