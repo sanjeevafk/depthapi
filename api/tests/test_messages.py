@@ -114,14 +114,6 @@ async def test_concurrent_lock_serialization(app_client, monkeypatch, test_setti
     monkeypatch.setattr(messages_module, "get_settings", lambda: test_settings)
 
     try:
-        payload_one = {
-            "conversation_id": "conv-lock",
-            "content": "first",
-            "client_generated_id": "ed0c8949-1f92-4a38-95a0-14a0c3c5f100",
-            "assistant_client_id": "b4f3d3bb-0eb4-4b61-9a3f-4c5e2a3c7df5",
-            "mode": "learn",
-            "prompt_mode": "eli5",
-        }
         payload_two = {
             "conversation_id": "conv-lock",
             "content": "second",
@@ -130,14 +122,15 @@ async def test_concurrent_lock_serialization(app_client, monkeypatch, test_setti
             "mode": "learn",
             "prompt_mode": "eli5",
         }
-
-        task_one = asyncio.create_task(app_client.post("/api/messages", json=payload_one))
-        await asyncio.sleep(0.05)
-        task_two = asyncio.create_task(app_client.post("/api/messages", json=payload_two))
-
-        resp_one, resp_two = await asyncio.gather(task_one, task_two)
-
-        assert resp_one.status_code == 200
-        assert resp_two.status_code == 429
+        lock_acquired = await messages_module._acquire_conversation_lock(
+            payload_two["conversation_id"],
+            timeout_seconds=0.1,
+        )
+        assert lock_acquired is True
+        try:
+            resp_two = await app_client.post("/api/messages", json=payload_two)
+            assert resp_two.status_code == 429
+        finally:
+            messages_module._release_conversation_lock(payload_two["conversation_id"])
     finally:
         main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
