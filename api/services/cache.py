@@ -8,6 +8,50 @@ import orjson
 from config import get_settings
 from logging_config import logger
 
+UNIFIED_IDEMPOTENCY_CACHE_LUA = """
+-- unified_idempotency_cache
+-- KEYS: [idempotency_key, cache_key]
+-- ARGV: [now_ts, idempotency_ttl, idempotency_stale, set_in_progress, check_cache]
+local idempotency_key = KEYS[1]
+local cache_key = KEYS[2]
+local now_ts = tonumber(ARGV[1])
+local idempotency_ttl = tonumber(ARGV[2])
+local idempotency_stale = tonumber(ARGV[3])
+local set_in_progress = tonumber(ARGV[4])
+local check_cache = tonumber(ARGV[5])
+
+local raw = redis.call('GET', idempotency_key)
+if raw then
+    local ok, idem = pcall(cjson.decode, raw)
+    if ok and idem then
+        local status = idem.status
+        if status == 'completed' and idem.response then
+            return {1, idem.response}
+        end
+        if status == 'in_progress' then
+            local started_at = tonumber(idem.started_at or now_ts)
+            if (now_ts - started_at) < idempotency_stale then
+                return {2, ''}
+            end
+        end
+    end
+end
+
+if check_cache == 1 then
+    local cached = redis.call('GET', cache_key)
+    if cached then
+        return {3, cached}
+    end
+end
+
+if set_in_progress == 1 then
+    local payload = cjson.encode({status = 'in_progress', started_at = now_ts})
+    redis.call('SET', idempotency_key, payload, 'EX', idempotency_ttl)
+end
+
+return {0, ''}
+"""
+
 
 class UpstashRedisCompat:
     """Minimal async Redis-like client backed by Upstash REST API."""
@@ -170,6 +214,55 @@ async def get_redis() -> UpstashRedisCompat:
 
         _client = UpstashRedisCompat(base_url=base_url, token=token)
         return _client
+
+
+async def check_idempotency_and_cache(
+    *,
+    idempotency_key: str,
+    cache_key: str,
+    now_ts: int,
+    idempotency_ttl: int,
+    idempotency_stale: int,
+    set_in_progress: bool,
+    check_cache: bool,
+) -> dict[str, Any]:
+    try:
+        redis = await get_redis()
+        result = await redis.eval(
+            UNIFIED_IDEMPOTENCY_CACHE_LUA,
+            2,
+            idempotency_key,
+            cache_key,
+            now_ts,
+            idempotency_ttl,
+            idempotency_stale,
+            1 if set_in_progress else 0,
+            1 if check_cache else 0,
+        )
+        status_code = int(result[0]) if isinstance(result, (list, tuple)) and result else 0
+        payload = result[1] if isinstance(result, (list, tuple)) and len(result) > 1 else None
+        if status_code == 1:
+            return {"status": "replay", "response": str(payload or "")}
+        if status_code == 2:
+            return {"status": "wait"}
+        if status_code == 3:
+            if payload is None:
+                return {"status": "new"}
+            if isinstance(payload, (bytes, bytearray)):
+                raw_payload = bytes(payload)
+            else:
+                raw_payload = str(payload).encode("utf-8")
+            loaded = orjson.loads(raw_payload)
+            if isinstance(loaded, dict):
+                return {"status": "cache_hit", "cached": loaded}
+        return {"status": "new"}
+    except Exception as exc:
+        logger.warning(
+            "cache_idempotency_check_failed",
+            key=idempotency_key,
+            error=str(exc),
+        )
+        return {"status": "new"}
 
 
 async def cache_get(key: str) -> dict[str, Any] | None:
