@@ -28,7 +28,7 @@ _tech_logger = structlog.get_logger(__name__)
 TECHNICAL_MODEL_PRIMARY = "technical-primary"
 TECHNICAL_MODEL_FALLBACK = "technical-fallback"
 TECHNICAL_TEMPERATURE = 0.4
-TECHNICAL_MAX_TOKENS = 2048
+TECHNICAL_MAX_TOKENS = 300
 
 LEARNING_MODEL_SIMPLE = "default-fast"
 LEARNING_MODEL_DETAILED = "learning-detailed"
@@ -101,7 +101,6 @@ SEARCH_CONTEXT_TIMEOUT_SECONDS = 3.5
 
 LATENCY_KEYWORDS = (
     r"\bquick\b",
-    r"\bbrief\b",
     r"\bsummary\b",
     r"\btldr\b",
     r"\bshort\b",
@@ -431,10 +430,10 @@ def _enforce_length_constraint(text: str, constraint: tuple[str, int] | None) ->
     return _enforce_word_limit(text, count)
 
 
-def _learning_length_policy(topic: str) -> tuple[int, str]:
+def _learning_length_policy(topic: str) -> tuple[int, str | None]:
     if requests_depth(topic):
-        return (120, "Ask to expand if needed.")
-    return (60, "Ask to expand if needed.")
+        return (120, None)
+    return (60, None)
 
 
 def _drain_complete_sentences(buffer: str) -> tuple[list[str], str]:
@@ -477,7 +476,7 @@ async def _call_with_quality_escalation(
     prompt: str,
     *,
     complexity: float,
-    max_tokens: int = 1024,
+    max_tokens: int = 300,
     **kwargs,
 ) -> str:
     chain = _effective_alias_chain(aliases, complexity=complexity)
@@ -742,7 +741,7 @@ async def technical_mode_handler(
             result = await call_model(
                 model_alias,
                 prompt,
-                max_tokens=TECHNICAL_MAX_TOKENS,
+                max_tokens=300,
                 **call_kwargs,
             )
             if not result or not result.strip():
@@ -983,6 +982,13 @@ def _is_comparison_query(text: str) -> bool:
     )
 
 
+def trimHistoryForCost(history: list[dict[str, str]] | None) -> list[dict[str, str]]:
+    if not history:
+        return []
+    max_turns = 6
+    return history[-max_turns * 2 :]
+
+
 def _build_messages(
     prompt: str,
     *,
@@ -1005,7 +1011,7 @@ def _build_messages(
     if system_parts:
         messages.append({"role": "system", "content": "\n".join(system_parts)})
     if conversation_messages:
-        messages.extend(conversation_messages)
+        messages.extend(trimHistoryForCost(conversation_messages))
     messages.append({"role": "user", "content": prompt})
     assert messages[-1].get("role") == "user"
     assert messages[-1].get("content") == prompt
@@ -1052,7 +1058,7 @@ def is_transient_http_error(exc: BaseException) -> bool:
     retry=retry_if_exception(is_transient_http_error),
     reraise=True
 )
-async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **kwargs) -> str:
+async def call_model(model: str | None, prompt: str, max_tokens: int = 300, **kwargs) -> str:
     """Call API with given model and prompt."""
 
     try:
@@ -1071,7 +1077,7 @@ async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **k
         result = await create_chat_completion(
             model=alias,
             messages=cast(list[ChatCompletionMessageParam], messages),
-            max_tokens=max_tokens,
+            max_tokens=300,
             temperature=kwargs.get("temperature", 0.7),
             request_id=request_id,
         )
@@ -1147,7 +1153,7 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
             ).get("complexity", 0.0)
             or 0.0
         )
-        max_tokens = int(getattr(settings, "max_output_tokens_socratic", 1024))
+        max_tokens = 300
         response = await _call_with_quality_escalation(
             [model] if model else routed_aliases,
             prompt,
@@ -1180,7 +1186,7 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
         ).get("complexity", 0.0)
         or 0.0
     )
-    max_tokens = int(getattr(settings, "max_output_tokens_learning", 1024))
+    max_tokens = 300
     response = await _call_with_quality_escalation(
         [model] if model else routed_aliases,
         prompt,
@@ -1249,7 +1255,7 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             async for chunk in stream_chat_completion(
                 model=alias,
                 messages=cast(list[ChatCompletionMessageParam], messages),
-                max_tokens=TECHNICAL_MAX_TOKENS,
+                max_tokens=300,
                 temperature=TECHNICAL_TEMPERATURE,
                 request_id=request_id,
                 telemetry_sink=stream_telemetry,
@@ -1364,7 +1370,7 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         emitted_questions = 0
         socratic_error: Exception | None = None
         try:
-            max_tokens = int(getattr(settings, "max_output_tokens_socratic", 1024))
+            max_tokens = 300
             async for chunk in stream_chat_completion(
                 model=alias,
                 messages=cast(
@@ -1452,7 +1458,7 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         else:
             target_words, cue = _learning_length_policy(topic)
         try:
-            max_tokens = int(getattr(settings, "max_output_tokens_learning", 1024))
+            max_tokens = 300
             async for chunk in stream_chat_completion(
                 model=alias,
                 messages=cast(

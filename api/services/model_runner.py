@@ -60,7 +60,7 @@ def _extract_estimated_cost(result, usage: dict[str, int] | None) -> float | Non
     retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError)),
     reraise=True,
 )
-async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **kwargs) -> str:
+async def call_model(model: str | None, prompt: str, max_tokens: int = 300, **kwargs) -> str:
     """Call API with given model and prompt."""
     create_chat_completion_fn = kwargs.pop("create_chat_completion_fn", None)
     log_sampled_success_fn = kwargs.pop("log_sampled_success_fn", None)
@@ -77,7 +77,7 @@ async def call_model(model: str | None, prompt: str, max_tokens: int = 1024, **k
         result = await create_fn(
             alias,
             [{"role": "user", "content": prompt}],
-            max_tokens=max_tokens,
+            max_tokens=300,
             temperature=kwargs.get("temperature", 0.7),
             request_id=request_id,
         )

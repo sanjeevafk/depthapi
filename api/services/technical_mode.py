@@ -19,7 +19,7 @@ _tech_logger = structlog.get_logger(__name__)
 TECHNICAL_MODEL_PRIMARY = "technical-primary"
 TECHNICAL_MODEL_FALLBACK = "technical-fallback"
 TECHNICAL_TEMPERATURE = 0.4
-TECHNICAL_MAX_TOKENS = 2048
+TECHNICAL_MAX_TOKENS = 300
 
 TECHNICAL_LAST_RESORT_RESPONSE = (
     "## Core Idea\n"
@@ -139,7 +139,7 @@ async def technical_mode_handler(
             result = await call_model(
                 model_alias,
                 prompt,
-                max_tokens=TECHNICAL_MAX_TOKENS,
+                max_tokens=300,
                 **call_kwargs,
             )
             if not result or not result.strip():
@@ -268,7 +268,7 @@ async def technical_stream_explanation(
         async for chunk in stream_chat_completion(
             model=alias,
             messages=_build_messages(prompt),
-            max_tokens=TECHNICAL_MAX_TOKENS,
+            max_tokens=300,
             temperature=TECHNICAL_TEMPERATURE,
             request_id=request_id,
             telemetry_sink=stream_telemetry,

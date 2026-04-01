@@ -56,7 +56,6 @@ DEPTH_PATTERNS: list[tuple[DepthType, list[str]]] = [
             r"\bwhat is\b",
             r"\bdefine\b",
             r"\boverview\b",
-            r"\bbriefly\b",
             r"\bsimply\b",
             r"\beli5\b",
             r"\bsummary\b",
