@@ -28,7 +28,7 @@ _tech_logger = structlog.get_logger(__name__)
 TECHNICAL_MODEL_PRIMARY = "technical-primary"
 TECHNICAL_MODEL_FALLBACK = "technical-fallback"
 TECHNICAL_TEMPERATURE = 0.4
-TECHNICAL_MAX_TOKENS = 300
+TECHNICAL_MAX_TOKENS = 1400
 
 LEARNING_MODEL_SIMPLE = "default-fast"
 LEARNING_MODEL_DETAILED = "learning-detailed"
@@ -741,7 +741,7 @@ async def technical_mode_handler(
             result = await call_model(
                 model_alias,
                 prompt,
-                max_tokens=300,
+                max_tokens=TECHNICAL_MAX_TOKENS,
                 **call_kwargs,
             )
             if not result or not result.strip():
@@ -1077,7 +1077,7 @@ async def call_model(model: str | None, prompt: str, max_tokens: int = 300, **kw
         result = await create_chat_completion(
             model=alias,
             messages=cast(list[ChatCompletionMessageParam], messages),
-            max_tokens=300,
+            max_tokens=max_tokens,
             temperature=kwargs.get("temperature", 0.7),
             request_id=request_id,
         )
@@ -1153,7 +1153,7 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
             ).get("complexity", 0.0)
             or 0.0
         )
-        max_tokens = 300
+        max_tokens = 500
         response = await _call_with_quality_escalation(
             [model] if model else routed_aliases,
             prompt,
@@ -1255,7 +1255,7 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             async for chunk in stream_chat_completion(
                 model=alias,
                 messages=cast(list[ChatCompletionMessageParam], messages),
-                max_tokens=300,
+                max_tokens=TECHNICAL_MAX_TOKENS,
                 temperature=TECHNICAL_TEMPERATURE,
                 request_id=request_id,
                 telemetry_sink=stream_telemetry,
@@ -1370,7 +1370,7 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         emitted_questions = 0
         socratic_error: Exception | None = None
         try:
-            max_tokens = 300
+            max_tokens = 500
             async for chunk in stream_chat_completion(
                 model=alias,
                 messages=cast(
