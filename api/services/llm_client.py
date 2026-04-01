@@ -105,9 +105,7 @@ MODEL_FALLBACK_MAP: dict[str, dict[ProviderName, str]] = {
         "groq": "llama-3.1-8b-instant",
     },
     "socratic-openrouter-free": {
-        "gemini": "gemini-2.5-pro",
-        "groq": "llama-3.1-8b-instant",
-        "openrouter": "openrouter/free",
+        "openrouter": "cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
     },
     "socratic-groq-llama8b": {
         "groq": "llama-3.1-8b-instant",
