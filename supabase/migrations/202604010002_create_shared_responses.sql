@@ -49,7 +49,10 @@ BEGIN
       ON shared_responses
       FOR SELECT
       USING (
-        access_level IN ('public', 'unlisted')
+        (
+          access_level IN ('public', 'unlisted')
+          AND (expires_at IS NULL OR expires_at > NOW())
+        )
         OR owner_id = auth.uid()
       );
   END IF;

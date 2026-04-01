@@ -28,8 +28,8 @@ export interface ShareSnapshot {
   share_kind: ShareKind;
   snapshot_messages: Array<{
     id?: string;
-    role?: string;
-    content?: string;
+    role: string;
+    content: string;
     created_at?: string;
   }>;
   created_at: string;
