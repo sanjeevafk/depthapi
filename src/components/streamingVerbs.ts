@@ -62,6 +62,30 @@ const TECHNICAL_VERBS = [
   "Engineering understanding",
 ] as const;
 
+const MEME_VERBS = [
+  "Meming",
+  "Shitposting",
+  "Vibing",
+  "Roasting concepts",
+  "Cooking",
+  "Yeeting facts",
+  "Dabbing on ignorance",
+  "Trolling the textbooks",
+  "Loading epicness",
+  "Dropping knowledge bombs",
+  "Being based",
+  "Spilling the tea",
+  "Flexing wisdom",
+  "Avoiding cringe",
+  "Expanding the brain",
+  "Big brain time",
+  "Drake approving facts",
+  "Expanding brain",
+  "Surprised Pikachu",
+  "Epic W loading",
+  "Loading troll face",
+] as const;
+
 const STREAMING_VERBS: Partial<Record<StreamingMode, readonly string[]>> = {
   learn: LEARN_VERBS,
   socratic: SOCRATIC_VERBS,
@@ -70,7 +94,7 @@ const STREAMING_VERBS: Partial<Record<StreamingMode, readonly string[]>> = {
   eli10: LEARN_VERBS,
   eli12: LEARN_VERBS,
   eli15: LEARN_VERBS,
-  meme: LEARN_VERBS,
+  meme: MEME_VERBS,
 };
 
 export function getStreamingVerbs(
