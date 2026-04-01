@@ -1,7 +1,18 @@
 import { motion } from "framer-motion";
 import { Link, useNavigate } from "react-router-dom";
 import { useSearchParams } from "react-router-dom";
-import { ArrowRight, Search, Cpu, Layers, CheckCircle2 } from "lucide-react";
+import {
+  ArrowRight,
+  Search,
+  Cpu,
+  Layers,
+  CheckCircle2,
+  Brain,
+  Zap,
+  BookOpen,
+  Terminal,
+  MessageSquare,
+} from "lucide-react";
 import { LoginButton } from "../components/LoginButton";
 import { LivePreviewCard } from "../components/LivePreviewCard";
 import { useAuth } from "../context/AuthContext";
@@ -31,24 +42,24 @@ export default function LandingPage(): JSX.Element {
       <Helmet>
         <title>
           {buildTitle(
-            "AI Learning Workspace for Clear, Layered Explanations",
+            "AI Learning Tool — Multi-Model Socratic Workspace",
           )}
         </title>
         <meta
           name="description"
-          content="KnowBear is a teaching-first AI workspace that delivers layered explanations from ELI5 to technical deep dives. Learn faster with structured, reliable answers."
+          content="KnowBear is a multi-model AI learning assistant. Use Learn, Socratic, and Technical modes to understand deep concepts through layered, context-aware conversations."
         />
         <meta
           name="keywords"
-          content="AI learning workspace, layered explanations, education SaaS, AI tutor, knowledge engine, study assistant"
+          content="AI learning tool, developer assistant, multi-model AI, Socratic learning, depth control AI, educational workspace"
         />
         <meta
           property="og:title"
-          content={`${getSiteName()} — AI Learning Workspace`}
+          content={`${getSiteName()} — Multi-Model AI Learning Workspace`}
         />
         <meta
           property="og:description"
-          content="Layered, reliable explanations for faster learning. Built for students, professionals, and teams."
+          content="Understand deep concepts through Learn, Socratic, and Technical modes with multi-model routing."
         />
         <meta property="og:image" content={getOgImageUrl()} />
         <meta property="og:url" content={`${getBaseUrl()}/`} />
@@ -70,7 +81,7 @@ export default function LandingPage(): JSX.Element {
             applicationCategory: "EducationalApplication",
             operatingSystem: "Web",
             description:
-              "AI learning workspace delivering layered explanations for faster understanding.",
+              "AI learning workspace delivering layered explanations and Socratic reasoning.",
             offers: {
               "@type": "Offer",
               price: "0",
@@ -120,7 +131,7 @@ export default function LandingPage(): JSX.Element {
               transition={{ duration: 1, type: "spring" }}
               className="inline-flex flex-wrap justify-center sm:flex-nowrap items-center gap-x-2 gap-y-1 p-2 px-3 sm:p-3 sm:px-6 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-[0.65rem] sm:text-xs font-bold uppercase tracking-widest sm:tracking-[0.2em] mb-6 sm:mb-8 max-w-[95vw] text-center"
             >
-              Teaching-First AI Workspace
+              Multi-Model Socratic Workspace
             </motion.div>
 
             <motion.h1
@@ -129,9 +140,9 @@ export default function LandingPage(): JSX.Element {
               transition={{ delay: 0.3 }}
               className="text-4xl sm:text-6xl md:text-8xl lg:text-9xl font-black tracking-tighter leading-[0.9] mb-6 sm:mb-8"
             >
-              Learn Faster. <br />
+              Master Any Topic. <br />
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-600">
-                Understand Deeper.
+                Driven by Proof.
               </span>
             </motion.h1>
 
@@ -141,9 +152,7 @@ export default function LandingPage(): JSX.Element {
               transition={{ delay: 0.5 }}
               className="text-gray-400 text-base sm:text-lg md:text-xl max-w-3xl mx-auto mb-10 sm:mb-12 leading-relaxed"
             >
-              KnowBear routes every question through Learn, Socratic, and
-              Technical workspaces with live provider fallback, freshness-aware
-              search, and streaming responses built for explanation quality.
+              KnowBear intelligently routes queries through Learn, Socratic, and Technical workflows, utilizing cross-model MoE to deliver context-aware, verifiable explanations.
             </motion.p>
 
             <motion.div
@@ -167,52 +176,89 @@ export default function LandingPage(): JSX.Element {
           </div>
         </section>
 
-        {/* Multimodal Feature Grid */}
+        {/* Core Features Grid */}
         <section
           id="features"
-          className="py-16 sm:py-24 px-4 sm:px-6 bg-white/[0.02] border-y border-white/5"
+          className="py-16 sm:py-28 px-4 sm:px-6 bg-white/[0.02] border-y border-white/5"
         >
           <div className="max-w-7xl mx-auto">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 sm:gap-8">
               <FeatureCard
-                icon={<Search className="w-7 h-7 sm:w-8 sm:h-8 text-cyan-400" />}
-                title="Freshness-Aware Search"
-                description="Routes freshness-sensitive prompts through search providers before synthesis, so time-sensitive answers stay current."
+                icon={<Brain className="w-7 h-7 sm:w-8 sm:h-8 text-cyan-400" />}
+                title="Multi-Model MoE"
+                description="Routes every query to the optimal model based on complexity and mode."
               />
               <FeatureCard
                 icon={<Layers className="w-7 h-7 sm:w-8 sm:h-8 text-purple-400" />}
-                title="Workspace-First UX"
-                description="Switch instantly between Learn, Socratic, and Technical workspaces with clean thread isolation and mode-specific prompting."
+                title="Mode-Based Workflows"
+                description="Toggle between Learn, Socratic, and Technical spaces for targeted knowledge retrieval."
               />
               <FeatureCard
-                icon={<Cpu className="w-7 h-7 sm:w-8 sm:h-8 text-blue-400" />}
-                title="Provider-Native Routing"
-                description="Uses direct provider clients with resilient fallback, quota guards, and circuit-breaker state management."
+                icon={<Search className="w-7 h-7 sm:w-8 sm:h-8 text-blue-400" />}
+                title="Live Search Context"
+                description="Injects real-time web data into conversations to ensure accuracy and freshness."
+              />
+              <FeatureCard
+                icon={<Zap className="w-7 h-7 sm:w-8 sm:h-8 text-amber-400" />}
+                title="Stream-Native UX"
+                description="Ultra-fast response streaming with redundant provider fallback for zero downtime."
+              />
+            </div>
+          </div>
+        </section>
+
+        {/* Specialized Modes Section */}
+        <section id="modes" className="py-20 sm:py-32 px-4 sm:px-6">
+          <div className="max-w-7xl mx-auto">
+            <div className="text-center mb-16 sm:mb-20">
+              <h2 className="text-3xl sm:text-5xl font-black mb-4 sm:mb-6">
+                Three Modes. <span className="text-cyan-500">One Workspace.</span>
+              </h2>
+              <p className="text-gray-400 max-w-2xl mx-auto">
+                Choose the workflow that fits your intent. Each mode uses
+                specialized prompting and model parameters.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+              <ModeDisplay
+                icon={<BookOpen className="w-8 h-8 text-cyan-400" />}
+                mode="Learn"
+                description="Concise explanations with adaptive depth control (ELI5 to Expert)."
+              />
+              <ModeDisplay
+                icon={<MessageSquare className="w-8 h-8 text-purple-400" />}
+                mode="Socratic"
+                description="Guided reasoning and assumption testing through question-driven dialogue."
+              />
+              <ModeDisplay
+                icon={<Terminal className="w-8 h-8 text-blue-400" />}
+                mode="Technical"
+                description="Implementation-focused insights with structured diagrams and first-principles logic."
               />
             </div>
           </div>
         </section>
 
         {/* Intelligence Section */}
-        <section id="models" className="py-20 sm:py-32 px-4 sm:px-6">
+        <section id="models" className="py-20 sm:py-32 px-4 sm:px-6 bg-black/50">
           <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-20 items-center">
             <div>
-              <h2 className="text-3xl sm:text-4xl md:text-6xl font-black tracking-tight mb-6 sm:mb-8">
+              <h2 className="text-3xl sm:text-4xl md:text-6xl font-black tracking-tight mb-8 sm:mb-12">
                 Built for <span className="text-cyan-500">Reliable</span>{" "}
-                Explanations, Not Guesswork.
+                Knowledge, Not Just Chat.
               </h2>
-              <div className="space-y-6">
+              <div className="space-y-8">
                 <CheckItem
-                  title="Three Dedicated Workspaces"
-                  description="Learn for depth control, Socratic for guided reasoning, Technical for structured engineering explanations."
+                  title="Context-Aware Conversations"
+                  description="Maintain deep thread lineage across session reloads with dedicated workspace isolation."
                 />
                 <CheckItem
-                  title="Depth Control in Learn Mode"
-                  description="Pick ELI5, ELI10, ELI12, ELI15, or Meme to tune response style without changing workspace."
+                  title="Fine-Grained Depth Tuning"
+                  description="Toggle from ELI5 to Expert deep-dives instantly to bridge understanding gaps without losing context."
                 />
                 <CheckItem
-                  title="Graceful Degradation"
-                  description="When providers are unavailable, the UI shows neutral, actionable status messages instead of opaque failures."
+                  title="Resilient Infrastructure"
+                  description="Automatic routing through redundant model providers (Claude, GPT, Gemini) for unmatched availability."
                 />
               </div>
             </div>
@@ -228,63 +274,62 @@ export default function LandingPage(): JSX.Element {
         {/* Tools & Export */}
         <section
           id="export"
-          className="py-16 sm:py-24 px-4 sm:px-6 bg-white/[0.02] overflow-hidden"
+          className="py-16 sm:py-24 px-4 sm:px-6 border-t border-white/5 bg-white/[0.01]"
         >
-          <div className="max-w-7xl mx-auto text-center">
-            <h2 className="text-3xl sm:text-4xl md:text-5xl font-black mb-4 sm:mb-6">
-              Work with your results.
+          <div className="max-w-5xl mx-auto text-center">
+            <h2 className="text-3xl sm:text-5xl font-black mb-6 sm:mb-8">
+              Take your insights anywhere.
             </h2>
-            <p className="text-gray-400 max-w-xl mx-auto text-sm sm:text-base">
-              Copy or export responses as clean text/markdown while keeping
-              conversation history synced across sessions.
+            <p className="text-gray-400 max-w-2xl mx-auto text-sm sm:text-lg mb-12 leading-relaxed">
+              Export high-quality explanations as Markdown, download full chat histories, or sync datasets for your own training. Professional tools for professional learning.
             </p>
           </div>
         </section>
 
         {/* Footer */}
-        <footer className="py-14 sm:py-20 px-4 sm:px-6 border-t border-white/5">
-          <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-8 md:gap-12">
+        <footer className="py-20 sm:py-28 px-4 sm:px-6 border-t border-white/5 bg-black">
+          <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-12 md:gap-16">
             <div className="flex flex-col items-center md:items-start gap-4 text-center md:text-left">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
                 <img
                   src="/favicon.svg"
-                  alt="Logo"
-                  className="w-8 h-8 opacity-50 grayscale"
+                  alt="Knowledge Learning Engine Logo"
+                  className="w-10 h-10 opacity-70 grayscale hover:grayscale-0 transition-all"
                 />
-                <span className="text-xl font-black tracking-tighter opacity-50">
+                <span className="text-2xl font-black tracking-tighter opacity-70">
                   Know<span className="text-white">Bear</span>
                 </span>
               </div>
-              <p className="text-gray-600 text-sm max-w-xs">
-                Teaching-first AI workspace for clear, reliable explanations.
+              <p className="text-gray-600 text-sm max-w-xs leading-relaxed">
+                Multi-model AI workspace for verifiable learning and Socratic reasoning.
               </p>
             </div>
-            <div className="flex items-center gap-6 text-gray-400 text-sm font-medium">
+            <div className="flex flex-wrap justify-center items-center gap-8 text-gray-400 text-sm font-bold">
               <Link
                 to="/features"
-                className="hover:text-white transition-colors"
+                className="hover:text-cyan-400 transition-colors uppercase tracking-widest"
               >
                 Features
               </Link>
               <Link
                 to="/pricing"
-                className="hover:text-white transition-colors"
+                className="hover:text-cyan-400 transition-colors uppercase tracking-widest"
               >
                 Pricing
               </Link>
               <Link
                 to="/terms"
-                className="hover:text-white transition-colors"
+                className="hover:text-cyan-400 transition-colors uppercase tracking-widest"
               >
                 Terms
               </Link>
               <Link
                 to="/privacy"
-                className="hover:text-white transition-colors"
+                className="hover:text-cyan-400 transition-colors uppercase tracking-widest"
               >
                 Privacy
               </Link>
-              <span>© 2026 KnowBear</span>
+              <span className="text-gray-700 select-none">© 2026 KnowBear</span>
             </div>
           </div>
         </footer>
@@ -313,6 +358,26 @@ function FeatureCard({
         <p className="text-gray-500 text-sm leading-relaxed">{description}</p>
       </div>
     </motion.div>
+  );
+}
+
+function ModeDisplay({
+  icon,
+  mode,
+  description,
+}: {
+  icon: ReactNode;
+  mode: string;
+  description: string;
+}): JSX.Element {
+  return (
+    <div className="p-8 sm:p-10 bg-white/[0.03] border border-white/5 rounded-3xl text-center flex flex-col items-center gap-6">
+      <div className="p-4 bg-white/5 rounded-full mb-2">{icon}</div>
+      <div>
+        <h3 className="text-2xl font-black mb-4">{mode}</h3>
+        <p className="text-gray-400 text-sm leading-relaxed">{description}</p>
+      </div>
+    </div>
   );
 }
 
