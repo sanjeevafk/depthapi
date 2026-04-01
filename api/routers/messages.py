@@ -17,7 +17,8 @@ from config import get_settings
 from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from monitoring import capture_telemetry_event
 from services.analytics import build_llm_request_payload, record_llm_request
-from services.cache import cache_get, cache_set, cache_set_if_absent, get_redis
+import services.cache as cache_module
+from services.cache import cache_get, cache_set, cache_set_if_absent
 from services.conversation_cache import warm_conversation_snapshot
 from services.inference import (
     TECHNICAL_MAX_TOKENS,
@@ -245,9 +246,9 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     if isinstance(exp, (int, float)):
         exp_delta = float(exp) - time.time()
         if exp_delta < 900:
-            is_pro = False
-        if exp_delta < 120:
             asyncio.create_task(refresh_is_pro_cache(user_id))
+        if exp_delta < 120:
+            is_pro = False
 
     content = (req.content or "").strip()
     user_id_hash = anonymize_user_id(user_id)
@@ -269,9 +270,18 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
 
     client_message_id = _require_uuid(req.client_generated_id, "client_generated_id")
     assistant_client_id = _require_uuid(req.assistant_client_id, "assistant_client_id")
+    idempotency_key = _idempotency_key(user_id, client_message_id)
 
     if not await _ingress_dedupe_check(client_message_id):
-        raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
+        try:
+            redis = await cache_module.get_redis()
+            status = await redis.hget(idempotency_key, "status")
+        except Exception:
+            status = None
+        if status == "COMPLETED":
+            await _ingress_dedupe_clear(client_message_id)
+        else:
+            raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
 
     config_settings = get_settings()
     environment = str(getattr(config_settings, "environment", "") or "").strip().lower()
@@ -410,7 +420,6 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             if rpm > 0 and sustained_window > 0
             else float(bucket_capacity) / float(max(burst_window, 1))
         )
-    idempotency_key = _idempotency_key(user_id, client_message_id)
     gatekeeper = await gatekeep_message_request(
         identifier=identifier,
         reserved_tokens=reserved_tokens,
@@ -678,7 +687,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 await cache_set_value(cache_key, content_value, cache_ttl_seconds, timeout_seconds=0.05)
             if not gatekeeper.degraded:
                 try:
-                    redis = await get_redis()
+                    redis = await cache_module.get_redis()
                     response_hash = hashlib.sha256(content_value.encode("utf-8")).hexdigest()
                     await redis.hset(idempotency_key, "status", "COMPLETED")
                     await redis.hset(idempotency_key, "response", content_value)
@@ -1040,7 +1049,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             estimated_cost_usd = telemetry_sink.get("estimated_cost_usd")
             if not gatekeeper.degraded:
                 try:
-                    redis = await get_redis()
+                    redis = await cache_module.get_redis()
                     if full_content.strip():
                         response_hash = hashlib.sha256(full_content.encode("utf-8")).hexdigest()
                         await redis.hset(idempotency_key, "status", "COMPLETED")
