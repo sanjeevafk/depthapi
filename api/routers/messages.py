@@ -5,7 +5,6 @@ import hashlib
 import time
 import uuid
 from asyncio import Semaphore
-from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Optional, cast
 
@@ -68,23 +67,62 @@ router = APIRouter(tags=["messages"])
 _INGRESS_DEDUP: dict[str, float] = {}
 _INGRESS_DEDUP_LOCK = asyncio.Lock()
 
-_CONVERSATION_LOCKS: dict[str, Semaphore] = defaultdict(lambda: Semaphore(1))
+_CONVERSATION_LOCKS: dict[str, tuple[Semaphore, float]] = {}
 _CONVERSATION_LOCKS_LOCK = asyncio.Lock()
+_CONVERSATION_LOCK_TTL_SECONDS = 600.0
+_CONVERSATION_LOCK_MAX = 10000
+
+
+def _prune_conversation_locks(now: float) -> None:
+    if len(_CONVERSATION_LOCKS) <= _CONVERSATION_LOCK_MAX:
+        cutoff = now - _CONVERSATION_LOCK_TTL_SECONDS
+    else:
+        cutoff = now - min(_CONVERSATION_LOCK_TTL_SECONDS, 120.0)
+
+    stale_keys: list[str] = []
+    for key, (sem, last_used) in _CONVERSATION_LOCKS.items():
+        if last_used >= cutoff:
+            continue
+        sem_value = getattr(sem, "_value", None)
+        if sem_value == 1:
+            stale_keys.append(key)
+
+    for key in stale_keys:
+        _CONVERSATION_LOCKS.pop(key, None)
 
 
 async def _acquire_conversation_lock(conversation_id: str, timeout_seconds: float = 1.0) -> bool:
     async with _CONVERSATION_LOCKS_LOCK:
-        sem = _CONVERSATION_LOCKS[conversation_id]
+        now = time.time()
+        _prune_conversation_locks(now)
+        entry = _CONVERSATION_LOCKS.get(conversation_id)
+        if entry is None:
+            sem = Semaphore(1)
+            _CONVERSATION_LOCKS[conversation_id] = (sem, now)
+        else:
+            sem, _last_used = entry
+            _CONVERSATION_LOCKS[conversation_id] = (sem, now)
     try:
         await asyncio.wait_for(sem.acquire(), timeout=timeout_seconds)
+        async with _CONVERSATION_LOCKS_LOCK:
+            _CONVERSATION_LOCKS[conversation_id] = (sem, time.time())
         return True
     except asyncio.TimeoutError:
         return False
 
 
 def _release_conversation_lock(conversation_id: str) -> None:
-    if conversation_id in _CONVERSATION_LOCKS:
-        _CONVERSATION_LOCKS[conversation_id].release()
+    entry = _CONVERSATION_LOCKS.get(conversation_id)
+    if not entry:
+        return
+    sem, _last_used = entry
+    sem.release()
+    now = time.time()
+    sem_value = getattr(sem, "_value", None)
+    if sem_value == 1 and (now - _last_used) >= _CONVERSATION_LOCK_TTL_SECONDS:
+        _CONVERSATION_LOCKS.pop(conversation_id, None)
+        return
+    _CONVERSATION_LOCKS[conversation_id] = (sem, now)
 
 
 def _trusted_proxies_from_settings(config_settings: Any) -> set[str]:
@@ -324,70 +362,69 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             headers={"Retry-After": "2"},
         )
     lock_released = False
+    response_started = False
 
-    config_settings = get_settings()
-    environment = str(getattr(config_settings, "environment", "") or "").strip().lower()
-    is_prod = environment == "production"
-    cache_ttl_seconds = max(int(getattr(config_settings, "message_cache_ttl_seconds", 3600)), 1)
-    stream_max_seconds = max(int(getattr(config_settings, "stream_max_seconds", 24)), 1)
-    if not is_prod:
-        stream_max_seconds = max(stream_max_seconds, 60)
-    function_duration_cap: int | None = None
-    if is_prod:
-        # Lock production SSE stream cap below Vercel's 25s hard cutoff.
-        function_duration_cap = 24
-        stream_max_seconds = function_duration_cap
-    fallback_budget_seconds = max(
-        1.0,
-        min(float(getattr(config_settings, "stream_fallback_budget_seconds", 6)), float(stream_max_seconds)),
-    )
-    if is_prod:
-        fallback_budget_seconds = max(fallback_budget_seconds, 8.0)
-    fallback_timeout_seconds = max(fallback_budget_seconds, 3.0)
-    close_timeout_seconds = 0.25
-    heartbeat_seconds = min(
-        max(float(getattr(config_settings, "stream_heartbeat_seconds", 2)), 0.1),
-        2,
-    )
-    raw_start_timeout = float(getattr(config_settings, "stream_start_timeout_seconds", 2))
-    idempotency_ttl_seconds = min(
-        max(int(getattr(config_settings, "stream_idempotency_ttl_seconds", 90)), 60),
-        120,
-    )
-    trusted_proxies = _trusted_proxies_from_settings(config_settings)
+    try:
+        config_settings = get_settings()
+        environment = str(getattr(config_settings, "environment", "") or "").strip().lower()
+        is_prod = environment == "production"
+        cache_ttl_seconds = max(int(getattr(config_settings, "message_cache_ttl_seconds", 3600)), 1)
+        stream_max_seconds = max(int(getattr(config_settings, "stream_max_seconds", 24)), 1)
+        if not is_prod:
+            stream_max_seconds = max(stream_max_seconds, 60)
+        function_duration_cap: int | None = None
+        if is_prod:
+            # Lock production SSE stream cap below Vercel's 25s hard cutoff.
+            function_duration_cap = 24
+            stream_max_seconds = function_duration_cap
+        fallback_budget_seconds = max(
+            1.0,
+            min(float(getattr(config_settings, "stream_fallback_budget_seconds", 6)), float(stream_max_seconds)),
+        )
+        if is_prod:
+            fallback_budget_seconds = max(fallback_budget_seconds, 8.0)
+        fallback_timeout_seconds = max(fallback_budget_seconds, 3.0)
+        close_timeout_seconds = 0.25
+        heartbeat_seconds = min(
+            max(float(getattr(config_settings, "stream_heartbeat_seconds", 2)), 0.1),
+            2,
+        )
+        raw_start_timeout = float(getattr(config_settings, "stream_start_timeout_seconds", 2))
+        idempotency_ttl_seconds = min(
+            max(int(getattr(config_settings, "stream_idempotency_ttl_seconds", 90)), 60),
+            120,
+        )
+        trusted_proxies = _trusted_proxies_from_settings(config_settings)
 
-    history_limit = max(int(getattr(config_settings, "conversation_context_fetch_limit", 80)), 1)
-    snapshot_meta_raw, snapshot_raw_messages = await fetch_conversation_snapshot(
-        conversation_id=req.conversation_id,
-        max_messages=history_limit,
-        timeout_seconds=0.08,
-    )
-    snapshot_degraded = not snapshot_meta_raw and not snapshot_raw_messages
-    snapshot_meta = _parse_snapshot_meta(snapshot_meta_raw)
-    if snapshot_meta and snapshot_meta.get("user_id") and str(snapshot_meta.get("user_id")) != user_id:
-        await _ingress_dedupe_clear(client_message_id)
-        if not lock_released:
-            _release_conversation_lock(req.conversation_id)
-            lock_released = True
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    if not snapshot_meta_raw:
-        try:
-            await asyncio.wait_for(
-                warm_conversation_snapshot(req.conversation_id, user_id),
-                timeout=0.3,
-            )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "messages_snapshot_warm_timeout",
-                conversation_id=req.conversation_id,
-                user_id_hash=anonymize_user_id(user_id),
-            )
-        except Exception as exc:
-            logger.exception(
-                "messages_snapshot_warm_exception",
-                conversation_id=req.conversation_id,
-                error_type=type(exc).__name__,
-            )
+        history_limit = max(int(getattr(config_settings, "conversation_context_fetch_limit", 80)), 1)
+        snapshot_meta_raw, snapshot_raw_messages = await fetch_conversation_snapshot(
+            conversation_id=req.conversation_id,
+            max_messages=history_limit,
+            timeout_seconds=0.08,
+        )
+        snapshot_degraded = not snapshot_meta_raw and not snapshot_raw_messages
+        snapshot_meta = _parse_snapshot_meta(snapshot_meta_raw)
+        if snapshot_meta and snapshot_meta.get("user_id") and str(snapshot_meta.get("user_id")) != user_id:
+            await _ingress_dedupe_clear(client_message_id)
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        if not snapshot_meta_raw:
+            try:
+                await asyncio.wait_for(
+                    warm_conversation_snapshot(req.conversation_id, user_id),
+                    timeout=0.3,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "messages_snapshot_warm_timeout",
+                    conversation_id=req.conversation_id,
+                    user_id_hash=anonymize_user_id(user_id),
+                )
+            except Exception as exc:
+                logger.exception(
+                    "messages_snapshot_warm_exception",
+                    conversation_id=req.conversation_id,
+                    error_type=type(exc).__name__,
+                )
 
     selected_mode = normalize_mode(
         req.mode
@@ -1336,14 +1373,14 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 _release_conversation_lock(req.conversation_id)
                 lock_released = True
 
-    try:
-        return StreamingResponse(
+        response = StreamingResponse(
             event_generator(),
             media_type="text/event-stream",
             headers=SSE_RESPONSE_HEADERS,
         )
-    except Exception:
-        if not lock_released:
+        response_started = True
+        return response
+    finally:
+        if not response_started and not lock_released:
             _release_conversation_lock(req.conversation_id)
             lock_released = True
-        raise
