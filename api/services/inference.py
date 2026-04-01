@@ -912,9 +912,11 @@ def _enforce_socratic_response_constraints(
     topic: str | None = None,
     wants_direct_answer: bool = False,
 ) -> str:
-    """Return a Socratic reply constrained to one question, or answer+question."""
+    """Return a Socratic reply constrained to up to 3 unique questions, or answer+questions."""
     cleaned = (response or "").strip()
     questions = _extract_socratic_questions(cleaned)
+    max_questions = 3
+    footer = "Share your answer, and I will guide the next step."
 
     if wants_direct_answer:
         lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
@@ -934,13 +936,19 @@ def _enforce_socratic_response_constraints(
         if not answer_line:
             answer_line = cleaned
 
-        question = questions[0] if questions else _fallback_socratic_question(topic)
-        return f"{answer_line}\n\n{question}".strip()
+        selected_questions = questions[:max_questions]
+        if not selected_questions:
+            selected_questions = [_fallback_socratic_question(topic)]
+        
+        q_text = "\n\n".join(selected_questions)
+        return f"{answer_line}\n\n{q_text}\n\n{footer}".strip()
 
     if questions:
-        return questions[0].strip()
+        q_text = "\n\n".join(questions[:max_questions])
+        return f"{q_text}\n\n{footer}".strip()
 
-    return _fallback_socratic_question(topic)
+    fallback = _fallback_socratic_question(topic)
+    return f"{fallback}\n\n{footer}".strip()
 
 
 def _extract_usage_dict(usage_obj) -> dict[str, int] | None:
@@ -1423,9 +1431,12 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         socratic_raw_chunks: list[str] = []
         pending = ""
         seen_signatures: set[str] = set()
-        emitted_question = False
+        emitted_count = 0
         wants_direct_answer = _wants_direct_answer(topic)
         socratic_error: Exception | None = None
+        max_questions = 3
+        footer = "Share your answer, and I will guide the next step."
+
         try:
             max_tokens = 500
             async for chunk in stream_chat_completion(
@@ -1446,25 +1457,32 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             ):
                 text_chunk = str(chunk or "")
                 socratic_raw_chunks.append(text_chunk)
-                if wants_direct_answer or emitted_question:
+                if wants_direct_answer or emitted_count >= max_questions:
                     continue
 
                 pending += text_chunk
-                match = re.search(r"[^?]*\?", pending)
-                if not match:
-                    continue
+                while True:
+                    match = re.search(r"[^?]*\?", pending)
+                    if not match:
+                        break
 
-                candidate = match.group(0).strip()
-                consumed = match.end()
-                pending = pending[consumed:]
-                if not candidate:
-                    continue
-                signature = _normalize_question_signature(candidate)
-                if not signature or signature in seen_signatures:
-                    continue
-                seen_signatures.add(signature)
-                yield candidate
-                emitted_question = True
+                    candidate = match.group(0).strip()
+                    consumed = match.end()
+                    pending = pending[consumed:]
+                    if not candidate:
+                        continue
+                        
+                    signature = _normalize_question_signature(candidate)
+                    if not signature or signature in seen_signatures:
+                        continue
+                        
+                    seen_signatures.add(signature)
+                    yield candidate + " "
+                    emitted_count += 1
+                    
+                    if emitted_count >= max_questions:
+                        yield footer
+                        break
         except Exception as exc:
             socratic_error = exc
             stream_telemetry["stream_error"] = str(exc)
@@ -1477,7 +1495,7 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
                 error=str(exc),
             )
 
-        if wants_direct_answer or not emitted_question:
+        if wants_direct_answer or emitted_count == 0:
             constrained_response = _enforce_socratic_response_constraints(
                 "".join(socratic_raw_chunks),
                 topic=topic,
@@ -1485,9 +1503,16 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             )
             fallback_response = constrained_response.strip()
             if socratic_error is not None and not fallback_response:
-                fallback_response = "I hit a temporary issue while streaming. Please try again."
+                fallback_response = f"I hit a temporary issue while streaming. Please try again. {footer}"
+            elif socratic_error is not None:
+                # We had some content but it crashed - make sure it includes the error message if nothing else
+                if "temporary issue while streaming" not in fallback_response:
+                    fallback_response = f"I hit a temporary issue while streaming. {fallback_response}"
             for index in range(0, len(fallback_response), 400):
                 yield fallback_response[index : index + 400]
+        elif emitted_count > 0 and emitted_count < max_questions:
+            # We emitted some questions but didn't hit the cap
+            yield footer
     else:
         streamed_chunks = 0
         remaining_chars = None

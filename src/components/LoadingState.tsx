@@ -156,7 +156,7 @@ export function LoadingState({
 
   useEffect(() => {
     const verbs = getStreamingVerbs(mode);
-    if (!verbs) {
+    if (!verbs || verbs.length === 0) {
       setSpinnerVerb(null);
       return;
     }

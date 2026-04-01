@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { useEffect, memo, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
@@ -187,25 +187,25 @@ function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
 }
 
 function StreamingIndicator({ mode }: { mode?: ConversationMode }): JSX.Element {
-  const verbs = getStreamingVerbs(mode);
+  const verbs = useMemo(() => getStreamingVerbs(mode), [mode]);
   const [index, setIndex] = useState(() =>
-    verbs ? Math.floor(Math.random() * verbs.length) : 0,
+    verbs?.length ? Math.floor(Math.random() * verbs.length) : 0,
   );
 
   useEffect(() => {
-    if (!verbs) return;
+    if (!verbs?.length) return;
     setIndex(Math.floor(Math.random() * verbs.length));
   }, [verbs]);
 
   useEffect(() => {
-    if (!verbs) return;
+    if (!verbs?.length) return;
     const intervalId = window.setInterval(() => {
       setIndex((current) => (current + 1) % verbs.length);
     }, 1400);
     return () => window.clearInterval(intervalId);
   }, [verbs]);
 
-  const label = verbs ? verbs[index] : "Streaming";
+  const label = verbs?.length ? verbs[index % verbs.length] : "Streaming";
 
   return (
     <div className="mt-2 flex items-center gap-2 text-xs text-cyan-200">
