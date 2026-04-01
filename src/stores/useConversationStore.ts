@@ -103,46 +103,44 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         if (state.isLoading) {
           return { conversations };
         }
-        const cachedId = loadLastConversationId();
-        const hasCached = cachedId
-          ? conversations.some((item) => item.id === cachedId)
-          : false;
-        if (hasCached) {
-          const activeConversation = conversations.find((item) => item.id === cachedId);
-          const conversationMode =
-            asString(activeConversation?.mode) ||
-            asString(activeConversation?.settings?.mode);
-          const conversationPrompt =
-            asString(activeConversation?.settings?.prompt_mode) ||
-            asString(activeConversation?.settings?.mode) ||
-            asString(activeConversation?.mode);
-          const nextWorkspaceState = resolveWorkspaceState(
-            conversationMode,
-            conversationPrompt,
-            state.depthLevel,
-          );
+        const mostRecentId = conversations[0]?.id ?? null;
+        if (!mostRecentId) {
+          persistLastConversationId(null);
           return {
             conversations,
-            currentConversationId: cachedId ?? null,
-            isDraftThread: false,
-            workspace: nextWorkspaceState.workspace,
-            depthLevel: nextWorkspaceState.depthLevel,
-            currentMode: nextWorkspaceState.mode,
-            currentPromptMode: nextWorkspaceState.promptMode,
-            selectedLevel: nextWorkspaceState.depthLevel as Level,
+            currentConversationId: null,
+            isDraftThread: true,
+            workspace: "learn" as Workspace,
+            depthLevel: DEFAULT_DEPTH_LEVEL,
+            currentMode: "learn" as ChatMode,
+            currentPromptMode: DEFAULT_DEPTH_LEVEL as PromptMode,
+            selectedLevel: DEFAULT_DEPTH_LEVEL as Level,
           };
         }
 
-        persistLastConversationId(null);
+        const activeConversation = conversations.find((item) => item.id === mostRecentId);
+        const conversationMode =
+          asString(activeConversation?.mode) ||
+          asString(activeConversation?.settings?.mode);
+        const conversationPrompt =
+          asString(activeConversation?.settings?.prompt_mode) ||
+          asString(activeConversation?.settings?.mode) ||
+          asString(activeConversation?.mode);
+        const nextWorkspaceState = resolveWorkspaceState(
+          conversationMode,
+          conversationPrompt,
+          state.depthLevel,
+        );
+        persistLastConversationId(mostRecentId);
         return {
           conversations,
-          currentConversationId: null,
-          isDraftThread: true,
-          workspace: "learn" as Workspace,
-          depthLevel: DEFAULT_DEPTH_LEVEL,
-          currentMode: "learn" as ChatMode,
-          currentPromptMode: DEFAULT_DEPTH_LEVEL as PromptMode,
-          selectedLevel: DEFAULT_DEPTH_LEVEL as Level,
+          currentConversationId: mostRecentId,
+          isDraftThread: false,
+          workspace: nextWorkspaceState.workspace,
+          depthLevel: nextWorkspaceState.depthLevel,
+          currentMode: nextWorkspaceState.mode,
+          currentPromptMode: nextWorkspaceState.promptMode,
+          selectedLevel: nextWorkspaceState.depthLevel as Level,
         };
       }
 
