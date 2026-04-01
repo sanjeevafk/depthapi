@@ -131,17 +131,15 @@ APPEND_MESSAGE_LUA = """
 -- KEYS:
 -- 1) sequence_key
 -- 2) messages_key
--- ARGV:
--- 1) message_json
--- 2) max_messages
--- 3) ttl_seconds
 local seq = redis.call('INCR', KEYS[1])
-local payload = string.gsub(ARGV[1], '__SEQ__', tostring(seq))
+local payload_obj = cjson.decode(ARGV[1])
+payload_obj.sequence_id = seq
+local payload = cjson.encode(payload_obj)
 redis.call('RPUSH', KEYS[2], payload)
 if tonumber(ARGV[2]) > 0 then
   redis.call('LTRIM', KEYS[2], -tonumber(ARGV[2]), -1)
 end
-local ttl = tonumber(ARGV[3])
+local ttl = tonumber(ARGV[3]) or 0
 if ttl > 0 then
   redis.call('EXPIRE', KEYS[1], ttl)
   redis.call('EXPIRE', KEYS[2], ttl)

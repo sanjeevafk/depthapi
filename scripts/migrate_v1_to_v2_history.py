@@ -63,10 +63,20 @@ def main() -> int:
     )
 
     supabase_url = get_env("SUPABASE_URL")
-    supabase_key = get_env("SUPABASE_SECRET_KEY") or get_env("SUPABASE_PUBLISHABLE_KEY")
+    service_role_key = get_env("SUPABASE_SERVICE_ROLE_KEY")
+    secret_key = get_env("SUPABASE_SECRET_KEY")
+    anon_key = get_env("SUPABASE_ANON_KEY")
+    publishable_key = get_env("SUPABASE_PUBLISHABLE_KEY")
+    supabase_key = service_role_key or secret_key or anon_key or publishable_key
     if not supabase_url or not supabase_key:
-        logging.error("Missing SUPABASE_URL or SUPABASE_SECRET_KEY/SUPABASE_PUBLISHABLE_KEY")
+        logging.error(
+            "Missing SUPABASE_URL or Supabase key (expected SUPABASE_SERVICE_ROLE_KEY, SUPABASE_SECRET_KEY, SUPABASE_ANON_KEY, or SUPABASE_PUBLISHABLE_KEY)"
+        )
         return 1
+    if supabase_key in {anon_key, publishable_key}:
+        logging.warning(
+            "Using anon/publishable key; migrations may fail due to RLS or insufficient write permissions. Prefer SUPABASE_SERVICE_ROLE_KEY."
+        )
 
     client = create_client(supabase_url, supabase_key)
 

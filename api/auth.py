@@ -153,7 +153,7 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Security(secu
     email = str(decoded_payload.get("email") or "") or None
     app_metadata = decoded_payload.get("app_metadata") if isinstance(decoded_payload.get("app_metadata"), dict) else {}
     user_metadata = decoded_payload.get("user_metadata") if isinstance(decoded_payload.get("user_metadata"), dict) else {}
-    is_pro = bool(decoded_payload.get("is_pro") or app_metadata.get("is_pro") or False)
+    is_pro = bool(decoded_payload.get("is_pro") or app_metadata.get("is_pro") or False) # type: ignore
 
     user = SimpleNamespace(
         id=user_id,
