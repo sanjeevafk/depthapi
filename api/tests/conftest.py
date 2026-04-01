@@ -394,11 +394,13 @@ class FakeSupabase:
         self.inserts = []
         self.updates = []
         self.deletes = []
+        self.rpcs = []
 
     def table(self, table):
         return FakeSupabaseQuery(self, table)
 
     def rpc(self, function_name, _params=None):
+        self.rpcs.append((function_name, _params))
         query = FakeSupabaseQuery(self, function_name)
         query._response = self.responses.get(function_name, [])
         return query

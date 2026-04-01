@@ -1,6 +1,7 @@
 import asyncio
 from typing import Any, Optional
 import uuid
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
@@ -8,7 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 from auth import get_supabase_admin, verify_token, verify_token_optional
 from config import get_settings
 from logging_config import anonymize_user_id, logger
-from services import share_manager
+import services.share_manager as share_manager
 from services.token_count import count_prompt_tokens
 
 router = APIRouter(tags=["shares"])
@@ -76,14 +77,50 @@ def _require_uuid(value: str, field_name: str) -> str:
         raise HTTPException(status_code=400, detail=f"{field_name} must be a UUID") from exc
 
 
+def _parse_allowed_origins(raw_allowed_origins: str) -> list[str]:
+    if not raw_allowed_origins.strip():
+        return []
+    parsed = [origin.strip() for origin in raw_allowed_origins.split(",") if origin.strip()]
+    if "*" in parsed:
+        logger.warning(
+            "share_origin_wildcard_disallowed",
+            configured_origins=raw_allowed_origins,
+        )
+        parsed = [origin for origin in parsed if origin != "*"]
+    return parsed
+
+
+def _origin_host_port(url: str) -> Optional[tuple[str, int]]:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    if not parsed.hostname:
+        return None
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    return (parsed.hostname.lower(), port)
+
+
 def _resolve_base_url(request: Optional[Request]) -> str:
-    configured = str(get_settings().public_base_url or "").rstrip("/")
+    settings = get_settings()
+    configured = str(settings.public_base_url or "").rstrip("/")
+    allowed_origins = _parse_allowed_origins(str(settings.allowed_origins or ""))
+    allowed_host_ports = set()
+    for origin in allowed_origins:
+        host_port = _origin_host_port(origin)
+        if host_port:
+            allowed_host_ports.add(host_port)
+    configured_host_port = _origin_host_port(configured)
+    if configured_host_port:
+        allowed_host_ports.add(configured_host_port)
     if request is not None:
         origin = (request.headers.get("origin") or "").strip()
-        if origin.startswith("http://") or origin.startswith("https://"):
-            return origin.rstrip("/")
+        if origin:
+            origin_host_port = _origin_host_port(origin)
+            if origin_host_port and origin_host_port in allowed_host_ports:
+                return origin.rstrip("/")
         request_base = str(request.base_url).rstrip("/")
-        if not configured:
+        request_host_port = _origin_host_port(request_base)
+        if request_host_port and request_host_port in allowed_host_ports:
             return request_base
     return configured
 
@@ -97,6 +134,30 @@ def _normalize_metadata(raw: Any) -> dict[str, Any]:
     if isinstance(raw, dict):
         return raw
     return {}
+
+
+def _string_or_none(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+def _int_or_zero(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _first_record(data: Any) -> Optional[dict[str, Any]]:
+    if isinstance(data, list) and data:
+        record = data[0]
+        return record if isinstance(record, dict) else None
+    if isinstance(data, dict):
+        return data
+    return None
 
 
 def _build_snapshot_messages(
@@ -170,10 +231,9 @@ async def create_share(
                 .limit(1)
                 .execute()
             )
-            message_data = message_response.data or []
-            if not message_data:
+            message = _first_record(message_response.data)
+            if not message:
                 raise HTTPException(status_code=404, detail="Message not found")
-            message = message_data[0]
         except HTTPException:
             raise
         except Exception as exc:
@@ -195,10 +255,9 @@ async def create_share(
                 .limit(1)
                 .execute()
             )
-            conversation_data = conversation_response.data or []
-            if not conversation_data:
+            conversation = _first_record(conversation_response.data)
+            if not conversation:
                 raise HTTPException(status_code=404, detail="Conversation not found")
-            conversation = conversation_data[0]
         except HTTPException:
             raise
         except Exception as exc:
@@ -224,9 +283,8 @@ async def create_share(
                 .limit(1)
                 .execute()
             )
-            prompt_data = prompt_response.data or []
-            if prompt_data:
-                prompt_message = prompt_data[0]
+            prompt_message = _first_record(prompt_response.data)
+            if prompt_message:
                 prompt_text = str(prompt_message.get("content") or "")
                 prompt_message_id = str(prompt_message.get("id") or "") or None
         except Exception as exc:
@@ -262,10 +320,9 @@ async def create_share(
                 .limit(1)
                 .execute()
             )
-            conversation_data = conversation_response.data or []
-            if not conversation_data:
+            conversation = _first_record(conversation_response.data)
+            if not conversation:
                 raise HTTPException(status_code=404, detail="Conversation not found")
-            conversation = conversation_data[0]
         except HTTPException:
             raise
         except Exception as exc:
@@ -288,7 +345,11 @@ async def create_share(
                 .limit(120)
                 .execute()
             )
-            raw_messages = list(messages_response.data or [])
+            raw_messages = [
+                record
+                for record in (messages_response.data or [])
+                if isinstance(record, dict)
+            ]
         except Exception as exc:
             logger.error("share_conversation_messages_failed", error=str(exc))
             raise HTTPException(status_code=500, detail="Failed to load conversation messages") from exc
@@ -311,7 +372,7 @@ async def create_share(
             else:
                 title = "Shared conversation snapshot"
 
-    share_token = share_manager.ensure_unique_token(supabase)
+    share_token = await asyncio.to_thread(share_manager.ensure_unique_token, supabase)
 
     share_payload = {
         "conversation_id": conversation_id,
@@ -406,7 +467,12 @@ async def revoke_share(share_id: str, auth_data: dict = Depends(verify_token)):
 
     share_uuid = _require_uuid(share_id, "share_id")
 
-    share = await asyncio.to_thread(lambda: share_manager.fetch_share_by_id(supabase, share_uuid))
+    try:
+        share = await asyncio.to_thread(lambda: share_manager.fetch_share_by_id(supabase, share_uuid))
+    except Exception as exc:
+        logger.error("share_fetch_failed", error=str(exc), user_id_hash=anonymize_user_id(user_id))
+        raise HTTPException(status_code=500, detail="Failed to fetch share") from exc
+
     if not share:
         raise HTTPException(status_code=404, detail="Share not found")
 
@@ -456,7 +522,11 @@ async def list_user_shares(
             .range(start, end)
             .execute()
         )
-        data = response.data or []
+        data = [
+            record
+            for record in (response.data or [])
+            if isinstance(record, dict)
+        ]
     except Exception as exc:
         logger.error("share_list_failed", error=str(exc), user_id_hash=anonymize_user_id(user_id))
         raise HTTPException(status_code=500, detail="Failed to fetch shares") from exc
@@ -466,11 +536,11 @@ async def list_user_shares(
             id=str(item.get("id")),
             share_token=str(item.get("share_token")),
             share_url=_build_share_url(str(item.get("share_token")), request),
-            title=item.get("title"),
+            title=_string_or_none(item.get("title")),
             access_level=str(item.get("access_level") or ""),
             created_at=str(item.get("created_at")),
-            expires_at=str(item.get("expires_at")) if item.get("expires_at") else None,
-            view_count=int(item.get("view_count") or 0),
+            expires_at=_string_or_none(item.get("expires_at")),
+            view_count=_int_or_zero(item.get("view_count")),
         )
         for item in data
     ]

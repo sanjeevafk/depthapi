@@ -121,17 +121,8 @@ def increment_view_count(supabase, share: dict[str, Any]) -> None:
     share_id = share.get("id")
     if not share_id:
         return
-    current = share.get("view_count")
     try:
-        view_count = int(current or 0)
-    except (TypeError, ValueError):
-        view_count = 0
-    payload = {
-        "view_count": view_count + 1,
-        "last_viewed_at": datetime.now(timezone.utc).isoformat(),
-    }
-    try:
-        supabase.table("shared_responses").update(payload).eq("id", share_id).execute()
+        supabase.rpc("increment_shared_response_view", {"share_id": str(share_id)}).execute()
     except Exception as exc:
         logger.warning("share_increment_view_failed", error=str(exc))
 
@@ -141,8 +132,9 @@ def ensure_unique_token(supabase, *, max_attempts: int = 4) -> str:
         token = generate_share_token()
         try:
             response = supabase.table("shared_responses").select("id").eq("share_token", token).limit(1).execute()
-        except Exception:
-            return token
+        except Exception as exc:
+            logger.warning("share_token_lookup_failed", error=str(exc))
+            raise
         data = response.data or []
         if not data:
             return token

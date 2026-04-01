@@ -62,7 +62,7 @@ async def test_create_and_fetch_share(app_client, monkeypatch, fake_user, fake_s
     fetch_payload = fetch_response.json()
     assert fetch_payload["response_text"] == "Shared response"
     assert fetch_payload["share_kind"] == "response"
-    assert fake_supabase.updates
+    assert any(call[0] == "increment_shared_response_view" for call in fake_supabase.rpcs)
 
 
 async def test_revoke_share(app_client, monkeypatch, fake_user, fake_supabase):

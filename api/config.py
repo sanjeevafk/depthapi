@@ -103,6 +103,7 @@ class Settings(BaseSettings):
     support_email: str = "support@knowbear.app"
     site_name: str = "KnowBear"
     public_base_url: str = "https://knowbear.app"
+    allowed_origins: str = ""
     
     # Dodo Payments Configuration
     dodo_api_key: str = ""

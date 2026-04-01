@@ -158,8 +158,18 @@ export default function SharePage(): JSX.Element {
               </p>
             </div>
           </div>
-          <div className="mt-4 space-y-3">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void handlePasswordSubmit();
+            }}
+            className="mt-4 space-y-3"
+          >
+            <label htmlFor="share-password" className="sr-only">
+              Password
+            </label>
             <input
+              id="share-password"
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
@@ -168,13 +178,13 @@ export default function SharePage(): JSX.Element {
             />
             {error && <p className="text-xs text-red-400">{error}</p>}
             <button
-              onClick={() => void handlePasswordSubmit()}
+              type="submit"
               disabled={submitting}
               className="w-full rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-black hover:bg-cyan-400 disabled:opacity-60"
             >
               {submitting ? "Checking..." : "Unlock"}
             </button>
-          </div>
+          </form>
         </div>
       </div>
     );
@@ -217,7 +227,7 @@ export default function SharePage(): JSX.Element {
               This is a limited conversation snapshot. Full history is not
               available.
             </p>
-            {share.snapshot_messages.map((message, index) => (
+            {(share.snapshot_messages ?? []).map((message, index) => (
               <div
                 key={message.id ?? `${message.role}-${index}`}
                 className={`rounded-2xl border px-4 py-3 text-sm leading-relaxed ${
