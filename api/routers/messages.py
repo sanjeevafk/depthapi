@@ -4,6 +4,8 @@ import asyncio
 import hashlib
 import time
 import uuid
+from asyncio import Semaphore
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Optional, cast
 
@@ -65,6 +67,24 @@ router = APIRouter(tags=["messages"])
 
 _INGRESS_DEDUP: dict[str, float] = {}
 _INGRESS_DEDUP_LOCK = asyncio.Lock()
+
+_CONVERSATION_LOCKS: dict[str, Semaphore] = defaultdict(lambda: Semaphore(1))
+_CONVERSATION_LOCKS_LOCK = asyncio.Lock()
+
+
+async def _acquire_conversation_lock(conversation_id: str, timeout_seconds: float = 1.0) -> bool:
+    async with _CONVERSATION_LOCKS_LOCK:
+        sem = _CONVERSATION_LOCKS[conversation_id]
+    try:
+        await asyncio.wait_for(sem.acquire(), timeout=timeout_seconds)
+        return True
+    except asyncio.TimeoutError:
+        return False
+
+
+def _release_conversation_lock(conversation_id: str) -> None:
+    if conversation_id in _CONVERSATION_LOCKS:
+        _CONVERSATION_LOCKS[conversation_id].release()
 
 
 def _trusted_proxies_from_settings(config_settings: Any) -> set[str]:
@@ -271,9 +291,19 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     if not content:
         raise HTTPException(status_code=400, detail="Content is required")
 
+    logger.info(
+        "messages_request_start",
+        request_id=request_id,
+        user_id_hash=user_id_hash,
+        conversation_id=req.conversation_id,
+        mode=req.mode,
+        content_length=len(content),
+    )
+
     client_message_id = _require_uuid(req.client_generated_id, "client_generated_id")
     assistant_client_id = _require_uuid(req.assistant_client_id, "assistant_client_id")
     idempotency_key = _idempotency_key(user_id, client_message_id)
+    idempotency_key_hash = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()[:16]
 
     if not await _ingress_dedupe_check(client_message_id):
         try:
@@ -285,6 +315,15 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             await _ingress_dedupe_clear(client_message_id)
         else:
             raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
+
+    lock_acquired = await _acquire_conversation_lock(req.conversation_id, timeout_seconds=1.0)
+    if not lock_acquired:
+        raise HTTPException(
+            status_code=429,
+            detail="Another request for this conversation is already processing. Please retry.",
+            headers={"Retry-After": "2"},
+        )
+    lock_released = False
 
     config_settings = get_settings()
     environment = str(getattr(config_settings, "environment", "") or "").strip().lower()
@@ -327,9 +366,28 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     snapshot_meta = _parse_snapshot_meta(snapshot_meta_raw)
     if snapshot_meta and snapshot_meta.get("user_id") and str(snapshot_meta.get("user_id")) != user_id:
         await _ingress_dedupe_clear(client_message_id)
+        if not lock_released:
+            _release_conversation_lock(req.conversation_id)
+            lock_released = True
         raise HTTPException(status_code=404, detail="Conversation not found")
     if not snapshot_meta_raw:
-        asyncio.create_task(warm_conversation_snapshot(req.conversation_id, user_id))
+        try:
+            await asyncio.wait_for(
+                warm_conversation_snapshot(req.conversation_id, user_id),
+                timeout=0.3,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "messages_snapshot_warm_timeout",
+                conversation_id=req.conversation_id,
+                user_id_hash=anonymize_user_id(user_id),
+            )
+        except Exception as exc:
+            logger.exception(
+                "messages_snapshot_warm_exception",
+                conversation_id=req.conversation_id,
+                error_type=type(exc).__name__,
+            )
 
     selected_mode = normalize_mode(
         req.mode
@@ -368,9 +426,15 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
 
     if selected_mode == TECHNICAL_MODE and not is_pro:
         await _ingress_dedupe_clear(client_message_id)
+        if not lock_released:
+            _release_conversation_lock(req.conversation_id)
+            lock_released = True
         raise HTTPException(status_code=403, detail="Technical mode is a Pro feature")
     if selected_mode == SOCRATIC_MODE and not is_pro:
         await _ingress_dedupe_clear(client_message_id)
+        if not lock_released:
+            _release_conversation_lock(req.conversation_id)
+            lock_released = True
         raise HTTPException(status_code=403, detail="Socratic mode is a Pro feature")
 
     # ── Conversation context & intent ──────────────────────────────────────
@@ -392,6 +456,18 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     )
     socratic_context = build_socratic_context(history_messages)
     prompt_build_ms = (time.perf_counter() - prompt_build_start) * 1000
+
+    last_three = history_messages[-3:]
+    logger.info(
+        "messages_context_loaded",
+        request_id=request_id,
+        conversation_id=req.conversation_id,
+        history_length=len(history_messages),
+        context_messages_count=len(context_messages),
+        context_signature_prefix=context_signature[:16],
+        last_3_message_roles=[msg["role"] for msg in last_three],
+        last_3_message_lengths=[len(msg["content"]) for msg in last_three],
+    )
 
     effective_content = content
     ack_response = _ack_response(selected_mode) if intent.type == "acknowledgment" else None
@@ -579,8 +655,10 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             )
 
     async def event_generator():
+        nonlocal lock_released
         start_time = time.perf_counter()
         full_content = ""
+        stream_completed = False
         builder = SseEventBuilder()
         first_event_ms = None
         first_token_ms = None
@@ -667,16 +745,29 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 pass
             pending_chunk_task = None
 
-        async def finalize_assistant_message(content_value: str, *, cacheable: bool = True) -> None:
+        async def finalize_assistant_message(
+            content_value: str,
+            *,
+            cacheable: bool = True,
+            stream_completed: bool = False,
+        ) -> None:
             nonlocal assistant_sequence_id, redis_append_failed
             if not content_value.strip():
+                logger.warning(
+                    "messages_finalize_empty_content",
+                    request_id=request_id,
+                    user_id_hash=user_id_hash,
+                    stream_completed=stream_completed,
+                )
                 return
+            completion_marker = "complete" if stream_completed else "aborted"
             assistant_payload = {
                 "role": "assistant",
                 "content": content_value,
                 "sequence_id": "__SEQ__",
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "assistant_client_id": assistant_client_id,
+                "stream_status": completion_marker,
             }
             assistant_sequence_id = await append_conversation_message(
                 conversation_id=req.conversation_id,
@@ -687,8 +778,23 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
             if assistant_sequence_id is None:
                 redis_append_failed = True
             asyncio.create_task(_persist_assistant_message(assistant_sequence_id, content_value))
-            if cacheable:
+            if cacheable and stream_completed:
                 await cache_set_value(cache_key, content_value, cache_ttl_seconds, timeout_seconds=0.05)
+            elif cacheable and not stream_completed:
+                logger.warning(
+                    "messages_partial_stream_skip_cache",
+                    request_id=request_id,
+                    content_length=len(content_value),
+                    stream_completed=stream_completed,
+                )
+            logger.info(
+                "messages_response_completed",
+                request_id=request_id,
+                response_length=len(content_value),
+                stream_completed=stream_completed,
+                cached=bool(cacheable and stream_completed),
+                idempotency_key_hash=idempotency_key_hash,
+            )
             if not gatekeeper.degraded:
                 try:
                     redis = await cache_module.get_redis()
@@ -761,6 +867,14 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     record_chunk()
                     yield emit("delta", {"delta": chunk, "assistant_message_id": assistant_message_id})
                 yield emit("done", "[DONE]")
+                logger.info(
+                    "messages_response_completed",
+                    request_id=request_id,
+                    response_length=len(full_content),
+                    stream_completed=True,
+                    cached=False,
+                    idempotency_key_hash=idempotency_key_hash,
+                )
                 return
 
             if cached_response:
@@ -799,7 +913,46 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     record_chunk()
                     yield emit("delta", {"delta": chunk, "assistant_message_id": assistant_message_id})
                 yield emit("done", "[DONE]")
+                logger.info(
+                    "messages_response_completed",
+                    request_id=request_id,
+                    response_length=len(cached_response),
+                    stream_completed=True,
+                    cached=True,
+                    idempotency_key_hash=idempotency_key_hash,
+                )
                 return
+
+            system_parts: list[str] = []
+            base_prompt = SYSTEM_PROMPT.strip()
+            if base_prompt:
+                system_parts.append(base_prompt)
+            mode_prompt = MODE_SYSTEM_PROMPTS.get(selected_mode, "").strip()
+            if mode_prompt:
+                system_parts.append(mode_prompt)
+            if intent_system_prompt:
+                system_parts.append(intent_system_prompt.strip())
+
+            prompt_messages: list[ConversationMessage] = []
+            if system_parts:
+                prompt_messages.append({"role": "system", "content": "\n".join(system_parts)})
+            prompt_messages.extend(context_messages)
+            prompt_messages.append({"role": "user", "content": effective_content})
+
+            prompt_hash_base = "\n".join(
+                f"{msg['role']}:{msg['content']}" for msg in prompt_messages
+            )
+            final_prompt_hash = hashlib.sha256(prompt_hash_base.encode("utf-8")).hexdigest()
+
+            logger.info(
+                "messages_prompt_assembled",
+                request_id=request_id,
+                model_alias=str(config_state.get("model_alias")),
+                prompt_token_count=count_prompt_tokens(effective_content),
+                final_prompt_hash_prefix=final_prompt_hash[:16],
+                message_chain_length=len(prompt_messages),
+                system_prompt_present=any(msg["role"] == "system" for msg in prompt_messages),
+            )
 
             generation_start = time.perf_counter()
             stream = generate_stream_explanation(
@@ -860,6 +1013,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     continue
                 except StopAsyncIteration:
                     pending_chunk_task = None
+                    stream_completed = True
                     break
 
 
@@ -923,7 +1077,11 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     )
                     full_content = _final_fallback_message(selected_mode)
                     yield emit("delta", {"delta": full_content, "assistant_message_id": assistant_message_id})
-                    await finalize_assistant_message(full_content, cacheable=not req.regenerate)
+                    await finalize_assistant_message(
+                        full_content,
+                        cacheable=not req.regenerate,
+                        stream_completed=True,
+                    )
                     yield emit("done", "[DONE]")
                     return
 
@@ -933,7 +1091,11 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     record_chunk()
                     yield emit("delta", {"delta": chunk, "assistant_message_id": assistant_message_id})
                 yield emit("done", "[DONE]")
-                await finalize_assistant_message(full_content, cacheable=not req.regenerate)
+                await finalize_assistant_message(
+                    full_content,
+                    cacheable=not req.regenerate,
+                    stream_completed=True,
+                )
                 return
 
             response_truncated = bool(timed_out and not aborted)
@@ -943,7 +1105,11 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 yield emit("delta", {"delta": cutoff_message, "assistant_message_id": assistant_message_id})
 
             if full_content.strip():
-                await finalize_assistant_message(full_content, cacheable=not req.regenerate)
+                await finalize_assistant_message(
+                    full_content,
+                    cacheable=not req.regenerate,
+                    stream_completed=stream_completed,
+                )
 
             if not aborted:
                 yield emit("done", "[DONE]")
@@ -985,7 +1151,11 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                         record_chunk()
                         yield emit("delta", {"delta": chunk, "assistant_message_id": assistant_message_id})
                     yield emit("done", "[DONE]")
-                    await finalize_assistant_message(full_content, cacheable=not req.regenerate)
+                    await finalize_assistant_message(
+                        full_content,
+                        cacheable=not req.regenerate,
+                        stream_completed=True,
+                    )
                     return
                 except Exception as fallback_exc:
                     logger.error(
@@ -1003,13 +1173,21 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                     )
                     full_content = _final_fallback_message(selected_mode)
                     yield emit("delta", {"delta": full_content, "assistant_message_id": assistant_message_id})
-                    await finalize_assistant_message(full_content, cacheable=not req.regenerate)
+                    await finalize_assistant_message(
+                        full_content,
+                        cacheable=not req.regenerate,
+                        stream_completed=True,
+                    )
                     yield emit("done", "[DONE]")
                     return
             if aborted:
                 return
             if full_content.strip():
-                await finalize_assistant_message(full_content, cacheable=not req.regenerate and not response_truncated)
+                await finalize_assistant_message(
+                    full_content,
+                    cacheable=not req.regenerate and not response_truncated,
+                    stream_completed=False,
+                )
                 mode_label = ""
                 if selected_mode == TECHNICAL_MODE:
                     mode_label = "technical "
@@ -1154,9 +1332,18 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
                 error_message=error_message,
             )
             asyncio.create_task(record_llm_request(payload))
+            if not lock_released:
+                _release_conversation_lock(req.conversation_id)
+                lock_released = True
 
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers=SSE_RESPONSE_HEADERS,
-    )
+    try:
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers=SSE_RESPONSE_HEADERS,
+        )
+    except Exception:
+        if not lock_released:
+            _release_conversation_lock(req.conversation_id)
+            lock_released = True
+        raise

@@ -663,10 +663,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const history = (() => {
         const { messagesById, messageIds } = useMessageStore.getState();
-        const maxHistory = 24;
+        const maxHistory = 80;
         const baseHistory = messageIds
           .map((id) => messagesById[id])
           .filter((msg) => msg && typeof msg.content === "string")
+          .filter((msg) => msg && msg.content.trim().length > 0)
           .filter((msg) => {
             if (!msg) return false;
             if (msg.clientGeneratedId === assistantClientId) return false;
@@ -675,6 +676,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
           })
           .slice(-maxHistory)
           .map((msg) => ({ role: msg.role, content: msg.content }));
+
+        if (baseHistory.length > 24) {
+          trackTelemetry("history_sync_check", {
+            local_history_length: baseHistory.length,
+            expected_backend_limit: 80,
+          });
+        }
 
         const last = baseHistory[baseHistory.length - 1];
         if (!skipUserMessage && trimmed) {

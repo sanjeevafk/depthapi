@@ -12,6 +12,12 @@ def _sentence_with_words(word_count: int) -> str:
     return " ".join(words).strip() + "."
 
 
+def test_build_messages_does_not_print(capsys):
+    inference_module._build_messages("hello", mode="learn")
+    captured = capsys.readouterr()
+    assert "FINAL PROMPT" not in captured.out
+
+
 @pytest.mark.asyncio
 async def test_generate_explanation_unknown_level():
     with pytest.raises(ValueError):

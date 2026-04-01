@@ -45,6 +45,14 @@ vi.mock("../lib/supabase", () => ({
   },
 }));
 
+const sendChatMock = vi.fn(async ({ onDone }: { onDone: () => void }) => {
+  onDone();
+});
+
+vi.mock("../services/chatService", () => ({
+  sendChat: (...args: unknown[]) => sendChatMock(...args),
+}));
+
 import { useChatStore } from "./useChatStore";
 
 const resetStore = () => {
@@ -67,6 +75,7 @@ describe("useChatStore", () => {
   beforeEach(() => {
     resetStore();
     vi.restoreAllMocks();
+    sendChatMock.mockClear();
   });
 
   it("defaults isPro to false when VITE_DEFAULT_IS_PRO is not set", () => {
@@ -283,6 +292,41 @@ describe("useChatStore", () => {
     );
 
     fromSpy.mockRestore();
+  });
+
+  it("sends up to 80 history messages and skips empty content", async () => {
+    useConversationStore.setState({
+      currentConversationId: "local-conv-1",
+      currentMode: "learn",
+      currentPromptMode: "eli5",
+      depthLevel: "eli5",
+      workspace: "learn",
+    });
+
+    const messageIds: string[] = [];
+    const messagesById: Record<string, Message> = {};
+    for (let i = 0; i < 90; i += 1) {
+      const id = `msg-${i}`;
+      messageIds.push(id);
+      messagesById[id] = {
+        id,
+        role: i % 2 === 0 ? "user" : "assistant",
+        content: i % 10 === 0 ? "" : `message ${i}`,
+        created_at: "2026-01-01T00:00:00.000Z",
+        clientGeneratedId: `client-${i}`,
+      } as Message;
+    }
+
+    useMessageStore.setState({ messageIds, messagesById });
+
+    await useChatStore.getState().sendMessage("Newest message");
+
+    const sent = sendChatMock.mock.calls[0]?.[0];
+    const history = sent?.history ?? [];
+
+    expect(history.length).toBe(80);
+    expect(history.some((msg: Message) => !msg.content.trim())).toBe(false);
+    expect(history[history.length - 1]?.content).toBe("Newest message");
   });
 
   it("regenerates from original prompt and replaces assistant response", async () => {
