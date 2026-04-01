@@ -45,13 +45,21 @@ vi.mock("../lib/supabase", () => ({
   },
 }));
 
-const sendChatMock = vi.fn(async ({ onDone }: { onDone: () => void }) => {
-  onDone();
-});
+type SendChatArgs = Parameters<typeof import("../services/chatService").sendChat>;
+const sendChatMock = vi.fn();
 
-vi.mock("../services/chatService", () => ({
-  sendChat: (...args: unknown[]) => sendChatMock(...args),
-}));
+vi.mock("../services/chatService", async () => {
+  const actual = await vi.importActual<typeof import("../services/chatService")>(
+    "../services/chatService",
+  );
+  return {
+    ...actual,
+    sendChat: (...args: SendChatArgs) => {
+      sendChatMock(...args);
+      return actual.sendChat(...args);
+    },
+  };
+});
 
 import { useChatStore } from "./useChatStore";
 
@@ -321,11 +329,11 @@ describe("useChatStore", () => {
 
     await useChatStore.getState().sendMessage("Newest message");
 
-    const sent = sendChatMock.mock.calls[0]?.[0];
+    const sent = sendChatMock.mock.calls[0]?.[0] as SendChatArgs[0] | undefined;
     const history = sent?.history ?? [];
 
     expect(history.length).toBe(80);
-    expect(history.some((msg: Message) => !msg.content.trim())).toBe(false);
+    expect(history.some((msg) => !msg.content.trim())).toBe(false);
     expect(history[history.length - 1]?.content).toBe("Newest message");
   });
 
