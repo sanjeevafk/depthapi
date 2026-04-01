@@ -11,9 +11,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from auth import check_is_pro, ensure_user_exists, get_supabase_admin, verify_token_optional
-from config import get_settings
-from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
+from auth import ensure_user_exists, get_supabase_admin, verify_token_optional
+from config import get_settings, get_stream_config
+from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success, RequestTimings
 from services.analytics import build_llm_request_payload, record_llm_request
 from services.cache import cache_get, cache_set, cache_set_if_absent
 from services.inference import TECHNICAL_MAX_TOKENS, generate_explanation, generate_stream_explanation
@@ -267,7 +267,7 @@ async def query_topic(
     if mode not in SUPPORTED_CHAT_MODES:
         mode = DEFAULT_CHAT_MODE
 
-    is_verified_pro = bool(auth_data and await check_is_pro(auth_data["user"].id))
+    is_verified_pro = bool(auth_data and auth_data.get("is_pro", False))
     req.premium = is_verified_pro
     if mode == TECHNICAL_MODE:
         if not auth_data:
@@ -459,6 +459,17 @@ async def query_topic(
                 user_id_hash=user_id_hash,
             )
 
+    # Log overall latency for monitoring
+    total_ms = (time.perf_counter() - request_started) * 1000
+    log_sampled_success(
+        "query_latency_breakdown",
+        request_id=request_id,
+        user_id_hash=user_id_hash,
+        total_ms=round(total_ms, 2),
+        mode=mode,
+        sampled=True,
+    )
+
     response = QueryResponse(topic=topic, explanations=explanations, cached=False)
     if truncation_metadata.get("was_truncated"):
         response.truncation_info = truncation_metadata
@@ -475,6 +486,7 @@ async def query_topic_stream(
     request_received = time.perf_counter()
     request_id = str(getattr(request.state, "request_id", "") or "")
     topic_hash = anonymize_text(req.topic)
+    timings = RequestTimings()
     config_state = get_provider_config_state()
     if not bool(config_state.get("chat_enabled", False)):
         raise LLMUnavailable(
@@ -490,7 +502,7 @@ async def query_topic_stream(
     if mode not in SUPPORTED_CHAT_MODES:
         mode = DEFAULT_CHAT_MODE
 
-    is_verified_pro = bool(auth_data and await check_is_pro(auth_data["user"].id))
+    is_verified_pro = bool(auth_data and auth_data.get("is_pro", False))
     req.premium = is_verified_pro
     if mode == TECHNICAL_MODE:
         if not auth_data:
@@ -573,76 +585,49 @@ async def query_topic_stream(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="message_id must be a UUID") from exc
 
-    settings = get_settings()
-    environment = str(getattr(settings, "environment", "") or "").strip().lower()
-    is_prod = environment == "production"
-    stream_max_seconds = max(int(getattr(settings, "stream_max_seconds", 25)), 1)
-    if not is_prod:
-        stream_max_seconds = max(stream_max_seconds, 60)
-    function_duration_cap: int | None = None
-    if is_prod:
-        function_duration_cap = max(
-            5,
-            int(getattr(settings, "vercel_function_max_duration_seconds", 25)) - 2,
-        )
-        stream_max_seconds = min(stream_max_seconds, function_duration_cap)
-    fallback_budget_seconds = max(
-        1.0,
-        min(float(getattr(settings, "stream_fallback_budget_seconds", 6)), float(stream_max_seconds)),
-    )
-    if is_prod:
-        fallback_budget_seconds = max(fallback_budget_seconds, 8.0)
-    fallback_timeout_seconds = max(fallback_budget_seconds, 3.0)
+    # Use pre-computed stream configuration (cached at startup)
+    config = get_stream_config()
+    is_prod = config.is_prod
+    stream_max_seconds = config.stream_max_seconds_learning
+    function_duration_cap = config.function_duration_cap
+    fallback_budget_seconds = config.fallback_budget_seconds
+    fallback_timeout_seconds = config.fallback_timeout_seconds
     close_timeout_seconds = 0.25
-    heartbeat_seconds = min(
-        max(float(getattr(settings, "stream_heartbeat_seconds", 2)), 0.1),
-        2,
-    )
-    raw_start_timeout = float(getattr(settings, "stream_start_timeout_seconds", 2))
-    idempotency_ttl_seconds = min(
-        max(int(getattr(settings, "stream_idempotency_ttl_seconds", 90)), 60),
-        120,
-    )
-    idempotency_stale_seconds = max(
-        5,
-        min(int(getattr(settings, "stream_idempotency_stale_seconds", 20)), idempotency_ttl_seconds),
-    )
+    heartbeat_seconds = config.heartbeat_seconds
+    raw_start_timeout = config.stream_start_timeout_seconds
+    idempotency_ttl_seconds = config.idempotency_ttl_seconds
+    idempotency_stale_seconds = config.idempotency_stale_seconds
+    
+    # Adjust timeouts based on mode
     if mode == LEARNING_MODE and not is_prod:
         stream_start_timeout_seconds = max(raw_start_timeout, float(stream_max_seconds))
     elif mode == TECHNICAL_MODE:
-        stream_max_seconds = max(stream_max_seconds, int(getattr(settings, "technical_stream_max_seconds", 45)))
+        stream_max_seconds = config.stream_max_seconds_technical
         if function_duration_cap is not None:
             stream_max_seconds = min(stream_max_seconds, function_duration_cap)
-        technical_start_timeout = float(
-            getattr(settings, "technical_stream_start_timeout_seconds", max(raw_start_timeout, 6.0))
-        )
+        technical_start_timeout = config.technical_stream_start_timeout_seconds
         technical_cap = max(4.0, min(float(stream_max_seconds) * 0.75, 20.0))
         stream_start_timeout_seconds = min(max(technical_start_timeout, 2.0), technical_cap)
-        fallback_budget_seconds = max(fallback_budget_seconds, 4.0)
-        fallback_timeout_seconds = max(fallback_budget_seconds, 4.0)
+        fallback_budget_seconds = max(config.fallback_budget_seconds, 4.0)
+        fallback_timeout_seconds = max(config.fallback_timeout_seconds, 4.0)
     else:
         cap = 10.0 if is_prod else 15.0
         stream_start_timeout_seconds = min(max(raw_start_timeout, 0.1), cap)
 
     # Extend timeout for large inputs (> 5K tokens OR > 5K chars)
     # This is critical because larger inputs take longer to process/generate responses
-    large_input_char_threshold = int(getattr(settings, "large_input_char_threshold", 5000))
-    large_input_token_threshold = int(getattr(settings, "large_input_token_threshold", 5000))
-    is_large_input_by_tokens = prompt_tokens > large_input_token_threshold
-    is_large_input_by_chars = len(effective_topic) > large_input_char_threshold
+    is_large_input_by_tokens = prompt_tokens > config.large_input_token_threshold
+    is_large_input_by_chars = len(effective_topic) > config.large_input_char_threshold
     
     if is_large_input_by_tokens or is_large_input_by_chars:
-        large_input_multiplier = float(getattr(settings, "large_input_timeout_extension_multiplier", 1.5))
-        original_timeout = stream_max_seconds
-        stream_max_seconds = int(stream_max_seconds * large_input_multiplier)
+        stream_max_seconds = int(stream_max_seconds * config.large_input_timeout_extension_multiplier)
         # Respect function duration cap
         if function_duration_cap is not None:
             stream_max_seconds = min(stream_max_seconds, function_duration_cap)
     
     # Additional timeout extension for technical mode (more complex reasoning)
     if mode == TECHNICAL_MODE and (is_large_input_by_tokens or is_large_input_by_chars):
-        technical_multiplier = float(getattr(settings, "technical_mode_timeout_extension", 1.3))
-        stream_max_seconds = int(stream_max_seconds * technical_multiplier)
+        stream_max_seconds = int(stream_max_seconds * config.technical_mode_timeout_extension)
         if function_duration_cap is not None:
             stream_max_seconds = min(stream_max_seconds, function_duration_cap)
 
@@ -757,6 +742,9 @@ async def query_topic_stream(
                                 mode=mode,
                                 message_id=message_id or "",
                             )
+
+    # Record pre-stream latency (time before streaming starts)
+    timings.pre_stream_ms = (time.perf_counter() - request_received) * 1000
 
     async def event_generator():
         full_content = ""
@@ -1167,6 +1155,16 @@ async def query_topic_stream(
                             request_id=request_id,
                             user_id_hash=user_id_hash,
                         )
+
+    # Log pre-stream latency for monitoring
+    log_sampled_success(
+        "query_stream_pre_stream_latency",
+        request_id=request_id,
+        user_id_hash=user_id_hash,
+        pre_stream_ms=round(timings.pre_stream_ms, 2),
+        mode=mode,
+        sampled=True,
+    )
 
     return StreamingResponse(
         event_generator(),

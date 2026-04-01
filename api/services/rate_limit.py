@@ -323,128 +323,6 @@ def _resolve_limits(
     return daily_limit, hourly_limit, rpm, burst, sustained_window, burst_window
 
 
-# Unified Lua script for rate limiting, quotas, and circuit breaker in a single Redis call
-UNIFIED_CONTROLS_LUA_SCRIPT = """
--- Unified rate limit + quota + circuit breaker enforcement
--- KEYS: [burst_key, sustained_key, daily_key, hourly_key, circuit_open_key, circuit_usage_key]
--- ARGV: [burst_limit, rpm_limit, daily_limit, hourly_limit, circuit_threshold, reserved_tokens,
---        now_minute, burst_window, sustained_window, daily_window, now_ts]
--- Returns: [burst_ok, rpm_ok, daily_ok, hourly_ok, circuit_ok, burst_count, rpm_count, daily_consumed, hourly_consumed]
-
-local burst_key = KEYS[1]
-local sustained_key = KEYS[2]
-local daily_key = KEYS[3]
-local hourly_key = KEYS[4]
-local circuit_open_key = KEYS[5]
-local circuit_usage_key = KEYS[6]
-
-local burst_limit = tonumber(ARGV[1])
-local rpm_limit = tonumber(ARGV[2])
-local daily_limit = tonumber(ARGV[3])
-local hourly_limit = tonumber(ARGV[4])
-local circuit_threshold = tonumber(ARGV[5])
-local requested_tokens = tonumber(ARGV[6])
-local now_minute = tonumber(ARGV[7])
-local burst_window = tonumber(ARGV[8])
-local sustained_window = tonumber(ARGV[9])
-local daily_window = tonumber(ARGV[10])
-local now_ts = tonumber(ARGV[11])
-
--- 1. Check circuit breaker (fail fast)
-local is_circuit_open = redis.call('GET', circuit_open_key)
-if is_circuit_open then
-  local ttl = redis.call('TTL', circuit_open_key)
-  if ttl < 0 then ttl = 60 end
-  return {0, 0, 0, 0, 0, 0, 0, 0, 0, ttl}
-end
-
--- 2. Check burst rate limit
-local burst_count = 0
-local burst_ok = 1
-if burst_limit > 0 then
-  burst_count = tonumber(redis.call('INCR', burst_key))
-  if burst_count == 1 then
-    redis.call('EXPIRE', burst_key, burst_window)
-  end
-  if burst_count > burst_limit then
-    burst_ok = 0
-  end
-end
-
--- 3. Check sustained (RPM) rate limit
-local rpm_count = 0
-local rpm_ok = 1
-if rpm_limit > 0 then
-  rpm_count = tonumber(redis.call('INCR', sustained_key))
-  if rpm_count == 1 then
-    redis.call('EXPIRE', sustained_key, sustained_window)
-  end
-  if rpm_count > rpm_limit then
-    rpm_ok = 0
-  end
-end
-
--- 4. Check daily quota
-local daily_consumed = 0
-local daily_ok = 1
-if daily_limit > 0 then
-  daily_consumed = tonumber(redis.call('GET', daily_key) or '0')
-  local daily_projected = daily_consumed + requested_tokens
-  if daily_projected > daily_limit then
-    daily_ok = 0
-  else
-    redis.call('INCRBY', daily_key, requested_tokens)
-    local ttl = redis.call('TTL', daily_key)
-    if ttl < 0 then
-      redis.call('EXPIRE', daily_key, daily_window)
-    end
-    daily_consumed = daily_projected
-  end
-end
-
--- 5. Check hourly quota (rolling window via hash)
-local hourly_consumed = 0
-local hourly_ok = 1
-if hourly_limit > 0 then
-  local buckets = redis.call('HGETALL', hourly_key)
-  local total = 0
-  for i = 1, #buckets, 2 do
-    local bucket = tonumber(buckets[i])
-    local value = tonumber(buckets[i + 1]) or 0
-    if bucket ~= nil then
-      if bucket < (now_minute - 59) then
-        redis.call('HDEL', hourly_key, buckets[i])
-      else
-        total = total + value
-      end
-    end
-  end
-  hourly_consumed = total
-  local hourly_projected = total + requested_tokens
-  if hourly_projected > hourly_limit then
-    hourly_ok = 0
-  else
-    redis.call('HINCRBY', hourly_key, tostring(now_minute), requested_tokens)
-    redis.call('EXPIRE', hourly_key, 3720)
-    hourly_consumed = hourly_projected
-  end
-end
-
--- 6. Update circuit breaker and check usage
-local circuit_ok = 1
-if tonumber(circuit_threshold or 0) > 0 then
-  local circuit_usage = tonumber(redis.call('INCRBY', circuit_usage_key, requested_tokens) or '0')
-  if circuit_usage > circuit_threshold then
-    redis.call('SETEX', circuit_open_key, 60, '1')
-    circuit_ok = 0
-  end
-end
-
--- Return results in order
-return {burst_ok, rpm_ok, daily_ok, hourly_ok, circuit_ok, burst_count, rpm_count, daily_consumed, hourly_consumed}
-"""
-
-
 async def enforce_request_controls(
     *,
     user_id: str | None,
@@ -454,11 +332,8 @@ async def enforce_request_controls(
     is_pro: bool = False,
 ) -> TokenReservation:
     """Apply auth-scoped quota, distributed rate limiting, and circuit breaker checks.
-    
-    OPTIMIZED: Uses a single unified Lua script to consolidate all checks into ONE Redis call.
-    Reduces latency from 120-200ms (5 separate calls) to 20-40ms (1 call).
-    
-    Enforcement order: auth (handled by route dependency) -> quota -> rate limit -> circuit breaker.
+
+    Enforcement order: auth (handled by route dependency) -> quota -> rate limit -> inference.
     """
     settings = get_settings()
     strategy = str(getattr(settings, "rate_limit_strategy", "upstash_redis") or "upstash_redis").lower()
@@ -487,118 +362,93 @@ async def enforce_request_controls(
 
     daily_key, hourly_key = _quota_keys(identifier, mode)
     now_minute = int(time.time() // 60)
-    now_ts = int(time.time())
-    mode_label = (mode or "default").strip().lower()
-    burst_key = f"knowbear:ratelimit:burst:{identifier}:{mode_label}"
-    sustained_key = f"knowbear:ratelimit:sustained:{identifier}:{mode_label}"
-    circuit_open_key = "knowbear:circuit:open"
-    circuit_usage_key = f"knowbear:circuit:tokens:{int(now_ts // 60)}"
-    circuit_threshold = max(
-        int(getattr(settings, "circuit_breaker_tokens_per_minute", 0)), 0
-    )
-    daily_window = max(int(getattr(settings, "quota_window_seconds", 86400)), 1)
 
     try:
-        redis = await get_redis()
-        
-        # UNIFIED CALL: Single Redis round trip for all controls
-        result = await redis.eval(
-            UNIFIED_CONTROLS_LUA_SCRIPT,
-            6,  # number of keys
-            burst_key,
-            sustained_key,
-            daily_key,
-            hourly_key,
-            circuit_open_key,
-            circuit_usage_key,
-            # Arguments:
-            burst_limit,
-            rpm,
-            daily_limit,
-            hourly_limit,
-            circuit_threshold,
-            reserved_tokens,
-            now_minute,
-            burst_window,
-            sustained_window,
-            daily_window,
-            now_ts,
+        daily_result = await check_daily_quota(
+            key=daily_key,
+            limit=daily_limit,
+            requested=reserved_tokens,
+            window_seconds=max(int(getattr(settings, "quota_window_seconds", 86400)), 1),
         )
-        
-        # Unpack results: [burst_ok, rpm_ok, daily_ok, hourly_ok, circuit_ok, ...]
-        burst_ok = bool(int(result[0])) if result and len(result) > 0 else True
-        rpm_ok = bool(int(result[1])) if result and len(result) > 1 else True
-        daily_ok = bool(int(result[2])) if result and len(result) > 2 else True
-        hourly_ok = bool(int(result[3])) if result and len(result) > 3 else True
-        circuit_ok = bool(int(result[4])) if result and len(result) > 4 else True
-        
-        # Check circuit breaker first (fail fast)
-        if not circuit_ok:
-            circuit_retry_after = int(result[9]) if result and len(result) > 9 else 60
-            raise HTTPException(
-                status_code=503,
-                detail={"type": "circuit_breaker_open", "action": "reject"},
-                headers={"Retry-After": str(max(circuit_retry_after, 1))},
-            )
-        
-        # Check quota
-        if not daily_ok or not hourly_ok:
-            raise HTTPException(
-                status_code=429,
-                detail={
-                    "type": "quota_exceeded",
-                    "retry_allowed": False,
-                },
-                headers={"Retry-After": "60"},
-            )
-        
-        # Check rate limits
-        if not burst_ok:
-            raise HTTPException(
-                status_code=429,
-                detail={"type": "rate_limit_exceeded", "scope": "burst"},
-                headers={"Retry-After": str(burst_window)},
-            )
-        
-        if not rpm_ok:
-            raise HTTPException(
-                status_code=429,
-                detail={"type": "rate_limit_exceeded", "scope": "sustained"},
-                headers={"Retry-After": str(sustained_window)},
-            )
-        
-        return TokenReservation(
-            identifier=identifier,
-            mode=mode,
-            reserved_tokens=reserved_tokens,
-            daily_key=daily_key,
-            hourly_key=hourly_key,
-            hourly_bucket=now_minute,
-            is_anonymous=not is_authenticated,
+        hourly_result = await check_hourly_quota(
+            key=hourly_key,
+            limit=hourly_limit,
+            requested=reserved_tokens,
+            now_minute=now_minute,
         )
-    
-    except HTTPException:
-        raise
     except Exception as exc:
         logger.warning(
-            "unified_controls_failed",
+            "quota_check_failed",
             user_id_hash=anonymize_user_id(str(user_id) if user_id is not None else None),
             fail_open=fail_open,
             error=str(exc),
         )
-        if fail_open:
-            # Authenticated users: fail open on error
-            return TokenReservation(
-                identifier=identifier,
-                mode=mode,
-                reserved_tokens=reserved_tokens,
-                daily_key=daily_key,
-                hourly_key=hourly_key,
-                hourly_bucket=now_minute,
-                is_anonymous=not is_authenticated,
+        daily_result = QuotaResult(allowed=True, consumed=0, limit=0, retry_after=0)
+        hourly_result = QuotaResult(allowed=True, consumed=0, limit=0, retry_after=0)
+
+    if not daily_result.allowed or not hourly_result.allowed:
+        retry_after = max(daily_result.retry_after, hourly_result.retry_after, 1)
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "type": "quota_exceeded",
+                "retry_allowed": False,
+                "limit": max(daily_result.limit, hourly_result.limit),
+                "consumed": max(daily_result.consumed, hourly_result.consumed),
+            },
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    if burst_limit > 0:
+        burst = await check_rate_limit(
+            identifier=identifier,
+            limit=burst_limit,
+            window_seconds=burst_window,
+            namespace="burst",
+            fail_open=fail_open,
+            mode=mode,
+        )
+        if not burst.allowed:
+            if burst.reason == "degraded_blocked":
+                raise HTTPException(status_code=503, detail={"type": "rate_limiter_unavailable"})
+            raise HTTPException(
+                status_code=429,
+                detail={"type": "rate_limit_exceeded", "scope": "burst"},
+                headers={"Retry-After": str(burst.retry_after)},
             )
-        # Unauthenticated users: fail closed
+
+    if rpm > 0:
+        sustained = await check_rate_limit(
+            identifier=identifier,
+            limit=rpm,
+            window_seconds=sustained_window,
+            namespace="sustained",
+            fail_open=fail_open,
+            mode=mode,
+        )
+        if not sustained.allowed:
+            if sustained.reason == "degraded_blocked":
+                raise HTTPException(status_code=503, detail={"type": "rate_limiter_unavailable"})
+            raise HTTPException(
+                status_code=429,
+                detail={"type": "rate_limit_exceeded", "scope": "sustained"},
+                headers={"Retry-After": str(sustained.retry_after)},
+            )
+
+    breaker = await check_circuit_breaker(estimated_tokens=reserved_tokens, fail_open=fail_open)
+    if not breaker.allowed:
         raise HTTPException(
             status_code=503,
-            detail={"type": "rate_limiter_unavailable"},
+            detail={"type": "circuit_breaker_open", "action": "reject"},
+            headers={"Retry-After": str(max(breaker.retry_after, 1))},
         )
+
+    return TokenReservation(
+        identifier=identifier,
+        mode=mode,
+        reserved_tokens=reserved_tokens,
+        daily_key=daily_key,
+        hourly_key=hourly_key,
+        hourly_bucket=now_minute,
+        is_anonymous=not is_authenticated,
+    )
