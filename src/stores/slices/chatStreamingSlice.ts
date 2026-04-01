@@ -320,19 +320,30 @@ export const createChatStreamingSlice: StateCreator<
       const history = (() => {
         const { messagesById, messageIds } = useMessageStore.getState();
         const maxHistory = 24;
-        return messageIds
+        const baseHistory = messageIds
           .map((id) => messagesById[id])
           .filter((msg) => msg && typeof msg.content === "string")
           .filter((msg) => {
             if (!msg) return false;
-            if (msg.clientGeneratedId === clientMessageId) return false;
             if (msg.clientGeneratedId === assistantClientId) return false;
             if (msg.metadata?.assistant_client_id === assistantClientId) return false;
-            if (msg.metadata?.client_id === clientMessageId) return false;
             return msg.content.trim().length > 0;
           })
           .slice(-maxHistory)
           .map((msg) => ({ role: msg.role, content: msg.content }));
+
+        const last = baseHistory[baseHistory.length - 1];
+        if (!skipUserMessage && trimmed) {
+          if (!last || last.role !== "user" || last.content !== trimmed) {
+            baseHistory.push({ role: "user", content: trimmed });
+          }
+        }
+
+        if (baseHistory.length > maxHistory) {
+          return baseHistory.slice(-maxHistory);
+        }
+
+        return baseHistory;
       })();
 
       await sendChat({
