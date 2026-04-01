@@ -61,10 +61,20 @@ const waitFor = (ms: number, signal: AbortSignal): Promise<void> => {
   });
 };
 
+const refreshSessionIfNeeded = async (session: Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"]) => {
+  if (!session?.expires_at) return session;
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (session.expires_at - nowSeconds > 60) return session;
+
+  const { data, error } = await supabase.auth.refreshSession();
+  if (!error && data.session) return data.session;
+  return session;
+};
+
 const getSupabaseSession = async () => {
   if (!supabaseConfigured) return null;
   const { data } = await supabase.auth.getSession();
-  return data.session;
+  return refreshSessionIfNeeded(data.session);
 };
 
 const buildHeaders = async (): Promise<Record<string, string>> => {
