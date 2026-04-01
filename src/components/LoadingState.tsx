@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import type { Mode, Level } from "../types";
 import { Loader2, Quote } from "lucide-react";
 import { FALLBACK_CACHE_KEY, FALLBACK_QUOTES } from "./loadingStateConstants";
+import { getStreamingVerbs } from "./streamingVerbs";
 
 interface LoadingStateProps {
   mode: Mode;
@@ -52,6 +53,7 @@ export function LoadingState({
 }: LoadingStateProps): JSX.Element {
   const [message, setMessage] = useState("");
   const [quote, setQuote] = useState<string | null>(null);
+  const [spinnerVerb, setSpinnerVerb] = useState<string | null>(null);
 
   useEffect(() => {
     let baseMessage = "Generating your explanation...";
@@ -152,6 +154,24 @@ export function LoadingState({
     };
   }, [mode, level, topic]);
 
+  useEffect(() => {
+    const verbs = getStreamingVerbs(mode);
+    if (!verbs) {
+      setSpinnerVerb(null);
+      return;
+    }
+
+    let index = Math.floor(Math.random() * verbs.length);
+    setSpinnerVerb(verbs[index]);
+
+    const intervalId = window.setInterval(() => {
+      index = (index + 1) % verbs.length;
+      setSpinnerVerb(verbs[index]);
+    }, 1400);
+
+    return () => window.clearInterval(intervalId);
+  }, [mode]);
+
   return (
     <div className="flex flex-col items-center justify-center p-6 sm:p-12 min-h-[300px] sm:min-h-[400px] animate-in fade-in duration-700">
       <div className="relative mb-8">
@@ -167,6 +187,11 @@ export function LoadingState({
               <span className="animate-[ellipsis_1.5s_infinite]">...</span>
             </span>
           </p>
+          {spinnerVerb && (
+            <p className="text-sm font-semibold text-cyan-200/90 tracking-wide">
+              {spinnerVerb}...
+            </p>
+          )}
           <p className="text-sm text-cyan-400/70 font-medium uppercase tracking-[0.2em]">
             Meanwhile
           </p>

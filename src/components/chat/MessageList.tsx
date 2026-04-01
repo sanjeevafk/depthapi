@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
@@ -10,6 +10,8 @@ import { useChatStore } from "../../stores/useChatStore";
 import { useConversationStore } from "../../stores/useConversationStore";
 import { useMessageStore } from "../../stores/useMessageStore";
 import { formatModeLabel } from "../../lib/chatModes";
+import type { ConversationMode } from "../../types/chat";
+import { getStreamingVerbs } from "../streamingVerbs";
 
 const markdownComponents: Components = {
   code({ className, children, ...props }) {
@@ -165,10 +167,7 @@ function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
           </div>
         ) : (
           message.isStreaming && (
-            <div className="mt-2 flex items-center gap-2 text-xs text-cyan-200">
-              <span className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
-              Streaming...
-            </div>
+            <StreamingIndicator mode={assistantMode} />
           )
         )}
         {message.error && (
@@ -184,6 +183,35 @@ function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
         )}
       </div>
     </motion.div>
+  );
+}
+
+function StreamingIndicator({ mode }: { mode?: ConversationMode }): JSX.Element {
+  const verbs = getStreamingVerbs(mode);
+  const [index, setIndex] = useState(() =>
+    verbs ? Math.floor(Math.random() * verbs.length) : 0,
+  );
+
+  useEffect(() => {
+    if (!verbs) return;
+    setIndex(Math.floor(Math.random() * verbs.length));
+  }, [verbs]);
+
+  useEffect(() => {
+    if (!verbs) return;
+    const intervalId = window.setInterval(() => {
+      setIndex((current) => (current + 1) % verbs.length);
+    }, 1400);
+    return () => window.clearInterval(intervalId);
+  }, [verbs]);
+
+  const label = verbs ? verbs[index] : "Streaming";
+
+  return (
+    <div className="mt-2 flex items-center gap-2 text-xs text-cyan-200">
+      <span className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
+      {label}...
+    </div>
   );
 }
 
