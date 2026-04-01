@@ -71,14 +71,17 @@ def sanitize_filename(value: str) -> str:
 
 
 def escape_for_prompt(value: str, max_length: int = 500) -> str:
-    """Sanitize user input for safe embedding in system prompts to prevent injection attacks.
+    """Escape user input for safe embedding in quoted prompt strings.
+    
+    Note: This escapes structural characters to prevent breaking out of string literals,
+    but does NOT defend against semantic prompt injection attacks.
     
     Args:
         value: Raw user input string
         max_length: Maximum allowed length (default 500 chars)
     
     Returns:
-        Escaped string safe for embedding in prompt strings
+        Escaped string safe for embedding in double-quoted prompt strings
     """
     if not isinstance(value, str):
         return ""
