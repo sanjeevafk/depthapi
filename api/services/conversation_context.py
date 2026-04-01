@@ -61,6 +61,7 @@ def build_context_messages(
     max_tokens: int,
     summary_max_tokens: int,
     drop_low_signal: bool = True,
+    max_turns: int | None = None,
 ) -> tuple[list[ConversationMessage], str]:
     if not messages:
         return [], ""
@@ -79,6 +80,13 @@ def build_context_messages(
 
     if not filtered:
         return [], ""
+
+    if max_turns is not None and max_turns > 0:
+        non_system = [msg for msg in filtered if msg["role"] in {"user", "assistant"}]
+        keep = max_turns * 2
+        if len(non_system) > keep:
+            non_system = non_system[-keep:]
+        filtered = non_system
 
     # Reserve space for an optional summary block up front so the final prompt stays within max_tokens.
     effective_message_budget = (
