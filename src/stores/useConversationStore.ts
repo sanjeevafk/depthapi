@@ -14,7 +14,7 @@ import { useMessageStore } from "./useMessageStore";
 
 const supabaseConfigured =
   Boolean(import.meta.env.VITE_SUPABASE_URL) &&
-  Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY);
+  Boolean(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY);
 let latestMessageLoadToken = 0;
 
 interface ConversationState {

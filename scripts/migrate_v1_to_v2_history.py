@@ -63,9 +63,9 @@ def main() -> int:
     )
 
     supabase_url = get_env("SUPABASE_URL")
-    supabase_key = get_env("SUPABASE_SERVICE_ROLE_KEY") or get_env("SUPABASE_ANON_KEY")
+    supabase_key = get_env("SUPABASE_SECRET_KEY") or get_env("SUPABASE_PUBLISHABLE_KEY")
     if not supabase_url or not supabase_key:
-        logging.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY/SUPABASE_ANON_KEY")
+        logging.error("Missing SUPABASE_URL or SUPABASE_SECRET_KEY/SUPABASE_PUBLISHABLE_KEY")
         return 1
 
     client = create_client(supabase_url, supabase_key)

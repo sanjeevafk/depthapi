@@ -378,7 +378,7 @@ async def health():
 
     async def check_db() -> dict[str, str]:
         try:
-            if not settings.supabase_url or not settings.supabase_service_role_key:
+            if not settings.supabase_url or not settings.supabase_secret_key:
                 logger.warning("db_health_degraded_missing_config", severity="warning")
                 return {"status": "degraded"}
             supabase = await asyncio.wait_for(asyncio.to_thread(get_supabase_admin), timeout=2.0)
