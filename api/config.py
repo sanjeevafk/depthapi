@@ -22,7 +22,7 @@ class StreamConfig:
     fallback_timeout_seconds: float
     close_timeout_seconds: float
     heartbeat_seconds: float
-    stream_start_timeout_seconds_default: float
+    stream_start_timeout_seconds: float
     technical_stream_start_timeout_seconds: float
     idempotency_ttl_seconds: int
     idempotency_stale_seconds: int
@@ -59,7 +59,7 @@ def _compute_stream_config() -> StreamConfig:
             max(float(getattr(settings, "stream_heartbeat_seconds", 2)), 0.1),
             2.0,
         ),
-        stream_start_timeout_seconds_default=float(getattr(settings, "stream_start_timeout_seconds", 2)),
+        stream_start_timeout_seconds=float(getattr(settings, "stream_start_timeout_seconds", 2)),
         technical_stream_start_timeout_seconds=float(getattr(settings, "technical_stream_start_timeout_seconds", 8.0)),
         idempotency_ttl_seconds=min(
             max(int(getattr(settings, "stream_idempotency_ttl_seconds", 90)), 60),
@@ -82,6 +82,12 @@ def get_stream_config() -> StreamConfig:
     if _STREAM_CONFIG is None:
         _STREAM_CONFIG = _compute_stream_config()
     return _STREAM_CONFIG
+
+
+def reset_stream_config() -> None:
+    """Reset the cached stream config (for testing)."""
+    global _STREAM_CONFIG
+    _STREAM_CONFIG = None
 
 
 class Settings(BaseSettings):

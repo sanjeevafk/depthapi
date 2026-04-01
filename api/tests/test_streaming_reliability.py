@@ -592,17 +592,13 @@ async def test_query_stream_partial_failure_returns_done_without_error(app_clien
     user = SimpleNamespace(id="user-query-partial", email="user@example.com", user_metadata={})
 
     async def fake_auth():
-        return {"user": user, "is_pro": False, "exp": time.time() + 600}
-
-    async def fake_is_pro(*_args, **_kwargs):
-        return True
+        return {"user": user, "is_pro": True, "exp": time.time() + 600}
 
     async def partial_then_fail(*_args, **_kwargs):
         yield "partial technical chunk"
         raise RuntimeError("stream interrupted")
 
     main_app.app.dependency_overrides[query_module.verify_token_optional] = fake_auth
-    monkeypatch.setattr(query_module, "check_is_pro", fake_is_pro)
     monkeypatch.setattr(query_module, "generate_stream_explanation", partial_then_fail)
     monkeypatch.setattr(query_module, "get_settings", lambda: test_settings)
 
