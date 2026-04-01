@@ -16,10 +16,9 @@ export const CHAT_FREE_MODES = [
   "eli15",
   "meme",
   "learn",
-  "socratic",
 ] as const;
 
-export const CHAT_PREMIUM_MODES = ["technical"] as const;
+export const CHAT_PREMIUM_MODES = ["technical", "socratic"] as const;
 
 export const CHAT_PROMPT_MODES = [
   "eli5",
