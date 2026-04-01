@@ -30,13 +30,29 @@ async def test_verify_token_valid():
     with patch("auth.get_settings", return_value=SimpleNamespace(supabase_url="https://example.supabase.co")), \
         patch("auth.jwt.get_unverified_header", return_value={"kid": "kid1"}), \
         patch("auth._get_jwks", new=AsyncMock(return_value={"keys": [{"kid": "kid1", "alg": "RS256"}]})), \
-        patch("auth.jwt.algorithms.RSAAlgorithm.from_jwk", return_value=object()), \
+        patch("auth.RSAAlgorithm.from_jwk", return_value=object()), \
         patch("auth.jwt.decode", return_value={"sub": "123", "email": "test@example.com", "is_pro": True}):
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_token")
         result = await verify_token(creds)
         assert result["token"] == "valid_token"
         assert result["user"].id == "123"
         assert result["user"].email == "test@example.com"
+
+
+@pytest.mark.asyncio
+async def test_verify_token_es256_uses_ec_algorithm():
+    with patch("auth.get_settings", return_value=SimpleNamespace(supabase_url="https://example.supabase.co")), \
+        patch("auth.jwt.get_unverified_header", return_value={"kid": "kid1", "alg": "ES256"}), \
+        patch("auth._get_jwks", new=AsyncMock(return_value={"keys": [{"kid": "kid1", "alg": "ES256"}]})), \
+        patch("auth.ECAlgorithm.from_jwk", return_value=object()) as ec_from_jwk, \
+        patch("auth.RSAAlgorithm.from_jwk", return_value=object()) as rsa_from_jwk, \
+        patch("auth.jwt.decode", return_value={"sub": "123", "email": "test@example.com"}) as decode:
+        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_token")
+        await verify_token(creds)
+
+        ec_from_jwk.assert_called_once()
+        rsa_from_jwk.assert_not_called()
+        decode.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -89,6 +105,57 @@ async def test_verify_token_optional_invalid_credentials_raise():
 
 def test_auth_module_has_no_print_statements():
     assert "print(" not in inspect.getsource(auth_module)
+
+
+@pytest.mark.asyncio
+async def test_get_jwks_falls_back_to_well_known(monkeypatch):
+    calls: list[tuple[str, dict[str, str] | None]] = []
+
+    class FakeResponse:
+        def __init__(self, url: str, status_code: int, payload: dict[str, object]):
+            self.url = url
+            self.status_code = status_code
+            self._payload = payload
+            self.request = auth_module.httpx.Request("GET", url)
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise auth_module.httpx.HTTPStatusError(
+                    "error",
+                    request=self.request,
+                    response=self,
+                )
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, headers=None):
+            calls.append((str(url), headers))
+            if len(calls) == 1:
+                return FakeResponse(url, 404, {})
+            return FakeResponse(url, 200, {"keys": [{"kid": "k1", "alg": "ES256"}]})
+
+    monkeypatch.setattr(auth_module.httpx, "AsyncClient", lambda *args, **kwargs: FakeClient())
+    monkeypatch.setattr(auth_module, "get_settings", lambda: SimpleNamespace(supabase_publishable_key="pub"))
+    auth_module._JWKS_CACHE = None
+    auth_module._JWKS_CACHE_EXP = None
+
+    jwks = await auth_module._get_jwks("https://example.supabase.co")
+
+    assert jwks["keys"][0]["kid"] == "k1"
+    assert calls[0][0].endswith("/auth/v1/keys")
+    assert calls[1][0].endswith("/auth/v1/.well-known/jwks.json")
+    assert calls[0][1] == {"apikey": "pub"}
 
 
 def test_get_supabase_reuses_cached_client(monkeypatch):
