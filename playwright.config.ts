@@ -12,7 +12,7 @@ export default defineConfig({
         trace: 'retain-on-failure',
     },
     webServer: {
-        command: 'VITE_SUPABASE_URL= VITE_SUPABASE_ANON_KEY= VITE_SENTRY_ENABLED=false npm run dev -- --host 127.0.0.1 --port 4173',
+        command: 'VITE_SUPABASE_URL= VITE_SUPABASE_PUBLISHABLE_KEY= VITE_SENTRY_ENABLED=false npm run dev -- --host 127.0.0.1 --port 4173',
         url: 'http://127.0.0.1:4173',
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,

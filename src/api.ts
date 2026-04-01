@@ -14,7 +14,7 @@ import { buildApiError } from "./lib/httpErrors";
 const API_URL = import.meta.env.VITE_API_URL || "";
 const SUPABASE_CONFIGURED =
   Boolean(import.meta.env.VITE_SUPABASE_URL) &&
-  Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY);
+  Boolean(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY);
 
 import { supabase } from "./lib/supabase";
 
