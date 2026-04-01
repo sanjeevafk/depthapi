@@ -18,15 +18,15 @@ class Settings(BaseSettings):
     openrouter_timeout_seconds: int = 90
     llm_timeout_seconds: int = 60
 
-    stream_max_seconds: int = 20
-    technical_stream_max_seconds: int = 22
+    stream_max_seconds: int = 30  # Increased from 20 to 30 for large input handling
+    technical_stream_max_seconds: int = 32  # Increased from 22 to 32
     stream_heartbeat_seconds: int = 2
     stream_start_timeout_seconds: int = 5
     technical_stream_start_timeout_seconds: float = 8.0
     stream_idempotency_ttl_seconds: int = 90
     stream_idempotency_stale_seconds: int = 20
     stream_fallback_budget_seconds: int = 8
-    vercel_function_max_duration_seconds: int = 25
+    vercel_function_max_duration_seconds: int = 50  # Increased from 25 to support large inputs
     trusted_proxies: str = ""
 
     redis_url: str = "redis://localhost:6379"
@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     circuit_breaker_tokens_per_minute: int = 300000
     circuit_breaker_open_seconds: int = 60
     circuit_breaker_action: str = "reject"
-    estimated_output_tokens_per_request: int = 900
+    estimated_output_tokens_per_request: int = 1500
     message_rate_limit_max: int = 30
     message_rate_limit_window_seconds: int = 60
     message_cache_ttl_seconds: int = 3600
@@ -61,12 +61,25 @@ class Settings(BaseSettings):
     pro_burst: int = 10
     anon_daily_token_quota: int = 5000
     anon_rph: int = 10
-    max_output_tokens_learning: int = 1024
-    max_output_tokens_socratic: int = 1024
+    max_output_tokens_learning: int = 2048
+    max_output_tokens_socratic: int = 2048
     socratic_direct_answer_patterns: str = ""
     conversation_context_max_tokens: int = 1200
     conversation_context_summary_tokens: int = 240
     conversation_context_fetch_limit: int = 80
+    
+    # Large text input handling
+    max_input_chars_api: int = 100000  # Hard cap for API (100K chars)
+    max_input_tokens_learning: int = 10000  # ~40K chars
+    max_input_tokens_technical: int = 15000  # ~60K chars
+    max_input_tokens_socratic: int = 8000  # ~32K chars
+    
+    # Timeout extension triggers (lowercase threshold names for consistency)
+    large_input_char_threshold: int = 5000  # Trigger on 5K+ chars regardless of truncation
+    large_input_token_threshold: int = 5000  # Lowered from 10K to 5K tokens (was too high)
+    large_input_timeout_extension_multiplier: float = 1.5  # 50% longer for large inputs
+    technical_mode_timeout_extension: float = 1.3  # Additional 30% for technical mode
+    
     supabase_url: str = ""
     supabase_publishable_key: str = ""
     supabase_secret_key: SecretStr = SecretStr("")

@@ -5,7 +5,7 @@ export interface PinnedTopic {
 }
 
 export interface QueryRequest {
-  topic: string;
+  topic: string;  // Max 100,000 chars; truncated by backend per mode
   levels?: string[];
   premium?: boolean;
   bypass_cache?: boolean;
@@ -16,11 +16,19 @@ export interface QueryRequest {
 
 export type Mode = "learn" | "technical" | "socratic";
 
+export interface TruncationInfo {
+  was_truncated: boolean;
+  original_length: number;
+  truncated_to: number;
+  truncation_reason: string | null;
+}
+
 export interface QueryResponse {
   topic: string;
   explanations: Record<string, string>;
   cached: boolean;
   mode?: Mode;
+  truncation_info?: TruncationInfo;
 }
 
 export interface HistoryItem {
