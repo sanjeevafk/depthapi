@@ -570,11 +570,11 @@ def route_model_aliases(
                     aliases.append(TECH_CEREBRAS_GLM_ALIAS)
     else:
         if prefers_low_latency and complexity < 0.8:
-            aliases = [SOCRATIC_GROQ_ALIAS, SOCRATIC_GEMINI_ALIAS, SOCRATIC_OPENROUTER_ALIAS]
+            aliases = [SOCRATIC_OPENROUTER_ALIAS, SOCRATIC_GROQ_ALIAS, SOCRATIC_GEMINI_ALIAS]
         else:
-            aliases = [SOCRATIC_GEMINI_ALIAS, SOCRATIC_GROQ_ALIAS, SOCRATIC_OPENROUTER_ALIAS]
+            aliases = [SOCRATIC_OPENROUTER_ALIAS, SOCRATIC_GEMINI_ALIAS, SOCRATIC_GROQ_ALIAS]
         if is_reasoning and complexity >= 0.8 and is_pro:
-            aliases.insert(0, SOCRATIC_CEREBRAS_ALIAS)
+            aliases.insert(1, SOCRATIC_CEREBRAS_ALIAS)
 
     deduped: list[str] = []
     for alias in aliases:
