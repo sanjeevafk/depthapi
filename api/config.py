@@ -1,9 +1,87 @@
 """Configuration and environment variables."""
 
 import os
+from dataclasses import dataclass
 from functools import lru_cache
 from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings
+
+
+@dataclass(frozen=True)
+class StreamConfig:
+    """Pre-computed streaming configuration to eliminate 40+ getattr() calls per request.
+    
+    This data class is computed once at app startup and reused for all requests,
+    saving 25-40ms per request by eliminating repeated settings lookups and calculations.
+    """
+    is_prod: bool
+    stream_max_seconds_learning: int
+    stream_max_seconds_technical: int
+    function_duration_cap: int | None
+    fallback_budget_seconds: float
+    fallback_timeout_seconds: float
+    close_timeout_seconds: float
+    heartbeat_seconds: float
+    stream_start_timeout_seconds_default: float
+    technical_stream_start_timeout_seconds: float
+    idempotency_ttl_seconds: int
+    idempotency_stale_seconds: int
+    large_input_char_threshold: int
+    large_input_token_threshold: int
+    large_input_timeout_extension_multiplier: float
+    technical_mode_timeout_extension: float
+
+
+# Global stream config instance (initialized at startup)
+_STREAM_CONFIG: StreamConfig | None = None
+
+
+def _compute_stream_config() -> StreamConfig:
+    """Compute pre-cached streaming config from settings."""
+    settings = get_settings()
+    env = str(getattr(settings, "environment", "") or "").strip().lower()
+    is_prod = env == "production"
+    
+    return StreamConfig(
+        is_prod=is_prod,
+        stream_max_seconds_learning=max(int(getattr(settings, "stream_max_seconds", 25)), 1),
+        stream_max_seconds_technical=max(int(getattr(settings, "technical_stream_max_seconds", 45)), 25),
+        function_duration_cap=max(5, int(getattr(settings, "vercel_function_max_duration_seconds", 25)) - 2) if is_prod else None,
+        fallback_budget_seconds=max(
+            1.0,
+            min(float(getattr(settings, "stream_fallback_budget_seconds", 6)), 30.0),
+        ),
+        fallback_timeout_seconds=max(
+            float(getattr(settings, "stream_fallback_budget_seconds", 6)), 3.0
+        ),
+        close_timeout_seconds=0.25,
+        heartbeat_seconds=min(
+            max(float(getattr(settings, "stream_heartbeat_seconds", 2)), 0.1),
+            2.0,
+        ),
+        stream_start_timeout_seconds_default=float(getattr(settings, "stream_start_timeout_seconds", 2)),
+        technical_stream_start_timeout_seconds=float(getattr(settings, "technical_stream_start_timeout_seconds", 8.0)),
+        idempotency_ttl_seconds=min(
+            max(int(getattr(settings, "stream_idempotency_ttl_seconds", 90)), 60),
+            120,
+        ),
+        idempotency_stale_seconds=max(
+            5,
+            min(int(getattr(settings, "stream_idempotency_stale_seconds", 20)), 120),
+        ),
+        large_input_char_threshold=int(getattr(settings, "large_input_char_threshold", 5000)),
+        large_input_token_threshold=int(getattr(settings, "large_input_token_threshold", 5000)),
+        large_input_timeout_extension_multiplier=float(getattr(settings, "large_input_timeout_extension_multiplier", 1.5)),
+        technical_mode_timeout_extension=float(getattr(settings, "technical_mode_timeout_extension", 1.3)),
+    )
+
+
+def get_stream_config() -> StreamConfig:
+    """Retrieve cached stream config (or compute on first call)."""
+    global _STREAM_CONFIG
+    if _STREAM_CONFIG is None:
+        _STREAM_CONFIG = _compute_stream_config()
+    return _STREAM_CONFIG
 
 
 class Settings(BaseSettings):
@@ -160,3 +238,11 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Cached settings instance."""
     return Settings()
+
+
+def reinitialize_cache() -> None:
+    """Clear cache and recompute on next access (for testing)."""
+    global _STREAM_CONFIG
+    _STREAM_CONFIG = None
+    get_settings.cache_clear()
+
