@@ -87,12 +87,14 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Security(secu
         header = jwt.get_unverified_header(token)
         kid = header.get("kid")
         if not kid:
+            logger.warning("auth_missing_kid")
             raise HTTPException(status_code=401, detail="Invalid token")
 
         jwks = await _get_jwks(str(settings.supabase_url))
         keys = jwks.get("keys") if isinstance(jwks, dict) else None
         key_data = next((item for item in keys or [] if item.get("kid") == kid), None)
         if not key_data:
+            logger.warning("auth_jwks_kid_not_found")
             raise HTTPException(status_code=401, detail="Invalid token")
 
         public_key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key_data))
@@ -106,7 +108,10 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Security(secu
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning("auth_verify_token_validation_error", error_type=type(e).__name__)
+        logger.warning(
+            "auth_verify_token_validation_error",
+            error_type=type(e).__name__,
+        )
         raise HTTPException(status_code=401, detail="Invalid authentication credentials")
 
     user_id = str(decoded.get("sub") or "").strip()

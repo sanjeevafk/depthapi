@@ -31,10 +31,20 @@ export interface HealthResponse {
   key_valid?: boolean;
 }
 
+const refreshSessionIfNeeded = async (session: Session | null): Promise<Session | null> => {
+  if (!session?.expires_at) return session;
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (session.expires_at - nowSeconds > 60) return session;
+
+  const { data, error } = await supabase.auth.refreshSession();
+  if (!error && data.session) return data.session;
+  return session;
+};
+
 const getSupabaseSession = async (): Promise<Session | null> => {
   if (!SUPABASE_CONFIGURED) return null;
   const { data } = await supabase.auth.getSession();
-  return data.session;
+  return refreshSessionIfNeeded(data.session);
 };
 
 const isAbortError = (err: unknown): boolean => {
