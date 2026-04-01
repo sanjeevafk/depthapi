@@ -16,12 +16,12 @@ def promote_user(email: str):
     print("Initializing Supabase client...")
     settings = get_settings()
     
-    if not settings.supabase_url or not settings.supabase_service_role_key:
-        print("❌ Error: Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env")
+    if not settings.supabase_url or not settings.supabase_secret_key:
+        print("❌ Error: Missing SUPABASE_URL or SUPABASE_SECRET_KEY in .env")
         return
 
     # Initialize Supabase with Service Role Key (Bypasses RLS)
-    supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+    supabase = create_client(settings.supabase_url, settings.supabase_secret_key)
     
     print(f"🔍 Searching for user: {email}...")
     

@@ -30,7 +30,7 @@ describe("useMessages", () => {
     vi.resetModules();
     vi.clearAllMocks();
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
-    vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "publishable-key");
   });
 
   afterEach(() => {

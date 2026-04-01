@@ -103,8 +103,8 @@ def test_get_supabase_reuses_cached_client(monkeypatch):
         "get_settings",
         lambda: SimpleNamespace(
             supabase_url="https://example.supabase.co",
-            supabase_anon_key="anon-key",
-            supabase_service_role_key="service-key",
+            supabase_publishable_key="publishable-key",
+            supabase_secret_key="secret-key",
         ),
     )
     monkeypatch.setattr(auth_module, "create_client", fake_create_client)
@@ -128,8 +128,8 @@ def test_get_supabase_admin_reuses_cached_client(monkeypatch):
         "get_settings",
         lambda: SimpleNamespace(
             supabase_url="https://example.supabase.co",
-            supabase_anon_key="anon-key",
-            supabase_service_role_key="service-key",
+            supabase_publishable_key="publishable-key",
+            supabase_secret_key="secret-key",
         ),
     )
     monkeypatch.setattr(auth_module, "create_client", fake_create_client)

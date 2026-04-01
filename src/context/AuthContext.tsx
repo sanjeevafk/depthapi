@@ -42,7 +42,7 @@ export function AuthProvider({
   const setIsPro = useChatStore((state) => state.setIsPro);
   const supabaseConfigured =
     Boolean(import.meta.env.VITE_SUPABASE_URL) &&
-    Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY);
+    Boolean(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY);
   const AUTH_TIMEOUT_MS = 3500;
   const PROFILE_CACHE_TTL_MS = 30_000;
   const profileCacheRef = useRef(

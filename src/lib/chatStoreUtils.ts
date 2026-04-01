@@ -23,7 +23,7 @@ export const PENDING_SYNC_KEY = "kb_pending_sync_v1";
 
 export const supabaseConfigured =
   Boolean(import.meta.env.VITE_SUPABASE_URL) &&
-  Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY);
+  Boolean(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY);
 
 const defaultIsProEnv = import.meta.env.VITE_DEFAULT_IS_PRO;
 export const defaultIsPro = defaultIsProEnv ? defaultIsProEnv === "true" : false;

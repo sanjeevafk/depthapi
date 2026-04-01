@@ -7,7 +7,7 @@ import type { Conversation, Message } from "../types/chat";
 
 const supabaseConfigured =
   Boolean(import.meta.env.VITE_SUPABASE_URL) &&
-  Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY);
+  Boolean(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY);
 
 type MessageRecord = {
   id: string;

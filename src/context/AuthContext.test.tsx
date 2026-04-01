@@ -40,7 +40,7 @@ describe("AuthContext", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
-    vi.stubEnv("VITE_SUPABASE_ANON_KEY", "test-key");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "test-key");
     useChatStore.setState(
       { ...useChatStore.getInitialState(), isPro: false },
       true,

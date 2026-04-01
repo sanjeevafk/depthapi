@@ -66,8 +66,8 @@ class Settings(BaseSettings):
     conversation_context_summary_tokens: int = 240
     conversation_context_fetch_limit: int = 80
     supabase_url: str = ""
-    supabase_anon_key: str = ""
-    supabase_service_role_key: SecretStr = SecretStr("")
+    supabase_publishable_key: str = ""
+    supabase_secret_key: SecretStr = SecretStr("")
     supabase_jwt_secret: SecretStr = SecretStr("")
     supabase_auth_webhook_secret: SecretStr = SecretStr("")    
     tavily_api_key: str = ""
