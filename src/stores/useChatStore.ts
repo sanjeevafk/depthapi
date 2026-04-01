@@ -724,6 +724,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             isRegenerating: false,
             syncStatus: "synced",
           }));
+          const stillStreaming = useMessageStore
+            .getState()
+            .messageIds.some((id) => useMessageStore.getState().messagesById[id]?.isStreaming);
+          useConversationStore.getState().setIsLoading(stillStreaming);
         },
       });
 

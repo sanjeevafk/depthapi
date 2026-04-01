@@ -97,9 +97,21 @@ const STREAMING_VERBS: Partial<Record<StreamingMode, readonly string[]>> = {
   meme: MEME_VERBS,
 };
 
+function resolveStreamingMode(
+  mode?: StreamingMode,
+  promptMode?: StreamingMode,
+): StreamingMode | undefined {
+  if (promptMode && STREAMING_VERBS[promptMode]) {
+    return promptMode;
+  }
+  return mode;
+}
+
 export function getStreamingVerbs(
   mode?: StreamingMode,
+  promptMode?: StreamingMode,
 ): readonly string[] | null {
-  if (!mode) return null;
-  return STREAMING_VERBS[mode] ?? null;
+  const resolved = resolveStreamingMode(mode, promptMode);
+  if (!resolved) return null;
+  return STREAMING_VERBS[resolved] ?? null;
 }

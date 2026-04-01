@@ -10,7 +10,7 @@ import { useChatStore } from "../../stores/useChatStore";
 import { useConversationStore } from "../../stores/useConversationStore";
 import { useMessageStore } from "../../stores/useMessageStore";
 import { formatModeLabel } from "../../lib/chatModes";
-import type { ConversationMode } from "../../types/chat";
+import type { ConversationMode, PromptMode } from "../../types/chat";
 import { getStreamingVerbs } from "../streamingVerbs";
 
 const markdownComponents: Components = {
@@ -167,7 +167,10 @@ function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
           </div>
         ) : (
           message.isStreaming && (
-            <StreamingIndicator mode={assistantMode} />
+            <StreamingIndicator
+              mode={assistantMode}
+              promptMode={assistantPromptMode}
+            />
           )
         )}
         {message.error && (
@@ -186,8 +189,17 @@ function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
   );
 }
 
-function StreamingIndicator({ mode }: { mode?: ConversationMode }): JSX.Element {
-  const verbs = useMemo(() => getStreamingVerbs(mode), [mode]);
+function StreamingIndicator({
+  mode,
+  promptMode,
+}: {
+  mode?: ConversationMode;
+  promptMode?: PromptMode;
+}): JSX.Element {
+  const verbs = useMemo(
+    () => getStreamingVerbs(mode, promptMode),
+    [mode, promptMode],
+  );
   const [index, setIndex] = useState(() =>
     verbs?.length ? Math.floor(Math.random() * verbs.length) : 0,
   );
