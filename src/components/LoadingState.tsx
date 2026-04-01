@@ -155,7 +155,8 @@ export function LoadingState({
   }, [mode, level, topic]);
 
   useEffect(() => {
-    const verbs = getStreamingVerbs(mode);
+    const verbMode = mode === "learn" ? level : mode;
+    const verbs = getStreamingVerbs(verbMode, level);
     if (!verbs || verbs.length === 0) {
       setSpinnerVerb(null);
       return;
@@ -170,7 +171,7 @@ export function LoadingState({
     }, 1400);
 
     return () => window.clearInterval(intervalId);
-  }, [mode]);
+  }, [mode, level]);
 
   return (
     <div className="flex flex-col items-center justify-center p-6 sm:p-12 min-h-[300px] sm:min-h-[400px] animate-in fade-in duration-700">
