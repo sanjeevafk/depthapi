@@ -86,25 +86,43 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Security(secu
     try:
         header = jwt.get_unverified_header(token)
         kid = header.get("kid")
-        if not kid:
-            logger.warning("auth_missing_kid")
-            raise HTTPException(status_code=401, detail="Invalid token")
+        alg = str(header.get("alg") or "").upper()
+        issuer = f"{str(settings.supabase_url).rstrip('/')}/auth/v1"
 
-        jwks = await _get_jwks(str(settings.supabase_url))
-        keys = jwks.get("keys") if isinstance(jwks, dict) else None
-        key_data = next((item for item in keys or [] if item.get("kid") == kid), None)
-        if not key_data:
-            logger.warning("auth_jwks_kid_not_found")
-            raise HTTPException(status_code=401, detail="Invalid token")
+        if kid:
+            jwks = await _get_jwks(str(settings.supabase_url))
+            keys = jwks.get("keys") if isinstance(jwks, dict) else None
+            key_data = next((item for item in keys or [] if item.get("kid") == kid), None)
+            if not key_data:
+                logger.warning("auth_jwks_kid_not_found")
+                raise HTTPException(status_code=401, detail="Invalid token")
 
-        public_key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key_data))
-        decoded = jwt.decode(
-            token,
-            key=public_key,
-            algorithms=[key_data.get("alg", "RS256")],
-            options={"verify_aud": False},
-            issuer=f"{str(settings.supabase_url).rstrip('/')}/auth/v1",
-        )
+            public_key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key_data))
+            decoded = jwt.decode(
+                token,
+                key=public_key,
+                algorithms=[key_data.get("alg", "RS256")],
+                options={"verify_aud": False},
+                issuer=issuer,
+            )
+        else:
+            if alg != "HS256":
+                logger.warning("auth_missing_kid")
+                raise HTTPException(status_code=401, detail="Invalid token")
+            jwt_secret = settings.supabase_jwt_secret
+            if hasattr(jwt_secret, "get_secret_value"):
+                jwt_secret = jwt_secret.get_secret_value()
+            jwt_secret = str(jwt_secret or "").strip()
+            if not jwt_secret:
+                logger.warning("auth_missing_jwt_secret")
+                raise HTTPException(status_code=401, detail="Invalid token")
+            decoded = jwt.decode(
+                token,
+                key=jwt_secret,
+                algorithms=["HS256"],
+                options={"verify_aud": False},
+                issuer=issuer,
+            )
     except HTTPException:
         raise
     except Exception as e:

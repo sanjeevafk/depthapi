@@ -40,6 +40,21 @@ async def test_verify_token_valid():
 
 
 @pytest.mark.asyncio
+async def test_verify_token_hs256_without_kid_uses_jwt_secret():
+    settings = SimpleNamespace(
+        supabase_url="https://example.supabase.co",
+        supabase_jwt_secret="secret",
+    )
+    with patch("auth.get_settings", return_value=settings), \
+        patch("auth.jwt.get_unverified_header", return_value={"alg": "HS256"}), \
+        patch("auth.jwt.decode", return_value={"sub": "123", "email": "test@example.com"}):
+        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_token")
+        result = await verify_token(creds)
+        assert result["token"] == "valid_token"
+        assert result["user"].id == "123"
+
+
+@pytest.mark.asyncio
 async def test_verify_token_invalid():
     with patch("auth.get_settings", return_value=SimpleNamespace(supabase_url="https://example.supabase.co")), \
         patch("auth.jwt.get_unverified_header", side_effect=Exception("bad header")):
