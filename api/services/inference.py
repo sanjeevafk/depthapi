@@ -569,10 +569,12 @@ def route_model_aliases(
                 else:
                     aliases.append(TECH_CEREBRAS_GLM_ALIAS)
     else:
+        # Socratic mode benefits from the fastest streaming providers first.
+        # OpenRouter free often has slower first-token latency in local dev.
         if prefers_low_latency and complexity < 0.8:
-            aliases = [SOCRATIC_OPENROUTER_ALIAS, SOCRATIC_GROQ_ALIAS, SOCRATIC_GEMINI_ALIAS]
+            aliases = [SOCRATIC_GROQ_ALIAS, SOCRATIC_GEMINI_ALIAS, SOCRATIC_OPENROUTER_ALIAS]
         else:
-            aliases = [SOCRATIC_OPENROUTER_ALIAS, SOCRATIC_GEMINI_ALIAS, SOCRATIC_GROQ_ALIAS]
+            aliases = [SOCRATIC_GEMINI_ALIAS, SOCRATIC_GROQ_ALIAS, SOCRATIC_OPENROUTER_ALIAS]
         if is_reasoning and complexity >= 0.8 and is_pro:
             aliases.insert(1, SOCRATIC_CEREBRAS_ALIAS)
 
