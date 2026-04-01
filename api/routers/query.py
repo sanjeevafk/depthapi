@@ -17,6 +17,7 @@ from logging_config import anonymize_text, anonymize_user_id, logger, log_sample
 from services.analytics import build_llm_request_payload, record_llm_request
 from services.cache import cache_get, cache_set, cache_set_if_absent
 from services.inference import TECHNICAL_MAX_TOKENS, generate_explanation, generate_stream_explanation
+from services.input_limit import truncate_input_if_needed
 from services.llm_client import get_provider_config_state
 from services.llm_errors import LLMError, LLMUnavailable
 from services.rate_limit import enforce_request_controls, refund_tokens
@@ -54,7 +55,7 @@ class HistoryMessage(BaseModel):
 
 
 class QueryRequest(BaseModel):
-    topic: str = Field(..., min_length=1, max_length=200)
+    topic: str = Field(..., min_length=1, max_length=100000)
     levels: list[str] = Field(default=FREE_LEVELS)
     premium: bool = False
     mode: str = DEFAULT_CHAT_MODE
@@ -69,6 +70,7 @@ class QueryResponse(BaseModel):
     topic: str
     explanations: dict[str, str]
     cached: bool = False
+    truncation_info: dict[str, Any] | None = None
 
 
 def _normalize_levels(levels: list[str]) -> list[str]:
@@ -76,6 +78,16 @@ def _normalize_levels(levels: list[str]) -> list[str]:
     for level in levels or []:
         normalized.append(PROMPT_MODE_ALIASES.get(level, level))
     return normalized
+
+
+def _estimate_model_alias_for_truncation(mode: str, is_pro: bool) -> str:
+    """Estimate likely model alias for truncation calculation."""
+    if mode == TECHNICAL_MODE:
+        return "technical-cerebras-glm" if is_pro else "technical-gemini-flash"
+    if mode == SOCRATIC_MODE:
+        return "socratic-cerebras-glm" if is_pro else "socratic-gemini-pro"
+    # Learning mode default
+    return "learn-gemini-flash"
 
 
 def _cache_key(
@@ -307,6 +319,12 @@ async def query_topic(
     user_id_raw = str(effective_user_id) if effective_user_id else None
     user_id_hash = anonymize_user_id(user_id_raw)
 
+    # Truncate large inputs intelligently based on mode
+    estimated_model_alias = _estimate_model_alias_for_truncation(mode, is_verified_pro)
+    effective_topic, truncation_metadata = await truncate_input_if_needed(
+        effective_topic, estimated_model_alias, mode
+    )
+
     if mode == TECHNICAL_MODE:
         max_output_tokens = TECHNICAL_MAX_TOKENS
     elif mode == SOCRATIC_MODE:
@@ -441,7 +459,10 @@ async def query_topic(
                 user_id_hash=user_id_hash,
             )
 
-    return QueryResponse(topic=topic, explanations=explanations, cached=False)
+    response = QueryResponse(topic=topic, explanations=explanations, cached=False)
+    if truncation_metadata.get("was_truncated"):
+        response.truncation_info = truncation_metadata
+    return response
 
 
 @router.post("/query/stream")
@@ -522,6 +543,12 @@ async def query_topic_stream(
     user_id_raw = str(effective_user_id) if effective_user_id else None
     user_id_hash = anonymize_user_id(user_id_raw)
 
+    # Truncate large inputs intelligently based on mode
+    estimated_model_alias = _estimate_model_alias_for_truncation(mode, is_verified_pro)
+    effective_topic, truncation_metadata = await truncate_input_if_needed(
+        effective_topic, estimated_model_alias, mode
+    )
+
     if mode == TECHNICAL_MODE:
         max_output_tokens = TECHNICAL_MAX_TOKENS
     elif mode == SOCRATIC_MODE:
@@ -596,6 +623,28 @@ async def query_topic_stream(
     else:
         cap = 10.0 if is_prod else 15.0
         stream_start_timeout_seconds = min(max(raw_start_timeout, 0.1), cap)
+
+    # Extend timeout for large inputs (> 5K tokens OR > 5K chars)
+    # This is critical because larger inputs take longer to process/generate responses
+    large_input_char_threshold = int(getattr(settings, "large_input_char_threshold", 5000))
+    large_input_token_threshold = int(getattr(settings, "large_input_token_threshold", 5000))
+    is_large_input_by_tokens = prompt_tokens > large_input_token_threshold
+    is_large_input_by_chars = len(effective_topic) > large_input_char_threshold
+    
+    if is_large_input_by_tokens or is_large_input_by_chars:
+        large_input_multiplier = float(getattr(settings, "large_input_timeout_extension_multiplier", 1.5))
+        original_timeout = stream_max_seconds
+        stream_max_seconds = int(stream_max_seconds * large_input_multiplier)
+        # Respect function duration cap
+        if function_duration_cap is not None:
+            stream_max_seconds = min(stream_max_seconds, function_duration_cap)
+    
+    # Additional timeout extension for technical mode (more complex reasoning)
+    if mode == TECHNICAL_MODE and (is_large_input_by_tokens or is_large_input_by_chars):
+        technical_multiplier = float(getattr(settings, "technical_mode_timeout_extension", 1.3))
+        stream_max_seconds = int(stream_max_seconds * technical_multiplier)
+        if function_duration_cap is not None:
+            stream_max_seconds = min(stream_max_seconds, function_duration_cap)
 
     idempotency_key: str | None = None
     idempotency_claimed = False
@@ -782,14 +831,18 @@ async def query_topic_stream(
             pending_chunk_task = None
 
         try:
+            meta_data = {
+                "topic": topic,
+                "level": level,
+                "mode": mode,
+                "message_id": message_id,
+            }
+            if truncation_metadata.get("was_truncated"):
+                meta_data["truncation_info"] = truncation_metadata
+            
             yield emit(
                 "meta",
-                {
-                    "topic": topic,
-                    "level": level,
-                    "mode": mode,
-                    "message_id": message_id,
-                },
+                meta_data,
             )
 
             if not req.bypass_cache:
