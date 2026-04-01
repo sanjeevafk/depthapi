@@ -213,6 +213,7 @@ export function AuthProvider({
       localStorage.removeItem("guest_usage_count");
       localStorage.removeItem("deep_dive_usage");
       localStorage.removeItem("kb_history_cache");
+      localStorage.removeItem("kb_last_conversation_v1");
       profileCacheRef.current.clear();
       setIsPro(false);
 
