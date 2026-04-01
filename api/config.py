@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     cerebras_api_key: SecretStr = SecretStr("")
     gemini_api_key: SecretStr = SecretStr("")
     openrouter_api_key: SecretStr = SecretStr("")
+    openrouter_timeout_seconds: int = 90
     llm_timeout_seconds: int = 60
 
     stream_max_seconds: int = 20
@@ -62,6 +63,7 @@ class Settings(BaseSettings):
     anon_rph: int = 10
     max_output_tokens_learning: int = 1024
     max_output_tokens_socratic: int = 1024
+    socratic_direct_answer_patterns: str = ""
     conversation_context_max_tokens: int = 1200
     conversation_context_summary_tokens: int = 240
     conversation_context_fetch_limit: int = 80

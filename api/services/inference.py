@@ -569,12 +569,10 @@ def route_model_aliases(
                 else:
                     aliases.append(TECH_CEREBRAS_GLM_ALIAS)
     else:
-        # Socratic mode benefits from the fastest streaming providers first.
-        # OpenRouter free often has slower first-token latency in local dev.
         if prefers_low_latency and complexity < 0.8:
-            aliases = [SOCRATIC_GROQ_ALIAS, SOCRATIC_GEMINI_ALIAS, SOCRATIC_OPENROUTER_ALIAS]
+            aliases = [SOCRATIC_OPENROUTER_ALIAS, SOCRATIC_GROQ_ALIAS, SOCRATIC_GEMINI_ALIAS]
         else:
-            aliases = [SOCRATIC_GEMINI_ALIAS, SOCRATIC_GROQ_ALIAS, SOCRATIC_OPENROUTER_ALIAS]
+            aliases = [SOCRATIC_OPENROUTER_ALIAS, SOCRATIC_GEMINI_ALIAS, SOCRATIC_GROQ_ALIAS]
         if is_reasoning and complexity >= 0.8 and is_pro:
             aliases.insert(1, SOCRATIC_CEREBRAS_ALIAS)
 
@@ -870,26 +868,79 @@ def _extract_socratic_questions(response: str) -> list[str]:
     return unique_questions
 
 
-def _should_append_socratic_guidance(conversation_messages: list[dict[str, str]] | None) -> bool:
-    if not conversation_messages:
-        return True
-    return not any(msg.get("role") == "assistant" for msg in conversation_messages)
+_DEFAULT_DIRECT_ANSWER_PATTERNS = (
+    r"\bjust tell me\b",
+    r"\bjust give me\b",
+    r"\bgive me the answer\b",
+    r"\btell me the answer\b",
+    r"\banswer directly\b",
+    r"\bno questions\b",
+    r"\bstop asking\b",
+    r"\bwhat is the answer\b",
+    r"\bplease answer\b",
+)
+
+
+def _wants_direct_answer(text: str) -> bool:
+    patterns = _get_direct_answer_patterns()
+    normalized = (text or "").strip().lower()
+    if not normalized:
+        return False
+    return any(re.search(pattern, normalized) for pattern in patterns)
+
+
+def _get_direct_answer_patterns() -> tuple[str, ...]:
+    settings = get_settings()
+    raw = getattr(settings, "socratic_direct_answer_patterns", "") or ""
+    raw = str(raw).strip()
+    if not raw:
+        return _DEFAULT_DIRECT_ANSWER_PATTERNS
+    parts = [part.strip() for part in re.split(r"[,\n]+", raw) if part.strip()]
+    return tuple(parts) if parts else _DEFAULT_DIRECT_ANSWER_PATTERNS
+
+
+def _fallback_socratic_question(topic: str | None) -> str:
+    topic_text = (topic or "").strip()
+    if topic_text:
+        return f"What specific factor most shapes your view on {topic_text}?"
+    return "What specific factor most shapes your view here?"
 
 
 def _enforce_socratic_response_constraints(
     response: str,
     *,
-    include_guidance: bool = True,
+    topic: str | None = None,
+    wants_direct_answer: bool = False,
 ) -> str:
-    """Return a concise Socratic reply capped to 2-3 progressive questions."""
-    questions = _extract_socratic_questions(response)
-    if not questions:
-        return response
+    """Return a Socratic reply constrained to one question, or answer+question."""
+    cleaned = (response or "").strip()
+    questions = _extract_socratic_questions(cleaned)
 
-    constrained = "\n".join(questions[:3])
-    if include_guidance:
-        return f"{constrained}\n\nShare your answer, and I will guide the next step."
-    return constrained
+    if wants_direct_answer:
+        lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+        answer_line = None
+        if lines:
+            if not lines[0].endswith("?"):
+                answer_line = lines[0]
+            else:
+                for line in lines[1:]:
+                    if not line.endswith("?"):
+                        answer_line = line
+                        break
+        if not answer_line:
+            sentence = re.split(r"[.!?]\s+", cleaned, maxsplit=1)[0].strip()
+            if sentence and not sentence.endswith("?"):
+                answer_line = sentence
+        if not answer_line:
+            answer_line = cleaned
+
+        question = questions[0] if questions else _fallback_socratic_question(topic)
+        return f"{answer_line}\n\n{question}".strip()
+
+    if questions:
+        return questions[0].strip()
+
+    return _fallback_socratic_question(topic)
 
 
 def _extract_usage_dict(usage_obj) -> dict[str, int] | None:
@@ -1163,8 +1214,11 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
             max_tokens=max_tokens,
             **kwargs,
         )
-        include_guidance = _should_append_socratic_guidance(kwargs.get("conversation_messages"))
-        return _enforce_socratic_response_constraints(response, include_guidance=include_guidance)
+        return _enforce_socratic_response_constraints(
+            response,
+            topic=topic,
+            wants_direct_answer=_wants_direct_answer(topic),
+        )
 
     search_context = await _load_search_context(topic, mode=LEARNING_MODE)
     prompt = build_prompt(level, topic)
@@ -1369,7 +1423,8 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         socratic_raw_chunks: list[str] = []
         pending = ""
         seen_signatures: set[str] = set()
-        emitted_questions = 0
+        emitted_question = False
+        wants_direct_answer = _wants_direct_answer(topic)
         socratic_error: Exception | None = None
         try:
             max_tokens = 500
@@ -1391,30 +1446,25 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
             ):
                 text_chunk = str(chunk or "")
                 socratic_raw_chunks.append(text_chunk)
-                if emitted_questions >= 3:
+                if wants_direct_answer or emitted_question:
                     continue
 
                 pending += text_chunk
-                matches = list(re.finditer(r"[^?]*\?", pending))
-                if not matches:
+                match = re.search(r"[^?]*\?", pending)
+                if not match:
                     continue
 
-                consumed = 0
-                for match in matches:
-                    if emitted_questions >= 3:
-                        break
-                    candidate = match.group(0).strip()
-                    consumed = match.end()
-                    if not candidate:
-                        continue
-                    signature = _normalize_question_signature(candidate)
-                    if not signature or signature in seen_signatures:
-                        continue
-                    seen_signatures.add(signature)
-                    prefix = "" if emitted_questions == 0 else "\n"
-                    yield f"{prefix}{candidate}"
-                    emitted_questions += 1
+                candidate = match.group(0).strip()
+                consumed = match.end()
                 pending = pending[consumed:]
+                if not candidate:
+                    continue
+                signature = _normalize_question_signature(candidate)
+                if not signature or signature in seen_signatures:
+                    continue
+                seen_signatures.add(signature)
+                yield candidate
+                emitted_question = True
         except Exception as exc:
             socratic_error = exc
             stream_telemetry["stream_error"] = str(exc)
@@ -1427,15 +1477,11 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
                 error=str(exc),
             )
 
-        if emitted_questions > 0:
-            include_guidance = _should_append_socratic_guidance(kwargs.get("conversation_messages"))
-            if include_guidance:
-                yield "\n\nShare your answer, and I will guide the next step."
-        else:
-            include_guidance = _should_append_socratic_guidance(kwargs.get("conversation_messages"))
+        if wants_direct_answer or not emitted_question:
             constrained_response = _enforce_socratic_response_constraints(
                 "".join(socratic_raw_chunks),
-                include_guidance=include_guidance,
+                topic=topic,
+                wants_direct_answer=wants_direct_answer,
             )
             fallback_response = constrained_response.strip()
             if socratic_error is not None and not fallback_response:

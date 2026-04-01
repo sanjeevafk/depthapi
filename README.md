@@ -62,9 +62,11 @@ All model calls go through `api/services/llm_client.py` using native `AsyncOpenA
 - Groq (`llama-3.1-8b-instant`)
 - Gemini (`gemini-2.5-flash`, `gemini-2.5-pro`)
 - Cerebras (`zai-glm-4.7`)
-- OpenRouter (`openrouter/free`) as optional fallback
+- OpenRouter (Venice uncensored via `cognitivecomputations/dolphin-mistral-24b-venice-edition:free`) for Socratic
+- OpenRouter (`openrouter/free`) as optional fallback elsewhere
 
 Primary app-level MoE routing is defined in `api/services/inference.py` and alias-to-provider fallback mapping lives in `api/services/llm_client.py`.
+Socratic mode prioritizes the uncensored Venice model via OpenRouter for question quality. If you see slow first-token latency locally, raise `OPENROUTER_TIMEOUT_SECONDS` and/or `STREAM_START_TIMEOUT_SECONDS`.
 
 ### MoE Routing Matrix (Mode -> Alias Chain)
 
@@ -77,8 +79,8 @@ Primary app-level MoE routing is defined in `api/services/inference.py` and alia
 | Technical | Math-heavy, low complexity (`<0.4`) | `technical-gemini-flash` -> `technical-groq-llama8b` -> `technical-openrouter-free` |
 | Technical | Programming query or search-context assisted | `technical-gemini-pro` -> `technical-groq-llama8b` -> `technical-openrouter-free` (+ `technical-cerebras-glm` appended when Pro and complexity `>=0.8`) |
 | Technical | Default | `technical-gemini-pro` -> (`technical-cerebras-glm` inserted at rank 2 when Pro and complexity `>=0.8`) -> `technical-groq-llama8b` -> `technical-openrouter-free` |
-| Socratic | Default | `socratic-gemini-pro` -> `socratic-groq-llama8b` -> `socratic-openrouter-free` |
-| Socratic | High-reasoning Pro path (reasoning + complexity `>=0.8`) | `socratic-cerebras-glm` -> `socratic-gemini-pro` -> `socratic-groq-llama8b` -> `socratic-openrouter-free` |
+| Socratic | Default | `socratic-openrouter-free` -> `socratic-gemini-pro` -> `socratic-groq-llama8b` |
+| Socratic | High-reasoning Pro path (reasoning + complexity `>=0.8`) | `socratic-cerebras-glm` -> `socratic-openrouter-free` -> `socratic-gemini-pro` -> `socratic-groq-llama8b` |
 
 ### Alias-to-Provider Matrix (Provider Model Fallback)
 
@@ -94,7 +96,7 @@ Primary app-level MoE routing is defined in `api/services/inference.py` and alia
 | `technical-cerebras-glm` | `cerebras:zai-glm-4.7` -> `gemini:gemini-2.5-pro` -> `groq:llama-3.1-8b-instant` |
 | `socratic-gemini-pro` | `gemini:gemini-2.5-pro` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
 | `socratic-groq-llama8b` | `groq:llama-3.1-8b-instant` -> `gemini:gemini-2.5-pro` -> `openrouter:openrouter/free` |
-| `socratic-openrouter-free` | `gemini:gemini-2.5-pro` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
+| `socratic-openrouter-free` | `openrouter:cognitivecomputations/dolphin-mistral-24b-venice-edition:free` |
 | `socratic-cerebras-glm` | `cerebras:zai-glm-4.7` -> `gemini:gemini-2.5-pro` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
 
 ## API Endpoints (public)
@@ -214,10 +216,12 @@ cp .env.example .env
 # GROQ_API_KEY=...
 # GEMINI_API_KEY=...
 # OPENROUTER_API_KEY=...
+# OPENROUTER_TIMEOUT_SECONDS=90
 # SUPABASE_URL=...
 # SUPABASE_PUBLISHABLE_KEY=...
 # SUPABASE_SECRET_KEY=...
 # UPSTASH_REDIS_REST_URL=...
+# SOCRATIC_DIRECT_ANSWER_PATTERNS=comma-or-newline-separated-regexes
 
 npm run api:dev
 ```

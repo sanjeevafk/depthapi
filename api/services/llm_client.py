@@ -296,9 +296,11 @@ def _merge_trace_headers(extra_headers: dict[str, str], trace_headers: dict[str,
     return merged
 
 
-def _get_timeout_seconds() -> float:
+def _get_timeout_seconds(provider: ProviderName | None = None) -> float:
     settings = get_settings()
     raw_timeout = getattr(settings, "llm_timeout_seconds", 60)
+    if provider == "openrouter":
+        raw_timeout = getattr(settings, "openrouter_timeout_seconds", raw_timeout)
     try:
         timeout = float(raw_timeout)
     except (TypeError, ValueError):
@@ -334,7 +336,7 @@ async def _get_provider_client(provider: ProviderName) -> AsyncOpenAI:
     if not api_key:
         raise LLMUnavailable(f"Provider {provider} API key is not configured.")
 
-    timeout = _get_timeout_seconds()
+    timeout = _get_timeout_seconds(provider)
     signature = f"{api_key}:{timeout}"
 
     async with _get_lock():
