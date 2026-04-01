@@ -151,6 +151,102 @@ class DummyRedis:
 
     async def eval(self, script, _num_keys, *args):
         script_text = str(script)
+        if "unified_controls" in script_text:
+            keys = list(args[:_num_keys])
+            argv = list(args[_num_keys:])
+            burst_key = str(keys[0])
+            sustained_key = str(keys[1])
+            daily_key = str(keys[2])
+            hourly_key = str(keys[3])
+            circuit_open_key = str(keys[4])
+            circuit_usage_key = str(keys[5])
+
+            burst_limit = int(argv[0])
+            sustained_limit = int(argv[1])
+            daily_limit = int(argv[2])
+            hourly_limit = int(argv[3])
+            circuit_threshold = int(argv[4])
+            requested_tokens = int(argv[5])
+            now_minute = int(argv[6])
+            burst_window = int(argv[7])
+            sustained_window = int(argv[8])
+            daily_window = int(argv[9])
+            hourly_window = int(argv[10])
+            circuit_open_seconds = int(argv[11])
+
+            if circuit_threshold > 0 and self.store.get(circuit_open_key):
+                return [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, circuit_open_seconds]
+
+            burst_count = 0
+            sustained_count = 0
+            daily_consumed = 0
+            hourly_consumed = 0
+
+            burst_ok = 1
+            sustained_ok = 1
+            daily_ok = 1
+            hourly_ok = 1
+            circuit_ok = 1
+
+            if burst_limit > 0:
+                burst_count = int(self.store.get(burst_key, 0)) + 1
+                self.store[burst_key] = burst_count
+                burst_ok = 1 if burst_count <= burst_limit else 0
+
+            if sustained_limit > 0:
+                sustained_count = int(self.store.get(sustained_key, 0)) + 1
+                self.store[sustained_key] = sustained_count
+                sustained_ok = 1 if sustained_count <= sustained_limit else 0
+
+            if daily_limit > 0:
+                daily_consumed = int(self.store.get(daily_key, 0))
+                if daily_consumed + requested_tokens <= daily_limit:
+                    daily_consumed += requested_tokens
+                    self.store[daily_key] = daily_consumed
+                    daily_ok = 1
+                else:
+                    daily_ok = 0
+
+            if hourly_limit > 0:
+                buckets = self.store.get(hourly_key)
+                if not isinstance(buckets, dict):
+                    buckets = {}
+                stale_before = now_minute - hourly_window + 1
+                for bucket in list(buckets.keys()):
+                    if int(bucket) < stale_before:
+                        buckets.pop(bucket, None)
+                hourly_consumed = sum(int(value) for value in buckets.values())
+                if hourly_consumed + requested_tokens <= hourly_limit:
+                    buckets[str(now_minute)] = int(buckets.get(str(now_minute), 0)) + requested_tokens
+                    self.store[hourly_key] = buckets
+                    hourly_consumed += requested_tokens
+                    hourly_ok = 1
+                else:
+                    hourly_ok = 0
+
+            if circuit_threshold > 0:
+                circuit_total = int(self.store.get(circuit_usage_key, 0)) + requested_tokens
+                self.store[circuit_usage_key] = circuit_total
+                if circuit_total > circuit_threshold:
+                    self.store[circuit_open_key] = "1"
+                    circuit_ok = 0
+
+            return [
+                burst_ok,
+                sustained_ok,
+                daily_ok,
+                hourly_ok,
+                circuit_ok,
+                burst_count,
+                sustained_count,
+                daily_consumed,
+                hourly_consumed,
+                burst_window,
+                sustained_window,
+                daily_window,
+                hourly_window * 60,
+                circuit_open_seconds,
+            ]
         if "HGETALL" in script_text and "HINCRBY" in script_text:
             key = str(args[0])
             now_minute = str(args[1])
