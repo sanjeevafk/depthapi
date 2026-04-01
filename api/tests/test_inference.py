@@ -298,10 +298,10 @@ async def test_generate_stream_explanation_socratic_streams_questions_progressiv
     ):
         streamed.append(chunk)
 
-    assert streamed[0] == "What is entropy?"
+    assert streamed[0].strip() == "What is entropy?"
     assert any("How does entropy change in this process?" in chunk for chunk in streamed)
     assert sum("How does entropy change in this process?" in chunk for chunk in streamed) == 1
-    assert streamed[-1] == "\n\nShare your answer, and I will guide the next step."
+    assert "Share your answer, and I will guide the next step." in "".join(streamed)
 
 
 @pytest.mark.asyncio

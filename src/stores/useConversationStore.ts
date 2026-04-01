@@ -6,7 +6,6 @@ import {
   asString,
   notifyError,
   resolveWorkspaceState,
-  loadLastConversationId,
   persistLastConversationId,
   type Workspace,
   type DepthLevel,
