@@ -15,7 +15,7 @@ from auth import ensure_user_exists, get_supabase_admin, verify_token_optional
 from config import get_settings, get_stream_config
 from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success, RequestTimings
 from services.analytics import build_llm_request_payload, record_llm_request
-from services.cache import cache_get, cache_set, cache_set_if_absent
+from services.cache import cache_get, cache_set, check_idempotency_and_cache
 from services.inference import TECHNICAL_MAX_TOKENS, generate_explanation, generate_stream_explanation
 from services.input_limit import truncate_input_if_needed
 from services.llm_client import get_provider_config_state
@@ -631,117 +631,43 @@ async def query_topic_stream(
         if function_duration_cap is not None:
             stream_max_seconds = min(stream_max_seconds, function_duration_cap)
 
+    cache_key = _cache_key(effective_topic, level, mode, context_signature, intent_payload, req.temperature)
+    cached_payload: dict[str, Any] | None = None
     idempotency_key: str | None = None
-    idempotency_claimed = False
     if message_id:
         scope = user_id_raw or (request.client.host if request.client else "anonymous")
         idempotency_key = _query_stream_idempotency_key(str(scope), message_id)
-        idempotency_payload = await cache_get(idempotency_key)
-        if idempotency_payload:
-            status = idempotency_payload.get("status")
-            if status == "completed" and idempotency_payload.get("response"):
-                return _build_stream_replay_response(
-                    topic=topic,
-                    level=level,
-                    mode=mode,
-                    message_id=message_id or "",
-                    content=str(idempotency_payload.get("response")),
-                )
-            if status == "in_progress":
-                now_ts = int(time.time())
-                started_at = idempotency_payload.get("started_at")
-                started_ts = int(started_at) if isinstance(started_at, (int, float)) else now_ts
-                age_seconds = max(now_ts - started_ts, 0)
-                if age_seconds < idempotency_stale_seconds:
-                    return _build_stream_wait_response(
-                        topic=topic,
-                        level=level,
-                        mode=mode,
-                        message_id=message_id or "",
-                    )
-                reclaimed = await cache_set(
-                    idempotency_key,
-                    {
-                        "status": "reclaimed",
-                        "reclaimed_at": now_ts,
-                        "message_id": message_id,
-                        "mode": mode,
-                    },
-                    ttl=idempotency_ttl_seconds,
-                )
-                if not reclaimed:
-                    return _build_stream_wait_response(
-                        topic=topic,
-                        level=level,
-                        mode=mode,
-                        message_id=message_id or "",
-                    )
-                idempotency_claimed = True
-
-    if idempotency_key:
-        idempotency_record = {
-            "status": "in_progress",
-            "started_at": int(time.time()),
-            "message_id": message_id,
-            "mode": mode,
-            "level": level,
-        }
-        if idempotency_claimed:
-            reserved = await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
-        else:
-            reserved = await cache_set_if_absent(idempotency_key, idempotency_record, idempotency_ttl_seconds)
-        if not reserved:
-            existing = await cache_get(idempotency_key)
-            if existing:
-                status = existing.get("status")
-                if status == "completed" and existing.get("response"):
-                    return _build_stream_replay_response(
-                        topic=topic,
-                        level=level,
-                        mode=mode,
-                        message_id=message_id or "",
-                        content=str(existing.get("response")),
-                    )
-                if status == "in_progress":
-                    now_ts = int(time.time())
-                    started_at = existing.get("started_at")
-                    started_ts = int(started_at) if isinstance(started_at, (int, float)) else now_ts
-                    age_seconds = max(now_ts - started_ts, 0)
-                    if age_seconds < idempotency_stale_seconds:
-                        return _build_stream_wait_response(
-                            topic=topic,
-                            level=level,
-                            mode=mode,
-                            message_id=message_id or "",
-                        )
-                    current = await cache_get(idempotency_key)
-                    if not current:
-                        await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
-                    else:
-                        current_status = current.get("status")
-                        current_started_at = current.get("started_at")
-                        current_started_ts = (
-                            int(current_started_at)
-                            if isinstance(current_started_at, (int, float))
-                            else None
-                        )
-                        if current_status == "completed" and current.get("response"):
-                            return _build_stream_replay_response(
-                                topic=topic,
-                                level=level,
-                                mode=mode,
-                                message_id=message_id or "",
-                                content=str(current.get("response")),
-                            )
-                        if current_status == "in_progress" and current_started_ts == started_ts:
-                            await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
-                        else:
-                            return _build_stream_wait_response(
-                                topic=topic,
-                                level=level,
-                                mode=mode,
-                                message_id=message_id or "",
-                            )
+        now_ts = int(time.time())
+        idempotency_result = await check_idempotency_and_cache(
+            idempotency_key=idempotency_key,
+            cache_key=cache_key,
+            now_ts=now_ts,
+            idempotency_ttl=idempotency_ttl_seconds,
+            idempotency_stale=idempotency_stale_seconds,
+            set_in_progress=True,
+            check_cache=not req.bypass_cache,
+        )
+        status = idempotency_result.get("status")
+        if status == "replay":
+            return _build_stream_replay_response(
+                topic=topic,
+                level=level,
+                mode=mode,
+                message_id=message_id or "",
+                content=str(idempotency_result.get("response") or ""),
+            )
+        if status == "wait":
+            return _build_stream_wait_response(
+                topic=topic,
+                level=level,
+                mode=mode,
+                message_id=message_id or "",
+            )
+        if status == "cache_hit":
+            cached_payload = idempotency_result.get("cached")
+    else:
+        if not req.bypass_cache:
+            cached_payload = await cache_get(cache_key)
 
     # Record pre-stream latency (time before streaming starts)
     timings.pre_stream_ms = (time.perf_counter() - request_received) * 1000
@@ -834,9 +760,9 @@ async def query_topic_stream(
             )
 
             if not req.bypass_cache:
-                cached = await cache_get(
-                    _cache_key(effective_topic, level, mode, context_signature, intent_payload, req.temperature)
-                )
+                cached = cached_payload
+                if cached is None:
+                    cached = await cache_get(cache_key)
                 if cached and cached.get("text"):
                     content = cached["text"]
                     for index in range(0, len(content), chunk_size):

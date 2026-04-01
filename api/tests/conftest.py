@@ -151,6 +151,41 @@ class DummyRedis:
 
     async def eval(self, script, _num_keys, *args):
         script_text = str(script)
+        if "unified_idempotency_cache" in script_text:
+            keys = list(args[:_num_keys])
+            argv = list(args[_num_keys:])
+            idempotency_key = str(keys[0])
+            cache_key = str(keys[1])
+            now_ts = int(argv[0])
+            idempotency_ttl = int(argv[1])
+            idempotency_stale = int(argv[2])
+            set_in_progress = int(argv[3])
+            check_cache = int(argv[4])
+
+            raw = self.store.get(idempotency_key)
+            if isinstance(raw, str):
+                try:
+                    payload = json.loads(raw)
+                except Exception:
+                    payload = None
+                if isinstance(payload, dict):
+                    status = payload.get("status")
+                    if status == "completed" and payload.get("response"):
+                        return [1, payload.get("response")]
+                    if status == "in_progress":
+                        started_at = int(payload.get("started_at") or now_ts)
+                        if now_ts - started_at < idempotency_stale:
+                            return [2, ""]
+
+            if check_cache == 1:
+                cached = self.store.get(cache_key)
+                if cached is not None:
+                    return [3, cached]
+
+            if set_in_progress == 1:
+                payload = json.dumps({"status": "in_progress", "started_at": now_ts})
+                self.store[idempotency_key] = payload
+            return [0, ""]
         if "unified_controls" in script_text:
             keys = list(args[:_num_keys])
             argv = list(args[_num_keys:])
