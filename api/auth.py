@@ -25,6 +25,16 @@ _JWKS_CACHE_EXP: float | None = None
 _JWKS_LOCK = threading.Lock()
 
 
+def _looks_like_legacy_jwt(value: str) -> bool:
+    stripped = value.strip()
+    return stripped.startswith("eyJ") and "." in stripped
+
+
+def _warn_if_legacy_publishable_key(value: str, *, context: str) -> None:
+    if _looks_like_legacy_jwt(value):
+        logger.warning("auth_publishable_key_looks_legacy", context=context)
+
+
 def _pro_cache_ttl_seconds() -> int:
     try:
         configured_ttl = int(getattr(get_settings(), "pro_state_cache_ttl_seconds", 30) or 30)
@@ -62,6 +72,7 @@ def get_supabase() -> Client | None:
     if not settings.supabase_url or not settings.supabase_publishable_key:
         logger.warning("auth_supabase_credentials_missing")
         return None
+    _warn_if_legacy_publishable_key(settings.supabase_publishable_key, context="get_supabase")
     return create_client(settings.supabase_url, settings.supabase_publishable_key)
 
 @lru_cache(maxsize=1)
@@ -201,6 +212,8 @@ async def _get_jwks(supabase_url: str) -> dict[str, Any]:
 
     settings = get_settings()
     apikey = str(getattr(settings, "supabase_publishable_key", "") or "").strip()
+    if apikey:
+        _warn_if_legacy_publishable_key(apikey, context="jwks_fetch")
     base = supabase_url.rstrip("/")
     primary_url = f"{base}/auth/v1/keys"
     fallback_url = f"{base}/auth/v1/.well-known/jwks.json"
