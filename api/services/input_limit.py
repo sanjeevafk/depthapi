@@ -21,6 +21,10 @@ def get_max_input_tokens_for_alias(alias: str, mode: str) -> int:
     mode_lower = (mode or "").strip().lower()
     alias_lower = (alias or "").strip().lower()
     
+    # Socratic mode: Always conservative (questions don't need massive context)
+    if mode_lower == SOCRATIC_MODE:
+        return 6000   # ~24K chars
+
     # Gemini Pro: 2M token window
     if "gemini-pro" in alias_lower or alias_lower == "technical-primary":
         return 18000  # ~72K chars; stay well under 2M
@@ -40,10 +44,6 @@ def get_max_input_tokens_for_alias(alias: str, mode: str) -> int:
     # OpenRouter: Unknown model mix, be conservative
     if "openrouter" in alias_lower:
         return 5000   # ~20K chars minimum safe
-    
-    # Socratic mode: Always conservative (questions don't need massive context)
-    if mode_lower == SOCRATIC_MODE:
-        return 6000   # ~24K chars
     
     # Default fallback
     return 8000  # ~32K chars
@@ -76,15 +76,16 @@ async def truncate_input_if_needed(
         "truncation_reason": None,
     }
     
-    if input_tokens <= max_tokens:
-        return user_input, metadata
-    
-    # Truncate to ~75% of max (buffer for system prompt + output)
-    safe_token_limit = int(max_tokens * 0.75)
+    # Truncate to ~80% of max (buffer for system prompt + output)
+    safe_token_limit = int(max_tokens * 0.8)
     
     # Estimate: 1 token ≈ 4 chars
     safe_char_limit = safe_token_limit * 4
     
+    # Allow both token and character thresholds to trigger truncation.
+    if input_tokens <= max_tokens and len(user_input) <= safe_char_limit:
+        return user_input, metadata
+
     # Truncate at sentence boundary (don't split mid-word)
     truncated = user_input[:safe_char_limit].rstrip()
     
@@ -102,9 +103,12 @@ async def truncate_input_if_needed(
         
         truncated_tokens = count_prompt_tokens(truncated)
         metadata["truncation_reason"] = (
-            f"Input ({input_tokens} tokens) exceeded {mode} mode limit ({max_tokens} tokens) "
-            f"for model alias '{alias}'. Truncated to {truncated_tokens} tokens."
+            f"Input ({input_tokens} tokens) exceeded safe limits for {mode} mode "
+            f"(max {max_tokens} tokens) on model alias '{alias}'. "
+            f"Truncated from {len(user_input)} to {len(truncated)} characters "
+            f"(~{truncated_tokens} tokens)."
         )
         truncated += f"\n\n_[Input truncated from {len(user_input)} to {len(truncated)} characters]_"
+        metadata["truncated_to"] = len(truncated)
     
     return truncated, metadata

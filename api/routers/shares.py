@@ -6,7 +6,8 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from auth import get_supabase_admin, verify_token, verify_token_optional
+import auth
+from auth import verify_token, verify_token_optional
 from config import get_settings
 from logging_config import anonymize_user_id, logger
 import services.share_manager as share_manager
@@ -195,7 +196,7 @@ async def create_share(
     user = auth_data["user"]
     user_id = str(user.id)
 
-    supabase = get_supabase_admin()
+    supabase = auth.get_supabase_admin()
     if not supabase:
         raise HTTPException(status_code=500, detail="Database connection error")
 
@@ -408,7 +409,7 @@ async def create_share(
 
 @router.get("/shares/{share_token}", response_model=ShareSnapshotResponse)
 async def get_share(share_token: str, request: Request, auth_data: Optional[dict] = Depends(verify_token_optional)):
-    supabase = get_supabase_admin()
+    supabase = auth.get_supabase_admin()
     if not supabase:
         raise HTTPException(status_code=500, detail="Database connection error")
 
@@ -461,7 +462,7 @@ async def revoke_share(share_id: str, auth_data: dict = Depends(verify_token)):
     user = auth_data["user"]
     user_id = str(user.id)
 
-    supabase = get_supabase_admin()
+    supabase = auth.get_supabase_admin()
     if not supabase:
         raise HTTPException(status_code=500, detail="Database connection error")
 
@@ -504,7 +505,7 @@ async def list_user_shares(
     user = auth_data["user"]
     user_id = str(user.id)
 
-    supabase = get_supabase_admin()
+    supabase = auth.get_supabase_admin()
     if not supabase:
         raise HTTPException(status_code=500, detail="Database connection error")
 

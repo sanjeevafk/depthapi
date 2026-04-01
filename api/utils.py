@@ -6,7 +6,7 @@ import logging
 import os
 import re
 
-MAX_TOPIC_LENGTH = 100000  # Increased to support large text input (100K chars)
+MAX_TOPIC_LENGTH = 200
 _logger = logging.getLogger(__name__)
 
 LEARNING_MODE = "learn"
@@ -39,8 +39,8 @@ def sanitize_topic(topic: str) -> str:
     topic = topic.strip()
     if len(topic) > MAX_TOPIC_LENGTH:
         raise ValueError(f"Topic exceeds {MAX_TOPIC_LENGTH} chars")
-    # Note: Removed character whitelist validation to support large text input
-    # (articles, code blocks, documentation). HTML escaping provides XSS protection.
+    if re.search(r"[<>]", topic):
+        raise ValueError("Topic contains invalid characters")
     return html.escape(topic)
 
 
