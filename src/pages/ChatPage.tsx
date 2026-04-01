@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Menu } from "lucide-react";
+import { Menu, Share2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import MessageList from "../components/chat/MessageList";
 import ThemeToggle from "../components/chat/ThemeToggle";
@@ -7,6 +7,7 @@ import WorkspaceInput from "../components/chat/WorkspaceInput";
 import WorkspaceSidebar from "../components/chat/WorkspaceSidebar";
 import WelcomeEmptyState from "../components/chat/WelcomeEmptyState";
 import { UpgradeModal } from "../components/UpgradeModal";
+import ShareModal from "../components/share/ShareModal";
 import { useAuth } from "../context/AuthContext";
 import { createCheckoutSession } from "../lib/payments";
 import { notifyToast } from "../lib/toast";
@@ -49,6 +50,7 @@ export default function ChatPage(): JSX.Element {
   const [healthMessage, setHealthMessage] = useState<string | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isSidebarPrefHydrated, setIsSidebarPrefHydrated] = useState(false);
+  const [shareConversationOpen, setShareConversationOpen] = useState(false);
 
   const upgradeModalOpen = useChatStore((state) => state.upgradeModalOpen);
   const closeUpgradeModal = useChatStore((state) => state.closeUpgradeModal);
@@ -245,7 +247,19 @@ export default function ChatPage(): JSX.Element {
                 </span>
               </h1>
             </div>
-            <ThemeToggle />
+            <div className="flex items-center gap-2">
+              {currentConversationId && !isDraftThread && !showPinnedPrompts && (
+                <button
+                  type="button"
+                  onClick={() => setShareConversationOpen(true)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition hover:bg-slate-50 dark:border-white/10 dark:bg-dark-800 dark:text-slate-300 dark:hover:bg-dark-700"
+                >
+                  <Share2 className="h-4 w-4" />
+                  Share conversation
+                </button>
+              )}
+              <ThemeToggle />
+            </div>
           </header>
 
           <main className="flex min-h-0 flex-1 flex-col">
@@ -286,6 +300,13 @@ export default function ChatPage(): JSX.Element {
         onClose={closeUpgradeModal}
         onUpgrade={handleUpgrade}
         onUseByok={handleUseByok}
+      />
+      <ShareModal
+        open={shareConversationOpen}
+        conversationId={currentConversationId}
+        defaultKind="conversation"
+        allowKindSelection={false}
+        onClose={() => setShareConversationOpen(false)}
       />
     </div>
   );

@@ -5,6 +5,11 @@ import type {
   ExportRequest,
   HistoryItem,
 } from "./types";
+import type {
+  ShareCreateRequest,
+  ShareCreateResponse,
+  ShareSnapshot,
+} from "./types/shares";
 import { LegacyStreamChunkSchema } from "./lib/sseSchemas";
 import type { Session } from "@supabase/supabase-js";
 import { getTracePropagationHeaders } from "./lib/monitoring";
@@ -382,6 +387,28 @@ export async function queryTopicStream(
   };
 
   await attemptStream();
+}
+
+export async function createShare(
+  payload: ShareCreateRequest,
+): Promise<ShareCreateResponse> {
+  return fetchAPI("/api/shares", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchShareByToken(
+  token: string,
+  options?: { password?: string },
+): Promise<ShareSnapshot> {
+  const headers: Record<string, string> = {};
+  if (options?.password) {
+    headers["x-share-password"] = options.password;
+  }
+  return fetchAPI(`/api/shares/${encodeURIComponent(token)}`, {
+    headers,
+  });
 }
 
 export async function exportExplanations(req: ExportRequest): Promise<Blob> {

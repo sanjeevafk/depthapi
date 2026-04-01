@@ -24,6 +24,7 @@ from routers import (
     legal,
     seo,
     emails,
+    shares,
 )
 from auth import get_supabase_admin
 from services.cache import close_redis, get_redis
@@ -337,6 +338,7 @@ app.include_router(seo.router)
 app.include_router(emails.router, prefix="/api")
 app.include_router(webhooks.router)  # No prefix - webhooks use full path
 app.include_router(payments.router, prefix="/api")
+app.include_router(shares.router, prefix="/api")
 
 
 @app.get("/api/health", tags=["health"])

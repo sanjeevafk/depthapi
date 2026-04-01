@@ -16,6 +16,7 @@ const TermsPage = lazy(() => import("./pages/TermsPage"));
 const PrivacyPage = lazy(() => import("./pages/PrivacyPage"));
 const PricingPage = lazy(() => import("./pages/PricingPage"));
 const FeaturesPage = lazy(() => import("./pages/FeaturesPage"));
+const SharePage = lazy(() => import("./pages/SharePage"));
 
 function RouteMonitoringBridge(): null {
   const location = useLocation();
@@ -58,6 +59,7 @@ export default function App(): JSX.Element {
           <Route path="/privacy" element={<PrivacyPage />} />
           <Route path="/pricing" element={<PricingPage />} />
           <Route path="/features" element={<FeaturesPage />} />
+          <Route path="/share/:token" element={<SharePage />} />
         </Routes>
       </Suspense>
     </ErrorBoundary>
