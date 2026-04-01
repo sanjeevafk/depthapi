@@ -140,7 +140,11 @@ def build_context_messages(
     dropped_count = len(filtered) - len(final_messages)
     summary = ""
     if dropped_count > 0 and summary_max_tokens > 0:
-        summary = _summarize_messages(filtered[:dropped_count], summary_max_tokens)
+        dropped_non_preserved = max(0, len(non_preserved) - len(selected))
+        summary = _summarize_messages(
+            non_preserved[:dropped_non_preserved],
+            summary_max_tokens,
+        )
 
     if summary:
         summary_message: ConversationMessage = {"role": "system", "content": summary}
