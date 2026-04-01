@@ -84,12 +84,14 @@ def _cache_key(
     mode: str,
     context_signature: str = "",
     intent_payload: str = "",
+    temperature: float | None = None,
 ) -> str:
     base = topic_cache_key(topic, level, mode=normalize_mode(mode))
-    if not context_signature and not intent_payload:
+    if not context_signature and not intent_payload and temperature is None:
         return base
+    temperature_str = f"{float(temperature):.2f}" if temperature is not None else ""
     digest = hashlib.sha256(
-        f"{base}\x00{context_signature}\x00{intent_payload}".encode("utf-8")
+        f"{base}\x00{context_signature}\x00{intent_payload}\x00{temperature_str}".encode("utf-8")
     ).hexdigest()
     return f"{base}:{digest}"
 
@@ -288,6 +290,7 @@ async def query_topic(
         history_messages,
         max_tokens=max(int(getattr(settings, "conversation_context_max_tokens", 1200)), 1),
         summary_max_tokens=max(int(getattr(settings, "conversation_context_summary_tokens", 240)), 0),
+        max_turns=4,
     )
     socratic_context = build_socratic_context(history_messages)
 
@@ -328,7 +331,7 @@ async def query_topic(
     if not req.bypass_cache:
         for level in levels:
             cached = await cache_get(
-                _cache_key(effective_topic, level, mode, context_signature, intent_payload)
+                _cache_key(effective_topic, level, mode, context_signature, intent_payload, req.temperature)
             )
             if cached:
                 explanations[level] = cached.get("text", "")
@@ -366,7 +369,7 @@ async def query_topic(
         if isinstance(result, str):
             explanations[level] = result
             await cache_set(
-                _cache_key(effective_topic, level, mode, context_signature, intent_payload),
+                _cache_key(effective_topic, level, mode, context_signature, intent_payload, req.temperature),
                 {"text": result},
             )
         else:
@@ -495,6 +498,7 @@ async def query_topic_stream(
         history_messages,
         max_tokens=max(int(getattr(settings, "conversation_context_max_tokens", 1200)), 1),
         summary_max_tokens=max(int(getattr(settings, "conversation_context_summary_tokens", 240)), 0),
+        max_turns=4,
     )
     socratic_context = build_socratic_context(history_messages)
 
@@ -790,7 +794,7 @@ async def query_topic_stream(
 
             if not req.bypass_cache:
                 cached = await cache_get(
-                    _cache_key(effective_topic, level, mode, context_signature, intent_payload)
+                    _cache_key(effective_topic, level, mode, context_signature, intent_payload, req.temperature)
                 )
                 if cached and cached.get("text"):
                     content = cached["text"]
@@ -906,7 +910,7 @@ async def query_topic_stream(
                     yield done_event
                 if full_content.strip():
                     await cache_set(
-                        _cache_key(effective_topic, level, mode, context_signature, intent_payload),
+                        _cache_key(effective_topic, level, mode, context_signature, intent_payload, req.temperature),
                         {"text": full_content},
                     )
                 if auth_data:
@@ -920,7 +924,7 @@ async def query_topic_stream(
 
             if full_content.strip():
                 await cache_set(
-                    _cache_key(effective_topic, level, mode, context_signature, intent_payload),
+                    _cache_key(effective_topic, level, mode, context_signature, intent_payload, req.temperature),
                     {"text": full_content},
                 )
             if auth_data:
@@ -969,7 +973,7 @@ async def query_topic_stream(
                         yield done_event
                     if full_content.strip():
                         await cache_set(
-                            _cache_key(effective_topic, level, mode, context_signature, intent_payload),
+                            _cache_key(effective_topic, level, mode, context_signature, intent_payload, req.temperature),
                             {"text": full_content},
                         )
                     if auth_data:
@@ -995,7 +999,7 @@ async def query_topic_stream(
                     yield done_event
                 if full_content.strip():
                     await cache_set(
-                        _cache_key(effective_topic, level, mode, context_signature, intent_payload),
+                        _cache_key(effective_topic, level, mode, context_signature, intent_payload, req.temperature),
                         {"text": full_content},
                     )
                 if auth_data:

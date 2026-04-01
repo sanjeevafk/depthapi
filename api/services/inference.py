@@ -958,10 +958,29 @@ def _append_search_context(prompt: str, context: str) -> str:
 
 
 MODE_SYSTEM_PROMPTS = {
-    LEARNING_MODE: "Mode: Learning. Provide clear explanations and adapt depth to the user's request.",
+    LEARNING_MODE: (
+        "Mode: Learning. Provide clear explanations and adapt depth to the user's request. "
+        "Follow the user's query exactly. If the query asks for comparison, respond with a structured comparison. "
+        "Do not ignore or override the latest user input."
+    ),
     SOCRATIC_MODE: "Mode: Socratic. Guide the user with questions rather than direct answers.",
     TECHNICAL_MODE: "Mode: Technical. Provide precise, structured, technically rigorous responses.",
 }
+
+COMPARISON_SYSTEM_PROMPT = (
+    "Compare the concepts clearly: definitions, key differences, use cases, and a concise table if helpful."
+)
+
+
+def _is_comparison_query(text: str) -> bool:
+    lowered = (text or "").lower()
+    return (
+        " vs " in lowered
+        or " versus " in lowered
+        or "compare" in lowered
+        or "comparison" in lowered
+        or "difference between" in lowered
+    )
 
 
 def _build_messages(
@@ -972,20 +991,25 @@ def _build_messages(
     mode: str | None = None,
 ) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = []
+    system_parts: list[str] = []
     system_prompt = SYSTEM_PROMPT.strip()
     if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
+        system_parts.append(system_prompt)
     mode_prompt = MODE_SYSTEM_PROMPTS.get(mode or "", "").strip()
     if mode_prompt:
-        messages.append({"role": "system", "content": mode_prompt})
+        system_parts.append(mode_prompt)
     if intent_system_prompt:
-        messages.append({"role": "system", "content": intent_system_prompt.strip()})
+        system_parts.append(intent_system_prompt.strip())
+    if mode == LEARNING_MODE and _is_comparison_query(prompt):
+        system_parts.append(COMPARISON_SYSTEM_PROMPT)
+    if system_parts:
+        messages.append({"role": "system", "content": "\n".join(system_parts)})
     if conversation_messages:
         messages.extend(conversation_messages)
     messages.append({"role": "user", "content": prompt})
-    assert any(msg.get("role") == "user" and msg.get("content") == prompt for msg in messages)
     assert messages[-1].get("role") == "user"
     assert messages[-1].get("content") == prompt
+    print("FINAL PROMPT:", messages)
     return messages
 
 

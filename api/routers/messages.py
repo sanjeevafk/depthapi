@@ -385,6 +385,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         history_messages,
         max_tokens=max(int(getattr(config_settings, "conversation_context_max_tokens", 1200)), 1),
         summary_max_tokens=max(int(getattr(config_settings, "conversation_context_summary_tokens", 240)), 0),
+        max_turns=4,
     )
     socratic_context = build_socratic_context(history_messages)
     prompt_build_ms = (time.perf_counter() - prompt_build_start) * 1000
