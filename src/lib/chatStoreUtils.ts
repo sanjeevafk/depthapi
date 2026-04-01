@@ -20,6 +20,7 @@ export const THEME_STORAGE_KEY = "kb_theme_v1";
 export const DEFAULT_WORKSPACE: Workspace = "learn";
 export const DEFAULT_DEPTH_LEVEL: DepthLevel = "eli12";
 export const PENDING_SYNC_KEY = "kb_pending_sync_v1";
+export const LAST_CONVERSATION_KEY = "kb_last_conversation_v1";
 
 export const supabaseConfigured =
   Boolean(import.meta.env.VITE_SUPABASE_URL) &&
@@ -146,6 +147,29 @@ export const applyThemeClass = (theme: ThemeMode) => {
 export const persistTheme = (theme: ThemeMode) => {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+};
+
+export const loadLastConversationId = (): string | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const value = window.localStorage.getItem(LAST_CONVERSATION_KEY);
+    return value && value.trim() ? value : null;
+  } catch {
+    return null;
+  }
+};
+
+export const persistLastConversationId = (id: string | null) => {
+  if (typeof window === "undefined") return;
+  try {
+    if (id) {
+      window.localStorage.setItem(LAST_CONVERSATION_KEY, id);
+    } else {
+      window.localStorage.removeItem(LAST_CONVERSATION_KEY);
+    }
+  } catch {
+    // Ignore storage errors (e.g. private mode).
+  }
 };
 
 export const getModeForWorkspace = (workspace: Workspace): ChatMode => {

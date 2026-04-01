@@ -6,6 +6,8 @@ import {
   asString,
   notifyError,
   resolveWorkspaceState,
+  loadLastConversationId,
+  persistLastConversationId,
   type Workspace,
   type DepthLevel,
   DEFAULT_DEPTH_LEVEL,
@@ -64,7 +66,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   setWorkspaceState: (workspace, mode, promptMode, depthLevel) =>
     set({ workspace, currentMode: mode, currentPromptMode: promptMode, depthLevel, selectedLevel: depthLevel as Level }),
 
-  setCurrentConversationId: (id) => set({ currentConversationId: id }),
+  setCurrentConversationId: (id) => {
+    persistLastConversationId(id);
+    set({ currentConversationId: id });
+  },
   setIsDraftThread: (draft) => set({ isDraftThread: draft }),
   setIsLoading: (loading) => set({ isLoading: loading }),
 
@@ -98,7 +103,37 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         if (state.isLoading) {
           return { conversations };
         }
-        
+        const cachedId = loadLastConversationId();
+        const hasCached = cachedId
+          ? conversations.some((item) => item.id === cachedId)
+          : false;
+        if (hasCached) {
+          const activeConversation = conversations.find((item) => item.id === cachedId);
+          const conversationMode =
+            asString(activeConversation?.mode) ||
+            asString(activeConversation?.settings?.mode);
+          const conversationPrompt =
+            asString(activeConversation?.settings?.prompt_mode) ||
+            asString(activeConversation?.settings?.mode) ||
+            asString(activeConversation?.mode);
+          const nextWorkspaceState = resolveWorkspaceState(
+            conversationMode,
+            conversationPrompt,
+            state.depthLevel,
+          );
+          return {
+            conversations,
+            currentConversationId: cachedId ?? null,
+            isDraftThread: false,
+            workspace: nextWorkspaceState.workspace,
+            depthLevel: nextWorkspaceState.depthLevel,
+            currentMode: nextWorkspaceState.mode,
+            currentPromptMode: nextWorkspaceState.promptMode,
+            selectedLevel: nextWorkspaceState.depthLevel as Level,
+          };
+        }
+
+        persistLastConversationId(null);
         return {
           conversations,
           currentConversationId: null,
@@ -118,6 +153,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       const nextConversationId = hasPreferred
         ? preferredId
         : (conversations[0]?.id ?? null);
+      persistLastConversationId(nextConversationId);
       const activeConversation = conversations.find(
         (item) => item.id === nextConversationId,
       );
@@ -151,6 +187,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     if (!id) return;
     const state = get();
     const forceReload = options?.forceReload === true;
+    persistLastConversationId(id);
 
     if (
       state.currentConversationId === id &&
@@ -313,6 +350,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     if (remaining.length === 0) {
       set({ conversations: remaining });
       useMessageStore.getState().clearMessages();
+      persistLastConversationId(null);
       set({
         currentConversationId: null,
         isDraftThread: true,
@@ -322,6 +360,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }
 
     const nextId = remaining[0].id;
+    persistLastConversationId(nextId);
     set({
       conversations: remaining,
       currentConversationId: nextId,

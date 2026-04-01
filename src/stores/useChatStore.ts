@@ -444,8 +444,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { workspace, depthLevel } = useConversationStore.getState();
     get().abortAllStreams();
     useMessageStore.getState().clearMessages();
+    useConversationStore.getState().setCurrentConversationId(null);
     useConversationStore.setState({
-      currentConversationId: null,
       isDraftThread: true,
       currentMode: getModeForWorkspace(workspace),
       currentPromptMode: depthLevel as PromptMode,
