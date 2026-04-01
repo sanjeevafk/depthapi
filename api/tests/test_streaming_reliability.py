@@ -26,6 +26,15 @@ def _disable_gatekeeper(monkeypatch):
 def _use_test_gatekeeper(monkeypatch, *, stale_seconds: int = 20, ttl_seconds: int = 90):
     async def _gatekeep(**kwargs):
         idempotency_key = kwargs.get("idempotency_key")
+        if not isinstance(idempotency_key, str):
+            return message_gate.GatekeeperResult(
+                allowed=True,
+                retry_after=0,
+                idempotency_status=None,
+                idempotency_response=None,
+                degraded=True,
+                redis_eval_ms=0.0,
+            )
         redis = await message_gate.get_redis()
         now_ts = int(time.time())
         status = await redis.hget(idempotency_key, "status")
@@ -200,12 +209,10 @@ async def test_query_stream_fallback_allows_slow_generation_budget(app_client, m
 
 @pytest.mark.asyncio
 async def test_query_stream_duplicate_in_progress_returns_wait(app_client, monkeypatch, test_settings):
-    started_at = int(time.time())
+    async def fake_check_idempotency_and_cache(**_kwargs):
+        return {"status": "wait"}
 
-    async def fake_cache_get(_key):
-        return {"status": "in_progress", "started_at": started_at}
-
-    monkeypatch.setattr(query_module, "cache_get", fake_cache_get)
+    monkeypatch.setattr(query_module, "check_idempotency_and_cache", fake_check_idempotency_and_cache)
     monkeypatch.setattr(query_module, "get_settings", lambda: test_settings)
 
     payload = {
@@ -331,24 +338,40 @@ async def test_query_stream_idempotency_replay_with_message_id(app_client, monke
     async def fake_stream(*_args, **_kwargs):
         yield "hello replay"
 
-    async def fake_cache_get(key):
-        return store.get(str(key))
-
     async def fake_cache_set(key, value, ttl=None):
         store[str(key)] = value
         return True
 
-    async def fake_cache_set_if_absent(key, value, ttl):
-        k = str(key)
-        if k in store:
-            return False
-        store[k] = value
-        return True
+    async def fake_check_idempotency_and_cache(
+        *,
+        idempotency_key: str,
+        cache_key: str,
+        now_ts: int,
+        idempotency_ttl: int,
+        idempotency_stale: int,
+        set_in_progress: bool,
+        check_cache: bool,
+    ):
+        idem_record = store.get(idempotency_key)
+        if isinstance(idem_record, dict):
+            status = idem_record.get("status")
+            if status == "completed" and idem_record.get("response"):
+                return {"status": "replay", "response": idem_record.get("response")}
+            if status == "in_progress":
+                started_at = int(idem_record.get("started_at") or now_ts)
+                if now_ts - started_at < idempotency_stale:
+                    return {"status": "wait"}
+        if check_cache:
+            cached = store.get(cache_key)
+            if isinstance(cached, dict):
+                return {"status": "cache_hit", "cached": cached}
+        if set_in_progress:
+            store[idempotency_key] = {"status": "in_progress", "started_at": now_ts}
+        return {"status": "new"}
 
     monkeypatch.setattr(query_module, "generate_stream_explanation", fake_stream)
-    monkeypatch.setattr(query_module, "cache_get", fake_cache_get)
     monkeypatch.setattr(query_module, "cache_set", fake_cache_set)
-    monkeypatch.setattr(query_module, "cache_set_if_absent", fake_cache_set_if_absent)
+    monkeypatch.setattr(query_module, "check_idempotency_and_cache", fake_check_idempotency_and_cache)
     monkeypatch.setattr(query_module, "get_settings", lambda: test_settings)
 
     payload = {
@@ -369,33 +392,22 @@ async def test_query_stream_idempotency_replay_with_message_id(app_client, monke
 
 @pytest.mark.asyncio
 async def test_query_stream_stale_in_progress_does_not_clobber_completed_record(app_client, monkeypatch, test_settings):
-    key_reads: dict[str, int] = {}
     cache_set_calls: list[tuple[str, dict, int | None]] = []
 
     async def fail_stream(*_args, **_kwargs):
         raise AssertionError("stream should not execute when replay is returned")
         yield ""  # pragma: no cover
 
-    async def fake_cache_get(key):
-        k = str(key)
-        key_reads[k] = key_reads.get(k, 0) + 1
-        if key_reads[k] == 1:
-            return None
-        if key_reads[k] == 2:
-            return {"status": "in_progress", "started_at": 0}
-        return {"status": "completed", "response": "already done"}
-
     async def fake_cache_set(key, value, ttl=None):
         cache_set_calls.append((str(key), dict(value), ttl))
         return True
 
-    async def fake_cache_set_if_absent(_key, _value, _ttl):
-        return False
+    async def fake_check_idempotency_and_cache(**_kwargs):
+        return {"status": "replay", "response": "already done"}
 
     monkeypatch.setattr(query_module, "generate_stream_explanation", fail_stream)
-    monkeypatch.setattr(query_module, "cache_get", fake_cache_get)
     monkeypatch.setattr(query_module, "cache_set", fake_cache_set)
-    monkeypatch.setattr(query_module, "cache_set_if_absent", fake_cache_set_if_absent)
+    monkeypatch.setattr(query_module, "check_idempotency_and_cache", fake_check_idempotency_and_cache)
     monkeypatch.setattr(query_module, "get_settings", lambda: test_settings)
 
     payload = {
