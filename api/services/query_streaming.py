@@ -301,8 +301,6 @@ def build_query_stream_response(
 
             if full_content.strip():
                 await cache_set(cache_key_value, {"text": full_content})
-            if full_content.strip():
-                await cache_set(cache_key_value, {"text": full_content})
             if auth_data:
                 await persist_history(auth_data["user"], topic, [level], mode)
 

@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { supabase } from "../lib/supabase";
 import type { ChatMode, Conversation, Message, PromptMode } from "../types/chat";
 import type { Level } from "../types";
 import {
@@ -12,6 +11,10 @@ import {
   DEFAULT_DEPTH_LEVEL,
 } from "../lib/chatStoreUtils";
 import { useMessageStore } from "./useMessageStore";
+import {
+  updateConversationTitle,
+  deleteConversation as deleteConversationRemote,
+} from "../services/conversationSyncService";
 
 const supabaseConfigured =
   Boolean(import.meta.env.VITE_SUPABASE_URL) &&
@@ -290,24 +293,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       }));
     };
 
-    try {
-      const { data, error } = await supabase
-        .from("conversations")
-        .update({ title: trimmed, updated_at: now })
-        .eq("id", id);
-
-      void data;
-      if (error) {
-        console.error("Failed to rename conversation:", {
-          id,
-          title: trimmed,
-          error,
-        });
-        rollbackRename();
-        notifyError("Failed to rename conversation.");
-      }
-    } catch (error) {
-      console.error("Failed to rename conversation:", error);
+    const ok = await updateConversationTitle(id, trimmed, now);
+    if (!ok) {
       rollbackRename();
       notifyError("Failed to rename conversation.");
     }
@@ -322,14 +309,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const isActive = state.currentConversationId === id;
 
     if (!id.startsWith("local-") && supabaseConfigured) {
-      try {
-        const { error } = await supabase
-          .from("conversations")
-          .delete()
-          .eq("id", id);
-        if (error) throw error;
-      } catch (error) {
-        console.error("Failed to delete conversation:", error);
+      const ok = await deleteConversationRemote(id);
+      if (!ok) {
         notifyError("Failed to delete conversation.");
         return;
       }
