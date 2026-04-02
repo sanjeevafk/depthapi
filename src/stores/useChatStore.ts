@@ -56,6 +56,17 @@ interface PendingSyncEntry {
   assistantClientId?: string;
 }
 
+interface SendMessageOptions {
+  mode?: ChatMode;
+  promptMode?: PromptMode;
+  isRegeneration?: boolean;
+  temperature?: number;
+  clientMessageId?: string;
+  assistantClientId?: string;
+  skipUserMessage?: boolean;
+  replaceMessageId?: string;
+}
+
 const loadPendingSyncs = (): PendingSyncEntry[] => {
   if (typeof window === "undefined") return [];
   try {
@@ -106,6 +117,8 @@ export interface ChatState {
   isPro: boolean;
   gatedModes: ChatMode[];
   upgradeModalOpen: boolean;
+  regenerationModalOpen: boolean;
+  regenerationTargetId: string | null;
   regeneratingMessageId: string | null;
   streamControllers: Record<string, AbortController>;
 
@@ -129,6 +142,8 @@ export interface ChatState {
   setIsPro: (isPro: boolean) => void;
   openUpgradeModal: () => void;
   closeUpgradeModal: () => void;
+  openRegenerationModal: (messageId: string) => void;
+  closeRegenerationModal: () => void;
   abortStream: (clientId: string) => void;
   abortAllStreams: () => void;
 
@@ -153,6 +168,11 @@ export interface ChatState {
   addMessage: (msg: Message) => void;
   updateMessageByClientId: (clientId: string, updater: (msg: Message) => Message) => void;
   removeMessageByClientId: (clientId: string) => void;
+
+  // Actions — streaming / message flow
+  sendMessage: (content: string, options?: SendMessageOptions) => Promise<void>;
+  regenerateMessage: (messageId: string, mode?: ChatMode) => Promise<void>;
+  retrySync: (messageId: string) => Promise<void>;
 }
 
 // ─── Store implementation ───────────────────────────────────────────────────
@@ -164,6 +184,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isPro: defaultIsPro,
   gatedModes: [...CHAT_PREMIUM_MODES],
   upgradeModalOpen: false,
+  regenerationModalOpen: false,
+  regenerationTargetId: null,
   regeneratingMessageId: null,
   streamControllers: {},
 
@@ -197,6 +219,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setIsPro: (isPro) => set({ isPro }),
   openUpgradeModal: () => set({ upgradeModalOpen: true }),
   closeUpgradeModal: () => set({ upgradeModalOpen: false }),
+  openRegenerationModal: (messageId: string) =>
+    set({ regenerationModalOpen: true, regenerationTargetId: messageId }),
+  closeRegenerationModal: () =>
+    set({ regenerationModalOpen: false, regenerationTargetId: null }),
 
   abortStream: (clientId: string) => {
     const controller = get().streamControllers[clientId];
@@ -429,7 +455,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // ── Streaming ─────────────────────────────────────────────────────────────
 
-  sendMessage: async (content, options) => {
+  sendMessage: async (content: string, options?: SendMessageOptions) => {
     const trimmed = content.trim();
     if (!trimmed) return;
 

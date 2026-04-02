@@ -43,7 +43,7 @@ describe("MessageList rendering", () => {
             role: "assistant",
             content: "Caching stores reusable data for faster access.",
             created_at: "2026-01-01T00:00:01.000Z",
-            metadata: { mode: "learning" },
+            metadata: { mode: "learn" },
           },
         },
       });
@@ -65,7 +65,7 @@ describe("MessageList rendering", () => {
           content: "Hello",
           created_at: "2026-01-01T00:00:00.000Z",
           isStreaming: true,
-          metadata: { mode: "learning" },
+          metadata: { mode: "learn" },
         },
       },
     });
