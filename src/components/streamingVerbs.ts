@@ -87,7 +87,7 @@ const MEME_VERBS = [
 ] as const;
 
 const STREAMING_VERBS: Partial<Record<StreamingMode, readonly string[]>> = {
-  learning: LEARN_VERBS,
+  learn: LEARN_VERBS,
   socratic: SOCRATIC_VERBS,
   technical: TECHNICAL_VERBS,
   eli5: LEARN_VERBS,
