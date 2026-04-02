@@ -1,0 +1,17 @@
+node_modules
+.venv
+.git
+.github
+dist
+build
+coverage
+playwright-report
+test-results
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/*.tsbuildinfo
