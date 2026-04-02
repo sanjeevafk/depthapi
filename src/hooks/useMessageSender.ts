@@ -2,7 +2,7 @@ import { useChatStore } from "../stores/useChatStore";
 import { useConversationStore } from "../stores/useConversationStore";
 import { useMessageStore } from "../stores/useMessageStore";
 import { createConversationInDb } from "../services/dbService";
-import { sendChat } from "../services/chatService";
+import { sendChat } from "../services/messageFlowService";
 import { trackTelemetry, captureFrontendError } from "../lib/monitoring";
 import {
   makeLocalId,
