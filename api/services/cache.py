@@ -285,6 +285,32 @@ async def cache_get(key: str) -> dict[str, Any] | None:
         return None
 
 
+async def cache_get_many(keys: list[str]) -> dict[str, dict[str, Any]]:
+    """Fetch multiple cached JSON values in a single Redis pipeline."""
+    if not keys:
+        return {}
+    try:
+        r = await get_redis()
+        results = await r.pipeline([["GET", key] for key in keys])
+        out: dict[str, dict[str, Any]] = {}
+        for key, val in zip(keys, results):
+            if val is None:
+                continue
+            if isinstance(val, (bytes, bytearray)):
+                payload = bytes(val)
+            elif isinstance(val, str):
+                payload = val.encode("utf-8")
+            else:
+                payload = str(val).encode("utf-8")
+            loaded = orjson.loads(payload)
+            if isinstance(loaded, dict):
+                out[key] = loaded
+        return out
+    except Exception as e:
+        logger.warning("cache_get_many_failed", key_count=len(keys), error=str(e))
+        return {}
+
+
 async def cache_set(key: str, value: dict[str, Any], ttl: int | None = None) -> bool:
     """Set cached JSON value with TTL."""
     try:
@@ -295,6 +321,25 @@ async def cache_set(key: str, value: dict[str, Any], ttl: int | None = None) -> 
         return True
     except Exception as e:
         logger.error("cache_set_failed", key=key, error=str(e))
+        return False
+
+
+async def cache_set_many(values: dict[str, dict[str, Any]], ttl: int | None = None) -> bool:
+    """Set multiple cached JSON values in a single Redis pipeline."""
+    if not values:
+        return True
+    try:
+        r = await get_redis()
+        settings = get_settings()
+        ttl_seconds = int(ttl or getattr(settings, "cache_ttl", 3600))
+        commands = []
+        for key, value in values.items():
+            payload = orjson.dumps(value).decode("utf-8")
+            commands.append(["SETEX", key, ttl_seconds, payload])
+        await r.pipeline(commands)
+        return True
+    except Exception as e:
+        logger.error("cache_set_many_failed", key_count=len(values), error=str(e))
         return False
 
 

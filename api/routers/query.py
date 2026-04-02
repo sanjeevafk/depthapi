@@ -12,7 +12,7 @@ from auth import check_is_pro, ensure_user_exists, get_supabase_admin, verify_to
 from api.repositories.chat_repository import ChatRepository
 from config import get_settings
 from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
-from services.cache import cache_get, cache_set, cache_set_if_absent
+from services.cache import cache_get, cache_get_many, cache_set, cache_set_many, cache_set_if_absent
 from services.inference import generate_explanation, generate_stream_explanation
 from services.llm_client import get_litellm_config_state
 from services.llm_errors import LLMError, LLMUnavailable
@@ -151,9 +151,11 @@ async def query_topic(
     missing_levels: list[str] = []
 
     if not req.bypass_cache:
+        cache_keys = {level: _cache_key(topic, level, mode) for level in levels}
+        cached_map = await cache_get_many(list(cache_keys.values()))
         for level in levels:
-            cached = await cache_get(_cache_key(topic, level, mode))
-            if cached:
+            cached = cached_map.get(cache_keys[level])
+            if cached and cached.get("text"):
                 explanations[level] = cached.get("text", "")
             else:
                 missing_levels.append(level)
@@ -181,10 +183,11 @@ async def query_topic(
     }
     results = await asyncio.gather(*tasks.values(), return_exceptions=True)
 
+    cache_updates: dict[str, dict[str, Any]] = {}
     for level, result in zip(tasks.keys(), results):
         if isinstance(result, str):
             explanations[level] = result
-            await cache_set(_cache_key(topic, level, mode), {"text": result})
+            cache_updates[_cache_key(topic, level, mode)] = {"text": result}
         else:
             if isinstance(result, LLMError):
                 raise result
@@ -200,6 +203,9 @@ async def query_topic(
                 retry=bool(req.regenerate),
                 sampled=False,
             )
+
+    if cache_updates:
+        await cache_set_many(cache_updates)
 
     if auth_data:
         await _persist_history_safely(auth_data["user"], topic, levels, mode)

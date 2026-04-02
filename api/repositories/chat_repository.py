@@ -4,6 +4,7 @@ import asyncio
 from typing import Any, Dict, List, Optional, cast
 from logging_config import logger, anonymize_user_id, anonymize_text
 from auth import ensure_user_exists, get_supabase_admin
+from api.repositories.history_repository import HistoryRepository
 from utils import normalize_mode
 
 
@@ -27,6 +28,10 @@ class ChatRepository:
                 user_id_hash=user_id_hash,
                 sampled=False,
             )
+            return
+
+        upserted = await HistoryRepository.upsert_history(user, topic, levels, mode)
+        if upserted:
             return
 
         supabase = get_supabase_admin()

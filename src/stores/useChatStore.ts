@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { supabase } from "../lib/supabase";
 import type { Level } from "../types";
 import type { ChatMode, Conversation, Message, PromptMode } from "../types/chat";
 import {
@@ -11,7 +10,7 @@ import {
   captureFrontendError,
   trackTelemetry,
 } from "../lib/monitoring";
-import { sendChat } from "../services/chatService";
+import { sendChat } from "../services/messageFlowService";
 import type { ApiError } from "../lib/httpErrors";
 import {
   makeLocalId,
@@ -34,6 +33,11 @@ import {
   type ThemeMode,
   type DepthLevel,
 } from "../lib/chatStoreUtils";
+import {
+  createConversation,
+  updateConversationMode,
+  updateConversationSettings,
+} from "../services/conversationSyncService";
 import { useMessageStore } from "./useMessageStore";
 import { useConversationStore } from "./useConversationStore";
 
@@ -279,19 +283,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const rollbackConversationMode = previousConversationMode;
         const rollbackConversationSettings = previousConversationSettings;
         void (async () => {
-          try {
-            const { error } = await supabase
-              .from("conversations")
-              .update({ mode, settings: nextSettings })
-              .eq("id", targetConversationId);
-            if (error) throw error;
-          } catch (error) {
-            console.error("Failed to update conversation mode:", {
-              conversationId: targetConversationId,
-              mode,
-              nextSettings,
-              error,
-            });
+          const ok = await updateConversationMode(targetConversationId, mode, nextSettings);
+          if (!ok) {
             useConversationStore.setState((state) => ({
               conversations: state.conversations.map((c) =>
                 c.id === targetConversationId
@@ -349,19 +342,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const targetConversationId = currentConversationId;
         const rollbackConversationSettings = previousConversationSettings;
         void (async () => {
-          try {
-            const { error } = await supabase
-              .from("conversations")
-              .update({ settings: nextSettings })
-              .eq("id", targetConversationId);
-            if (error) throw error;
-          } catch (error) {
-            console.error("Failed to update conversation prompt mode:", {
-              conversationId: targetConversationId,
-              promptMode: mode,
-              nextSettings,
-              error,
-            });
+          const ok = await updateConversationSettings(targetConversationId, nextSettings);
+          if (!ok) {
             useConversationStore.setState((state) => ({
               conversations: state.conversations.map((c) =>
                 c.id === targetConversationId
@@ -488,29 +470,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!conversationId && !skipUserMessage) {
       const title = truncateTitle(trimmed);
       if (supabaseConfigured) {
-        try {
-          const { data: authData } = await supabase.auth.getUser();
-          if (authData?.user) {
-            const { data, error } = await supabase
-              .from("conversations")
-              .insert({
-                user_id: authData.user.id,
-                title,
-                mode: requestedMode,
-                settings: { mode: requestedMode, prompt_mode: effectivePromptMode },
-              })
-              .select("id, title, mode, settings, created_at, updated_at")
-              .single();
-            if (error) throw error;
-            if (data) {
-              conversation = data as Conversation;
-              conversationId = data.id;
-              useConversationStore.getState().upsertConversation(conversation);
-              convStore.setCurrentConversationId(conversationId);
-            }
-          }
-        } catch (err) {
-          console.error("Failed to create conversation:", err);
+        const dbConversation = await createConversation(title, requestedMode, effectivePromptMode);
+        if (dbConversation) {
+          conversation = dbConversation;
+          conversationId = dbConversation.id;
+          useConversationStore.getState().upsertConversation(conversation);
+          convStore.setCurrentConversationId(conversationId);
         }
       }
 
