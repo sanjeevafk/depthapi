@@ -15,7 +15,7 @@ from api.repositories.chat_repository import ChatRepository
 from config import get_settings
 from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from monitoring import capture_telemetry_event
-from services.cache import cache_get, cache_set, cache_set_if_absent
+from services.cache import cache_get, cache_set, check_idempotency_and_cache
 from services.inference import generate_explanation, generate_stream_explanation
 from services.llm_client import get_litellm_config_state
 from services.llm_errors import LLMUnavailable
@@ -24,11 +24,7 @@ from services.message_streaming import (
     build_message_replay_response,
     build_message_stream_response,
 )
-from services.idempotency import (
-    message_idempotency_key,
-    compute_age_seconds,
-    resolve_started_ts,
-)
+from services.idempotency import message_idempotency_key
 from utils import (
     DEFAULT_CHAT_MODE,
     PROMPT_MODE_ALIASES,
@@ -151,42 +147,35 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
     trusted_proxies = _trusted_proxies_from_settings(config_settings)
 
     idempotency_key = message_idempotency_key(user_id, client_message_id)
-    idempotency_payload = await cache_get(idempotency_key)
-    idempotency_claimed = False
-    if idempotency_payload:
-        status = idempotency_payload.get("status")
-        cached_response = idempotency_payload.get("response")
-        if status == "completed" and cached_response:
-            assistant_message_id = idempotency_payload.get("assistant_message_id")
-            replay_mode = idempotency_payload.get("mode") or DEFAULT_CHAT_MODE
-            replay_prompt_mode = idempotency_payload.get("prompt_mode") or normalize_prompt_level(None)
-            return build_message_replay_response(
-                content=str(cached_response),
-                message_id=client_message_id,
-                assistant_message_id=assistant_message_id,
-                mode=replay_mode,
-                prompt_mode=replay_prompt_mode,
-            )
-
-        if status == "in_progress":
-            now_ts = int(time.time())
-            started_ts = resolve_started_ts(idempotency_payload, now_ts=now_ts)
-            age_seconds = compute_age_seconds(idempotency_payload, now_ts=now_ts)
-            if age_seconds < idempotency_stale_seconds:
-                raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
-            reclaimed = await cache_set(
-                idempotency_key,
-                {
-                    "status": "reclaimed",
-                    "reclaimed_at": now_ts,
-                    "previous_started_at": started_ts,
-                    "message_id": client_message_id,
-                },
-                ttl=idempotency_ttl_seconds,
-            )
-            if not reclaimed:
-                raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
-            idempotency_claimed = True
+    now_ts = int(time.time())
+    idem_check = await check_idempotency_and_cache(
+        idempotency_key=idempotency_key,
+        cache_key="",
+        now_ts=now_ts,
+        idempotency_ttl=idempotency_ttl_seconds,
+        idempotency_stale=idempotency_stale_seconds,
+        set_in_progress=True,
+        check_cache=False,
+    )
+    if idem_check["status"] == "replay":
+        cached_response = idem_check.get("response")
+        assistant_message_id = None
+        replay_mode = DEFAULT_CHAT_MODE
+        replay_prompt_mode = normalize_prompt_level(None)
+        existing = await cache_get(idempotency_key)
+        if existing:
+            assistant_message_id = existing.get("assistant_message_id")
+            replay_mode = existing.get("mode") or replay_mode
+            replay_prompt_mode = existing.get("prompt_mode") or replay_prompt_mode
+        return build_message_replay_response(
+            content=str(cached_response or ""),
+            message_id=client_message_id,
+            assistant_message_id=assistant_message_id,
+            mode=replay_mode,
+            prompt_mode=replay_prompt_mode,
+        )
+    if idem_check["status"] == "wait":
+        raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
 
     is_pro = await check_is_pro(user_id)
     estimated_tokens = estimate_tokens_for_text(content)
@@ -272,32 +261,7 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         "prompt_mode": prompt_mode,
     }
     idempotency_started_at = now_ts
-    if idempotency_claimed:
-        reserved = await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
-    else:
-        reserved = await cache_set_if_absent(idempotency_key, idempotency_record, idempotency_ttl_seconds)
-    if not reserved:
-        existing = await cache_get(idempotency_key)
-        if existing:
-            status = existing.get("status")
-            idempotency_response = existing.get("response")
-            if status == "completed" and idempotency_response:
-                return build_message_replay_response(
-                    content=str(idempotency_response),
-                    message_id=client_message_id,
-                    assistant_message_id=existing.get("assistant_message_id"),
-                    mode=existing.get("mode") or selected_mode,
-                    prompt_mode=existing.get("prompt_mode") or prompt_mode,
-                )
-            if status == "in_progress":
-                now_ts = int(time.time())
-                started_ts = resolve_started_ts(existing, now_ts=now_ts)
-                age_seconds = compute_age_seconds(existing, now_ts=now_ts)
-                if age_seconds < idempotency_stale_seconds:
-                    raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
-                await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
-            if status == "failed":
-                await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
+    await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
 
     user_metadata = {
         "client_id": client_message_id,
