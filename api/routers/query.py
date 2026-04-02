@@ -12,7 +12,7 @@ from auth import check_is_pro, ensure_user_exists, get_supabase_admin, verify_to
 from api.repositories.chat_repository import ChatRepository
 from config import get_settings
 from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
-from services.cache import cache_get, cache_get_many, cache_set, cache_set_many, cache_set_if_absent
+from services.cache import cache_get, cache_get_many, cache_set, cache_set_many, check_idempotency_and_cache
 from services.inference import generate_explanation, generate_stream_explanation
 from services.llm_client import get_litellm_config_state
 from services.llm_errors import LLMError, LLMUnavailable
@@ -22,12 +22,7 @@ from services.query_streaming import (
     build_query_stream_wait_response,
     build_query_stream_response,
 )
-from services.idempotency import (
-    query_stream_idempotency_key,
-    compute_age_seconds,
-    compute_retry_after_ms,
-    resolve_started_ts,
-)
+from services.idempotency import query_stream_idempotency_key, compute_retry_after_ms
 from utils import (
     DEFAULT_CHAT_MODE,
     FREE_LEVELS,
@@ -344,56 +339,46 @@ async def query_topic_stream(
         stream_start_timeout_seconds = min(max(raw_start_timeout, 0.1), cap)
 
     idempotency_key: str | None = None
-    idempotency_claimed = False
     idempotency_started_at: int | None = None
     if message_id:
         scope = user_id_raw or (request.client.host if request.client else "anonymous")
         idempotency_key = query_stream_idempotency_key(str(scope), message_id)
-        idempotency_payload = await cache_get(idempotency_key)
-        if idempotency_payload:
-            status = idempotency_payload.get("status")
-            if status == "completed" and idempotency_payload.get("response"):
-                return build_query_stream_replay_response(
-                    topic=topic,
-                    level=level,
-                    mode=mode,
-                    message_id=message_id or "",
-                    content=str(idempotency_payload.get("response")),
-                )
-            if status == "in_progress":
-                now_ts = int(time.time())
-                age_seconds = compute_age_seconds(idempotency_payload, now_ts=now_ts)
-                if age_seconds < idempotency_stale_seconds:
-                    retry_after_ms = compute_retry_after_ms(idempotency_stale_seconds, age_seconds)
-                    logger.info(
-                        "query_stream_duplicate_in_progress",
-                        request_id=request_id,
-                        user_id_hash=user_id_hash,
-                        mode=mode,
-                        level=level,
-                        retry_after_ms=retry_after_ms,
-                        duplicate_in_progress=True,
-                    )
-                    return build_query_stream_wait_response(
-                        retry_after_ms=retry_after_ms,
-                        message_id=message_id or "",
-                        mode=mode,
-                        level=level,
-                        topic=topic,
-                    )
-                reclaimed = await cache_set(
-                    idempotency_key,
-                    {
-                        "status": "reclaimed",
-                        "reclaimed_at": now_ts,
-                        "message_id": message_id,
-                        "mode": mode,
-                    },
-                    ttl=idempotency_ttl_seconds,
-                )
-                if not reclaimed:
-                    raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
-                idempotency_claimed = True
+        now_ts = int(time.time())
+        idem_check = await check_idempotency_and_cache(
+            idempotency_key=idempotency_key,
+            cache_key=cache_key,
+            now_ts=now_ts,
+            idempotency_ttl=idempotency_ttl_seconds,
+            idempotency_stale=idempotency_stale_seconds,
+            set_in_progress=True,
+            check_cache=False,
+        )
+        if idem_check["status"] == "replay":
+            return build_query_stream_replay_response(
+                topic=topic,
+                level=level,
+                mode=mode,
+                message_id=message_id or "",
+                content=str(idem_check.get("response") or ""),
+            )
+        if idem_check["status"] == "wait":
+            retry_after_ms = compute_retry_after_ms(idempotency_stale_seconds, 0)
+            logger.info(
+                "query_stream_duplicate_in_progress",
+                request_id=request_id,
+                user_id_hash=user_id_hash,
+                mode=mode,
+                level=level,
+                retry_after_ms=retry_after_ms,
+                duplicate_in_progress=True,
+            )
+            return build_query_stream_wait_response(
+                retry_after_ms=retry_after_ms,
+                message_id=message_id or "",
+                mode=mode,
+                level=level,
+                topic=topic,
+            )
 
     if idempotency_key:
         idempotency_started_at = int(time.time())
@@ -406,45 +391,7 @@ async def query_topic_stream(
             "mode": mode,
             "level": level,
         }
-        if idempotency_claimed:
-            reserved = await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
-        else:
-            reserved = await cache_set_if_absent(idempotency_key, idempotency_record, idempotency_ttl_seconds)
-        if not reserved:
-            existing = await cache_get(idempotency_key)
-            if existing:
-                status = existing.get("status")
-                if status == "completed" and existing.get("response"):
-                    return build_query_stream_replay_response(
-                        topic=topic,
-                        level=level,
-                        mode=mode,
-                        message_id=message_id or "",
-                        content=str(existing.get("response")),
-                    )
-                if status == "in_progress":
-                    now_ts = int(time.time())
-                    started_ts = resolve_started_ts(existing, now_ts=now_ts)
-                    age_seconds = compute_age_seconds(existing, now_ts=now_ts)
-                    if age_seconds < idempotency_stale_seconds:
-                        retry_after_ms = compute_retry_after_ms(idempotency_stale_seconds, age_seconds)
-                        logger.info(
-                            "query_stream_duplicate_in_progress",
-                            request_id=request_id,
-                            user_id_hash=user_id_hash,
-                            mode=mode,
-                            level=level,
-                            retry_after_ms=retry_after_ms,
-                            duplicate_in_progress=True,
-                        )
-                        return build_query_stream_wait_response(
-                            retry_after_ms=retry_after_ms,
-                            message_id=message_id or "",
-                            mode=mode,
-                            level=level,
-                            topic=topic,
-                        )
-                    await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
+        await cache_set(idempotency_key, idempotency_record, ttl=idempotency_ttl_seconds)
 
     return build_query_stream_response(
         req=req,
