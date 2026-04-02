@@ -9,7 +9,11 @@
         ],
         "module": "ESNext",
         "skipLibCheck": true,
-        "moduleResolution": "node",
+        "moduleResolution": "bundler",
+        "resolvePackageJsonExports": true,
+        "moduleDetection": "force",
+        "esModuleInterop": true,
+        "allowSyntheticDefaultImports": true,
         "typeRoots": [
             "./node_modules/@types"
         ],
