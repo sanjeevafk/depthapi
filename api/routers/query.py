@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from auth import check_is_pro, ensure_user_exists, get_supabase_admin, verify_token_optional
 from api.repositories.chat_repository import ChatRepository
+from services.query_helpers import normalize_levels, cache_key, persist_history_safely
 from config import get_settings
 from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from services.cache import cache_get, cache_get_many, cache_set, cache_set_many, check_idempotency_and_cache
@@ -33,7 +34,6 @@ from utils import (
     SUPPORTED_CHAT_MODES,
     normalize_mode,
     sanitize_topic,
-    topic_cache_key,
 )
 
 router = APIRouter(tags=["query"])
@@ -56,42 +56,6 @@ class QueryResponse(BaseModel):
     cached: bool = False
 
 
-def _normalize_levels(levels: list[str]) -> list[str]:
-    normalized = []
-    for level in levels or []:
-        normalized.append(PROMPT_MODE_ALIASES.get(level, level))
-    return normalized
-
-
-def _cache_key(topic: str, level: str, mode: str) -> str:
-    return topic_cache_key(topic, level, mode=normalize_mode(mode))
-
-
-async def _persist_history_safely(user, topic: str, levels: list[str], mode: str) -> None:
-    """Persist history within a bounded timeout so request lifecycles remain responsive."""
-    timeout_seconds = max(float(get_settings().stream_heartbeat_seconds or 1.0), 1.0)
-    try:
-        await asyncio.wait_for(
-            ChatRepository.save_to_history(user, topic, levels, mode),
-            timeout=min(timeout_seconds, 3.0),
-        )
-    except asyncio.TimeoutError:
-        logger.warning(
-            "save_to_history_timeout",
-            user_id_hash=anonymize_user_id(str(getattr(user, "id", "") or "") or None),
-            topic_hash=anonymize_text(topic),
-            mode=normalize_mode(mode),
-            sampled=False,
-        )
-    except Exception as exc:
-        logger.error(
-            "save_to_history_unhandled",
-            error=str(exc),
-            user_id_hash=anonymize_user_id(str(getattr(user, "id", "") or "") or None),
-            topic_hash=anonymize_text(topic),
-            mode=normalize_mode(mode),
-            sampled=False,
-        )
 
 
 
@@ -127,7 +91,7 @@ async def query_topic(
             raise HTTPException(status_code=403, detail="Technical mode is a Pro feature")
 
     allowed_levels = FREE_LEVELS
-    levels = [level for level in _normalize_levels(req.levels) if level in allowed_levels]
+    levels = [level for level in normalize_levels(req.levels) if level in allowed_levels]
     if not levels:
         levels = ["eli15"]
 
@@ -146,7 +110,7 @@ async def query_topic(
     missing_levels: list[str] = []
 
     if not req.bypass_cache:
-        cache_keys = {level: _cache_key(topic, level, mode) for level in levels}
+        cache_keys = {level: cache_key(topic, level, mode) for level in levels}
         cached_map = await cache_get_many(list(cache_keys.values()))
         for level in levels:
             cached = cached_map.get(cache_keys[level])
@@ -159,7 +123,7 @@ async def query_topic(
 
     if not missing_levels and not req.bypass_cache:
         if auth_data:
-            await _persist_history_safely(auth_data["user"], topic, levels, mode)
+            await persist_history_safely(auth_data["user"], topic, levels, mode)
         return QueryResponse(topic=topic, explanations=explanations, cached=True)
 
     level_telemetry = {level: {} for level in missing_levels}
@@ -182,7 +146,7 @@ async def query_topic(
     for level, result in zip(tasks.keys(), results):
         if isinstance(result, str):
             explanations[level] = result
-            cache_updates[_cache_key(topic, level, mode)] = {"text": result}
+            cache_updates[cache_key(topic, level, mode)] = {"text": result}
         else:
             if isinstance(result, LLMError):
                 raise result
@@ -203,7 +167,7 @@ async def query_topic(
         await cache_set_many(cache_updates)
 
     if auth_data:
-        await _persist_history_safely(auth_data["user"], topic, levels, mode)
+        await persist_history_safely(auth_data["user"], topic, levels, mode)
 
     token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     estimated_cost_usd = 0.0
@@ -278,7 +242,7 @@ async def query_topic_stream(
             raise HTTPException(status_code=403, detail="Technical mode is a Pro feature")
 
     allowed_levels = FREE_LEVELS
-    normalized_levels = [level for level in _normalize_levels(req.levels) if level in allowed_levels]
+    normalized_levels = [level for level in normalize_levels(req.levels) if level in allowed_levels]
     level = normalized_levels[0] if normalized_levels else "eli15"
 
     effective_user_id = auth_data["user"].id if auth_data else None
@@ -407,10 +371,10 @@ async def query_topic_stream(
         auth_data=auth_data,
         cache_get=cache_get,
         cache_set=cache_set,
-        cache_key_value=_cache_key(topic, level, mode),
+            cache_key_value=cache_key(topic, level, mode),
         generate_stream_explanation=generate_stream_explanation,
         generate_explanation=generate_explanation,
-        persist_history=_persist_history_safely,
+        persist_history=persist_history_safely,
         stream_max_seconds=stream_max_seconds,
         stream_start_timeout_seconds=stream_start_timeout_seconds,
         heartbeat_seconds=heartbeat_seconds,

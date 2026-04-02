@@ -1,0 +1,56 @@
+"""Search context loading helpers for inference."""
+
+from __future__ import annotations
+
+import hashlib
+import asyncio
+
+from services.search import search_service
+from services.inference_constants import SEARCH_CONTEXT_MAX_CHARS, SEARCH_CONTEXT_TIMEOUT_SECONDS
+from logging_config import logger
+
+
+def _hash_topic(topic: str) -> str:
+    return hashlib.sha256((topic or "").strip().lower().encode("utf-8")).hexdigest()
+
+
+def _truncate_search_context(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if len(text) <= SEARCH_CONTEXT_MAX_CHARS:
+        return text
+    return f"{text[:SEARCH_CONTEXT_MAX_CHARS].rstrip()}..."
+
+
+def _append_search_context(prompt: str, context: str) -> str:
+    if not context:
+        return prompt
+    return (
+        f"{prompt}\n\n"
+        "External web context (supplemental, may be incomplete):\n"
+        f"{context}\n\n"
+        "Use this context only when relevant and do not fabricate details."
+    )
+
+
+async def _load_search_context(topic: str, *, mode: str) -> str:
+    normalized_topic = " ".join((topic or "").strip().split())
+    if not normalized_topic:
+        return ""
+
+    try:
+        context = await asyncio.wait_for(
+            search_service.get_search_context(normalized_topic),
+            timeout=SEARCH_CONTEXT_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        logger.warning(
+            "search_context_unavailable",
+            mode=mode,
+            topic_hash=_hash_topic(normalized_topic),
+            error=str(exc),
+        )
+        return ""
+
+    return _truncate_search_context(str(context or ""))
