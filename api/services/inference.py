@@ -65,6 +65,14 @@ from services.inference_socratic import (
 _tech_logger = structlog.get_logger(__name__)
 
 
+class _SearchServiceShim:
+    async def load_search_context(self, topic: str, *, mode: str):
+        return await _load_search_context(topic, mode=mode)
+
+
+search_service = _SearchServiceShim()
+
+
 def is_low_quality(response: str) -> bool:
     text = (response or "").strip()
     return (
@@ -170,7 +178,7 @@ async def technical_mode_handler(
     search_context = (
         _truncate_search_context(prefetched_search_context)
         if isinstance(prefetched_search_context, str)
-        else await _load_search_context(topic, mode=TECHNICAL_MODE)
+        else await search_service.load_search_context(topic, mode=TECHNICAL_MODE)
     )
     prompt = build_technical_prompt(topic, intent, depth, diagram_type)
     if not prompt or not prompt.strip():
@@ -526,7 +534,7 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
     # ────────────────────────────────────────────────────────────────────────
 
     if mode == SOCRATIC_MODE:
-        search_context = await _load_search_context(topic, mode=SOCRATIC_MODE)
+        search_context = await search_service.load_search_context(topic, mode=SOCRATIC_MODE)
         prompt = build_prompt(
             "socratic",
             topic,
@@ -563,7 +571,7 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
             wants_direct_answer=_wants_direct_answer(topic),
         )
 
-    search_context = await _load_search_context(topic, mode=LEARNING_MODE)
+    search_context = await search_service.load_search_context(topic, mode=LEARNING_MODE)
     prompt = build_prompt(level, topic)
     prompt = _append_search_context(prompt, search_context)
     length_constraint = _extract_length_constraint(topic)
@@ -627,7 +635,7 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
                 diagram_type=diagram_type,
             )
 
-        search_context = await _load_search_context(topic, mode=TECHNICAL_MODE)
+        search_context = await search_service.load_search_context(topic, mode=TECHNICAL_MODE)
         prompt = build_technical_prompt(topic, intent, depth, diagram_type)
         if not prompt or not prompt.strip():
             prompt = TECHNICAL_MINIMAL_PROMPT
@@ -736,7 +744,7 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
 
     length_constraint: tuple[str, int] | None = None
     if mode == SOCRATIC_MODE:
-        search_context = await _load_search_context(topic, mode=SOCRATIC_MODE)
+        search_context = await search_service.load_search_context(topic, mode=SOCRATIC_MODE)
         prompt = build_prompt(
             "socratic",
             topic,
@@ -744,7 +752,7 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         )
         prompt = _append_search_context(prompt, search_context)
     else:
-        search_context = await _load_search_context(topic, mode=LEARNING_MODE)
+        search_context = await search_service.load_search_context(topic, mode=LEARNING_MODE)
         prompt = build_prompt(level, topic)
         prompt = _append_search_context(prompt, search_context)
         length_constraint = _extract_length_constraint(topic)

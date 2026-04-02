@@ -491,8 +491,9 @@ async def enforce_request_controls(
     *,
     user_id: str | None,
     client_ip: str | None,
-    reserved_tokens: int,
-    mode: str,
+    reserved_tokens: int | None = None,
+    estimated_tokens: int | None = None,
+    mode: str = "learn",
     is_pro: bool = False,
 ) -> TokenReservation:
     """Apply auth-scoped quota, distributed rate limiting, and circuit breaker checks.
@@ -537,7 +538,8 @@ async def enforce_request_controls(
     if circuit_action != "reject":
         circuit_threshold = 0
 
-    requested_tokens = max(int(reserved_tokens), 1)
+    token_hint = reserved_tokens if reserved_tokens is not None else estimated_tokens
+    requested_tokens = max(int(token_hint or 0), 1)
 
     try:
         redis = await get_redis()
@@ -574,7 +576,7 @@ async def enforce_request_controls(
             return TokenReservation(
                 identifier=identifier,
                 mode=mode,
-                reserved_tokens=reserved_tokens,
+                reserved_tokens=requested_tokens,
                 daily_key=daily_key,
                 hourly_key=hourly_key,
                 hourly_bucket=now_minute,
@@ -633,7 +635,7 @@ async def enforce_request_controls(
     return TokenReservation(
         identifier=identifier,
         mode=mode,
-        reserved_tokens=reserved_tokens,
+        reserved_tokens=requested_tokens,
         daily_key=daily_key,
         hourly_key=hourly_key,
         hourly_bucket=now_minute,

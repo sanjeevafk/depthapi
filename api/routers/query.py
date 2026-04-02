@@ -56,6 +56,10 @@ class QueryResponse(BaseModel):
     cached: bool = False
 
 
+async def save_to_history(user, topic: str, levels: list[str], mode: str) -> None:
+    """Backwards-compatible alias expected by tests."""
+    await persist_history_safely(user, topic, levels, mode)
+
 
 
 
@@ -103,6 +107,7 @@ async def query_topic(
         user_id=str(effective_user_id) if effective_user_id else None,
         client_ip=request.client.host if request.client else "unknown",
         estimated_tokens=estimated_tokens,
+        mode=mode,
         is_pro=is_verified_pro,
     )
 
@@ -123,7 +128,7 @@ async def query_topic(
 
     if not missing_levels and not req.bypass_cache:
         if auth_data:
-            await persist_history_safely(auth_data["user"], topic, levels, mode)
+            await save_to_history(auth_data["user"], topic, levels, mode)
         return QueryResponse(topic=topic, explanations=explanations, cached=True)
 
     level_telemetry = {level: {} for level in missing_levels}
@@ -167,7 +172,7 @@ async def query_topic(
         await cache_set_many(cache_updates)
 
     if auth_data:
-        await persist_history_safely(auth_data["user"], topic, levels, mode)
+        await save_to_history(auth_data["user"], topic, levels, mode)
 
     token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     estimated_cost_usd = 0.0
@@ -253,6 +258,7 @@ async def query_topic_stream(
         user_id=str(effective_user_id) if effective_user_id else None,
         client_ip=request.client.host if request.client else "unknown",
         estimated_tokens=estimated_tokens,
+        mode=mode,
         is_pro=is_verified_pro,
     )
 
@@ -374,7 +380,7 @@ async def query_topic_stream(
             cache_key_value=cache_key(topic, level, mode),
         generate_stream_explanation=generate_stream_explanation,
         generate_explanation=generate_explanation,
-        persist_history=persist_history_safely,
+        persist_history=save_to_history,
         stream_max_seconds=stream_max_seconds,
         stream_start_timeout_seconds=stream_start_timeout_seconds,
         heartbeat_seconds=heartbeat_seconds,
