@@ -539,6 +539,8 @@ def get_provider_config_state() -> dict[str, object]:
     }
 
 
+
+
 async def create_chat_completion(model: str, messages: list[ChatCompletionMessageParam], **kwargs):
     """Create a chat completion with manual provider fallback."""
     request_id = kwargs.pop("request_id", None)

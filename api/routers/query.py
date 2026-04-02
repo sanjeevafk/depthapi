@@ -15,7 +15,7 @@ from config import get_settings
 from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from services.cache import cache_get, cache_get_many, cache_set, cache_set_many, check_idempotency_and_cache
 from services.inference import generate_explanation, generate_stream_explanation
-from services.llm_client import get_litellm_config_state
+from services.llm_client import get_provider_config_state
 from services.llm_errors import LLMError, LLMUnavailable
 from services.rate_limit import enforce_request_controls, estimate_tokens_for_text
 from services.query_streaming import (
@@ -78,9 +78,9 @@ async def query_topic(
     if mode not in SUPPORTED_CHAT_MODES:
         mode = DEFAULT_CHAT_MODE
     if mode == TECHNICAL_MODE:
-        config_state = get_litellm_config_state()
+        config_state = get_provider_config_state()
         if not bool(config_state.get("chat_enabled", False)):
-            raise LLMUnavailable("Chat is disabled because LiteLLM is not configured correctly.")
+            raise LLMUnavailable("Chat is disabled because no LLM providers are configured correctly.")
 
     is_verified_pro = bool(auth_data and await check_is_pro(auth_data["user"].id))
     req.premium = is_verified_pro
@@ -229,9 +229,9 @@ async def query_topic_stream(
     if mode not in SUPPORTED_CHAT_MODES:
         mode = DEFAULT_CHAT_MODE
     if mode == TECHNICAL_MODE:
-        config_state = get_litellm_config_state()
+        config_state = get_provider_config_state()
         if not bool(config_state.get("chat_enabled", False)):
-            raise LLMUnavailable("Chat is disabled because LiteLLM is not configured correctly.")
+            raise LLMUnavailable("Chat is disabled because no LLM providers are configured correctly.")
 
     is_verified_pro = bool(auth_data and await check_is_pro(auth_data["user"].id))
     req.premium = is_verified_pro
