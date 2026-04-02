@@ -2,7 +2,7 @@ import asyncio
 import time
 
 from auth import get_supabase_admin
-from logging_config import logger
+from logging_config import anonymize_user_id, logger
 from services.cache import get_redis
 
 
@@ -21,4 +21,8 @@ async def refresh_is_pro_cache(user_id: str, *, ttl_seconds: int = 900) -> None:
         redis = await get_redis()
         await redis.setex(f"knowbear:user:is_pro:{user_id}", ttl_seconds, "1" if is_pro else "0")
     except Exception as exc:
-        logger.warning("user_cache_refresh_failed", user_id=user_id, error=str(exc))
+        logger.warning(
+            "user_cache_refresh_failed",
+            user_id_hash=anonymize_user_id(user_id),
+            error=str(exc),
+        )
