@@ -14,6 +14,7 @@ import { notifyToast } from "../lib/toast";
 import { getHealth } from "../api";
 import { useConversations } from "../hooks/useConversations";
 import { useMessages } from "../hooks/useMessages";
+import { useMessageSender } from "../hooks/useMessageSender";
 import { useChatStore } from "../stores/useChatStore";
 import { useConversationStore } from "../stores/useConversationStore";
 import { useMessageStore } from "../stores/useMessageStore";
@@ -45,7 +46,7 @@ export default function ChatPage(): JSX.Element {
   const setIsSidebarOpen = useChatStore((state) => state.setIsSidebarOpen);
   const startNewThread = useChatStore((state) => state.startNewThread);
   const deleteConversation = useChatStore((state) => state.deleteConversation);
-  const sendMessage = useChatStore((state) => state.sendMessage);
+  const { sendMessage } = useMessageSender();
   const [chatEnabled, setChatEnabled] = useState(true);
   const [healthMessage, setHealthMessage] = useState<string | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -209,7 +210,7 @@ export default function ChatPage(): JSX.Element {
           avatarUrl={avatarUrl}
           isAuthenticated={Boolean(user)}
           onClose={() => setIsSidebarOpen(false)}
-          onToggleCollapse={() => setIsSidebarCollapsed((prev) => !prev)}
+          onToggleCollapse={() => setIsSidebarCollapsed((prev: boolean) => !prev)}
           onNewThread={startNewThread}
           onGoHome={() => navigate("/?stay=1")}
           onWorkspaceChange={setWorkspace}
