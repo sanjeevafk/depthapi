@@ -224,22 +224,90 @@ async def create_share(
             raise HTTPException(status_code=400, detail="message_id is required for response shares")
         message_id = _require_uuid(payload.message_id, "message_id")
 
+        message = None
+        conversation = None
+        prompt_message = None
         try:
-            message_response = await asyncio.to_thread(
-                lambda: supabase.table("messages")
-                .select("id, conversation_id, role, content, metadata, created_at")
-                .eq("id", message_id)
-                .limit(1)
-                .execute()
+            bundle_response = await asyncio.to_thread(
+                lambda: supabase.rpc(
+                    "fetch_share_response_bundle",
+                    {"p_message_id": message_id, "p_owner_id": user_id},
+                ).execute()
             )
-            message = _first_record(message_response.data)
-            if not message:
-                raise HTTPException(status_code=404, detail="Message not found")
-        except HTTPException:
-            raise
+            bundle = getattr(bundle_response, "data", None)
+            if isinstance(bundle, list) and bundle:
+                bundle = bundle[0]
+            if isinstance(bundle, dict):
+                message = _first_record(bundle.get("message"))
+                conversation = _first_record(bundle.get("conversation"))
+                prompt_message = _first_record(bundle.get("prompt"))
         except Exception as exc:
-            logger.error("share_message_lookup_failed", error=str(exc))
-            raise HTTPException(status_code=500, detail="Failed to load message") from exc
+            logger.warning("share_bundle_rpc_failed", error=str(exc))
+
+        if not message or not conversation:
+            try:
+                message_response = await asyncio.to_thread(
+                    lambda: supabase.table("messages")
+                    .select("id, conversation_id, role, content, metadata, created_at")
+                    .eq("id", message_id)
+                    .limit(1)
+                    .execute()
+                )
+                message = _first_record(message_response.data)
+                if not message:
+                    raise HTTPException(status_code=404, detail="Message not found")
+            except HTTPException:
+                raise
+            except Exception as exc:
+                logger.error("share_message_lookup_failed", error=str(exc))
+                raise HTTPException(status_code=500, detail="Failed to load message") from exc
+
+            if str(message.get("role") or "").lower() != "assistant":
+                raise HTTPException(status_code=400, detail="Only assistant messages can be shared")
+
+            conversation_id = str(message.get("conversation_id") or "")
+            if not conversation_id:
+                raise HTTPException(status_code=400, detail="Conversation not found")
+
+            try:
+                conversation_response = await asyncio.to_thread(
+                    lambda: supabase.table("conversations")
+                    .select("id, user_id, title, mode")
+                    .eq("id", conversation_id)
+                    .limit(1)
+                    .execute()
+                )
+                conversation = _first_record(conversation_response.data)
+                if not conversation:
+                    raise HTTPException(status_code=404, detail="Conversation not found")
+            except HTTPException:
+                raise
+            except Exception as exc:
+                logger.error(
+                    "share_conversation_lookup_failed",
+                    error=str(exc),
+                    user_id_hash=anonymize_user_id(user_id),
+                )
+                raise HTTPException(status_code=500, detail="Failed to load conversation") from exc
+
+            if str(conversation.get("user_id") or "") != user_id:
+                raise HTTPException(status_code=404, detail="Message not found")
+
+            assistant_created_at = message.get("created_at")
+            try:
+                prompt_response = await asyncio.to_thread(
+                    lambda: supabase.table("messages")
+                    .select("id, content, created_at")
+                    .eq("conversation_id", conversation_id)
+                    .eq("role", "user")
+                    .lte("created_at", assistant_created_at)
+                    .order("created_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                prompt_message = _first_record(prompt_response.data)
+            except Exception as exc:
+                logger.warning("share_prompt_lookup_failed", error=str(exc))
 
         if str(message.get("role") or "").lower() != "assistant":
             raise HTTPException(status_code=400, detail="Only assistant messages can be shared")
@@ -248,61 +316,25 @@ async def create_share(
         if not conversation_id:
             raise HTTPException(status_code=400, detail="Conversation not found")
 
-        try:
-            conversation_response = await asyncio.to_thread(
-                lambda: supabase.table("conversations")
-                .select("id, user_id, title, mode")
-                .eq("id", conversation_id)
-                .limit(1)
-                .execute()
-            )
-            conversation = _first_record(conversation_response.data)
-            if not conversation:
-                raise HTTPException(status_code=404, detail="Conversation not found")
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.error(
-                "share_conversation_lookup_failed",
-                error=str(exc),
-                user_id_hash=anonymize_user_id(user_id),
-            )
-            raise HTTPException(status_code=500, detail="Failed to load conversation") from exc
+        if not prompt_message:
+            prompt_message = {}
 
-        if str(conversation.get("user_id") or "") != user_id:
-            raise HTTPException(status_code=404, detail="Message not found")
-
+        prompt_text = str(prompt_message.get("content") or "")
+        prompt_message_id = str(prompt_message.get("id") or "") or None
         assistant_created_at = message.get("created_at")
-        try:
-            prompt_response = await asyncio.to_thread(
-                lambda: supabase.table("messages")
-                .select("id, content, created_at")
-                .eq("conversation_id", conversation_id)
-                .eq("role", "user")
-                .lte("created_at", assistant_created_at)
-                .order("created_at", desc=True)
-                .limit(1)
-                .execute()
-            )
-            prompt_message = _first_record(prompt_response.data)
-            if prompt_message:
-                prompt_text = str(prompt_message.get("content") or "")
-                prompt_message_id = str(prompt_message.get("id") or "") or None
-        except Exception as exc:
-            logger.warning("share_prompt_lookup_failed", error=str(exc))
 
         raw_metadata = _normalize_metadata(message.get("metadata"))
         metadata = {
             "assistant_metadata": raw_metadata,
             "assistant_created_at": assistant_created_at,
-            "conversation_title": conversation.get("title"),
-            "conversation_mode": conversation.get("mode"),
+            "conversation_title": conversation.get("title") if conversation else None,
+            "conversation_mode": conversation.get("mode") if conversation else None,
             "prompt_message_id": prompt_message_id,
         }
         response_text = str(message.get("content") or "")
 
         if not title:
-            fallback = str(conversation.get("title") or "").strip()
+            fallback = str(conversation.get("title") or "").strip() if conversation else ""
             if fallback:
                 title = fallback
             else:
