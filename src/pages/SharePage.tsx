@@ -12,7 +12,8 @@ import Mermaid from "../components/Mermaid";
 import SafeImage from "../components/SafeImage";
 
 const markdownComponents: Components = {
-  code({ className, children, ...props }) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  code({ className, children, ...props }: any) {
     const match = /language-(\w+)/.exec(className || "");
     const codeStr = String(children).replace(/\n$/, "");
 
@@ -29,18 +30,21 @@ const markdownComponents: Components = {
       </code>
     );
   },
-  pre({ children }) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  pre({ children }: any) {
     return (
       <pre className="bg-black/40 p-4 rounded-xl border border-white/10 overflow-x-auto my-3">
         {children}
       </pre>
     );
   },
-  img({ src, alt }) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  img({ src, alt }: any) {
     if (!src) return null;
     return <SafeImage src={src} alt={alt || "Image"} />;
   },
-  a({ ...props }) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  a({ ...props }: any) {
     return (
       <a
         {...props}

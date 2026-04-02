@@ -149,23 +149,6 @@ export interface ChatState {
   addMessage: (msg: Message) => void;
   updateMessageByClientId: (clientId: string, updater: (msg: Message) => Message) => void;
   removeMessageByClientId: (clientId: string) => void;
-
-  // Actions — streaming
-  sendMessage: (
-    content: string,
-    options?: {
-      mode?: ChatMode;
-      promptMode?: PromptMode;
-      isRegeneration?: boolean;
-      temperature?: number;
-      clientMessageId?: string;
-      assistantClientId?: string;
-      skipUserMessage?: boolean;
-      replaceMessageId?: string;
-    },
-  ) => Promise<void>;
-  regenerateMessage: (messageId: string, mode?: ChatMode) => Promise<void>;
-  retrySync: (messageId: string) => Promise<void>;
 }
 
 // ─── Store implementation ───────────────────────────────────────────────────
