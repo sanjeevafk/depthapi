@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { supabase } from "../lib/supabase";
 import type { ChatMode, Conversation, Message, PromptMode } from "../types/chat";
 import type { Level } from "../types";
 import {
