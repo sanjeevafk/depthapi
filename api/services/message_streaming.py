@@ -18,7 +18,7 @@ from services.streaming_orchestrator import (
     compute_fallback_timeout,
     update_idempotency_progress,
 )
-from supabase.chat_repository import ChatRepository
+from api.repositories.chat_repository import ChatRepository
 from utils import TECHNICAL_MODE, SOCRATIC_MODE
 
 
