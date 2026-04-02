@@ -18,7 +18,7 @@ from logging_config import anonymize_text, anonymize_user_id, logger, log_sample
 from monitoring import capture_telemetry_event
 from services.cache import cache_get, cache_set, check_idempotency_and_cache
 from services.inference import generate_explanation, generate_stream_explanation
-from services.llm_client import get_litellm_config_state
+from services.llm_client import get_provider_config_state
 from services.llm_errors import LLMUnavailable
 from services.rate_limit import enforce_request_controls, estimate_tokens_for_text
 from services.message_streaming import (
@@ -92,9 +92,9 @@ def _require_uuid(value: Optional[str], field_name: str) -> str:
 async def send_message(req: MessageRequest, request: Request, auth_data: dict = Depends(verify_token)):
     request_received = time.perf_counter()
     request_id = str(getattr(request.state, "request_id", "") or "")
-    config_state = get_litellm_config_state()
+    config_state = get_provider_config_state()
     if not bool(config_state.get("chat_enabled", False)):
-        raise LLMUnavailable("Chat is disabled because LiteLLM is not configured correctly.")
+        raise LLMUnavailable("Chat is disabled because no LLM providers are configured correctly.")
 
     user = auth_data["user"]
     user_id = str(getattr(user, "id", "") or "").strip()
