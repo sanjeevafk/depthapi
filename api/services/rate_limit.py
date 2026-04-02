@@ -213,14 +213,18 @@ async def check_rate_limit(
 
     try:
         redis = await get_redis()
-        count = int(await redis.incr(key))
-        if count == 1:
-            await redis.expire(key, window_seconds)
-
-        ttl = int(await redis.ttl(key))
-        if ttl < 0:
-            await redis.expire(key, window_seconds)
-            ttl = window_seconds
+        script = (
+            "local count = redis.call('INCR', KEYS[1])\n"
+            "local ttl = redis.call('TTL', KEYS[1])\n"
+            "if ttl < 0 then\n"
+            "  redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))\n"
+            "  ttl = tonumber(ARGV[1])\n"
+            "end\n"
+            "return {count, ttl}\n"
+        )
+        result = await redis.eval(script, 1, key, window_seconds)
+        count = int(result[0] if result else 0)
+        ttl = int(result[1] if result and len(result) > 1 else window_seconds)
 
         if count > limit:
             return RateLimitResult(
@@ -406,18 +410,37 @@ async def check_circuit_breaker(*, estimated_tokens: int, fail_open: bool) -> Ci
 
     try:
         redis = await get_redis()
-        already_open = await redis.get(open_key)
-        if already_open:
-            ttl = int(await redis.ttl(open_key))
-            return CircuitBreakerResult(allowed=False, retry_after=max(ttl, 1))
+        script = (
+            "local open = redis.call('GET', KEYS[2])\n"
+            "if open then\n"
+            "  local ttl = redis.call('TTL', KEYS[2])\n"
+            "  if ttl < 0 then ttl = tonumber(ARGV[3]) end\n"
+            "  return {0, ttl}\n"
+            "end\n"
+            "local total = redis.call('INCRBY', KEYS[1], tonumber(ARGV[1]))\n"
+            "if total <= tonumber(ARGV[1]) then\n"
+            "  redis.call('EXPIRE', KEYS[1], 120)\n"
+            "end\n"
+            "if total > tonumber(ARGV[2]) then\n"
+            "  redis.call('SETEX', KEYS[2], tonumber(ARGV[3]), '1')\n"
+            "  return {0, tonumber(ARGV[3])}\n"
+            "end\n"
+            "return {1, 0}\n"
+        )
+        result = await redis.eval(
+            script,
+            2,
+            usage_key,
+            open_key,
+            max(int(estimated_tokens), 1),
+            threshold,
+            open_seconds,
+        )
+        allowed_flag = int(result[0] if result else 0)
+        retry_after = int(result[1] if result and len(result) > 1 else 1)
 
-        total = int(await redis.incrby(usage_key, max(int(estimated_tokens), 1)))
-        if total <= max(int(estimated_tokens), 1):
-            await redis.expire(usage_key, 120)
-
-        if total > threshold:
-            await redis.setex(open_key, open_seconds, "1")
-            return CircuitBreakerResult(allowed=False, retry_after=open_seconds)
+        if allowed_flag == 0:
+            return CircuitBreakerResult(allowed=False, retry_after=max(retry_after, 1))
 
         return CircuitBreakerResult(allowed=True, retry_after=0)
     except Exception as exc:

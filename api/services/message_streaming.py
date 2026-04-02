@@ -537,20 +537,20 @@ def build_message_stream_response(
                 sampled=True,
             )
             if assistant_message_id:
-                try:
-                    await asyncio.to_thread(
-                        lambda: supabase.table("messages").update({"content": full_content}).eq("id", assistant_message_id).execute()
-                    )
-                except Exception as exc:
-                    logger.error(
-                        "messages_assistant_update_failed",
-                        error=str(exc),
-                        request_id=request_id,
-                        user_id_hash=user_id_hash,
-                        message_id=assistant_message_id,
-                        retry=bool(req.regenerate),
-                        sampled=False,
-                    )
+                def _update_db():
+                    try:
+                        supabase.table("messages").update({"content": full_content}).eq("id", assistant_message_id).execute()
+                    except Exception as exc:
+                        logger.error(
+                            "messages_assistant_update_failed",
+                            error=str(exc),
+                            request_id=request_id,
+                            user_id_hash=user_id_hash,
+                            message_id=assistant_message_id,
+                            retry=bool(req.regenerate),
+                            sampled=False,
+                        )
+                asyncio.create_task(asyncio.to_thread(_update_db))
 
             status = "success"
             if aborted:
