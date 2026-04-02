@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from auth import check_is_pro, verify_token
 from api.repositories.chat_repository import ChatRepository
+from services.message_persistence import insert_message_bundle
 from config import get_settings
 from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from monitoring import capture_telemetry_event
@@ -280,54 +281,24 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         "updated_at": now_iso,
     }
 
-    assistant_message_id = await ChatRepository.insert_message_bundle_rpc(
-        conversation.get("id"),
-        content,
-        user_metadata,
-        assistant_metadata,
-        update_payload,
-    )
-
-    if not assistant_message_id:
-        _insert_user, _update_conv, _insert_assistant = ChatRepository.batch_insert_message_setup(
-            conversation.get("id"),
-            content,
-            user_metadata,
-            assistant_metadata,
-            update_payload,
+    try:
+        assistant_message_id = await insert_message_bundle(
+            conversation_id=conversation.get("id"),
+            content=content,
+            user_metadata=user_metadata,
+            assistant_metadata=assistant_metadata,
+            update_payload=update_payload,
+            request_id=request_id,
+            user_id_hash=user_id_hash,
+            retry=bool(req.regenerate),
         )
-
-        try:
-            user_res, conv_res, assistant_resp = await asyncio.gather(
-                asyncio.to_thread(_insert_user),
-                asyncio.to_thread(_update_conv),
-                asyncio.to_thread(_insert_assistant),
-                return_exceptions=True
-            )
-
-            for res, name in [(user_res, "user_insert"), (conv_res, "conv_update"), (assistant_resp, "assistant_insert")]:
-                if isinstance(res, Exception):
-                    logger.error(
-                        f"messages_{name}_failed",
-                        error=str(res),
-                        request_id=request_id,
-                        user_id_hash=user_id_hash,
-                        conversation_id=req.conversation_id,
-                        retry=bool(req.regenerate),
-                        sampled=False,
-                    )
-                    if name != "conv_update":
-                        raise res
-
-            assistant_data = cast(list[Dict[str, Any]], assistant_resp.data) if not isinstance(assistant_resp, Exception) and getattr(assistant_resp, "data", None) else []
-            assistant_message_id = assistant_data[0]["id"] if assistant_data else None
-        except Exception as exc:
-            await cache_set(
-                idempotency_key,
-                {"status": "failed", "message_id": client_message_id},
-                ttl=idempotency_ttl_seconds,
-            )
-            raise HTTPException(status_code=500, detail="Failed to save database records") from exc
+    except Exception as exc:
+        await cache_set(
+            idempotency_key,
+            {"status": "failed", "message_id": client_message_id},
+            ttl=idempotency_ttl_seconds,
+        )
+        raise HTTPException(status_code=500, detail="Failed to save database records") from exc
 
     await cache_set(
         idempotency_key,

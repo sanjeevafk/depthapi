@@ -1,11 +1,10 @@
 """Native multi-provider inference service."""
 
 import asyncio
-import hashlib
 import json
 import re
 import time
-from typing import TypedDict, cast
+from typing import cast
 import httpx
 import structlog
 from openai import APIConnectionError, APIStatusError, APITimeoutError
@@ -14,451 +13,56 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from config import get_settings
 from prompts import SYSTEM_PROMPT, DiagramType, build_prompt
 from logging_config import logger, anonymize_user_id, log_sampled_success
-from services.search import search_service
 from services.intent import (
     detect_intent_and_depth,
     detect_diagram_type,
     validate_technical_response,
 )
-from utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE, normalize_mode, requests_depth
+from utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE, normalize_mode
 from services.llm_client import close_llm_client, create_chat_completion, stream_chat_completion
 from services.token_count import count_prompt_tokens
+from services.inference_constants import (
+    TECHNICAL_MODEL_PRIMARY,
+    TECHNICAL_MODEL_FALLBACK,
+    TECHNICAL_TEMPERATURE,
+    TECHNICAL_MAX_TOKENS,
+    LEARNING_DETAILED_LEVELS,
+    TECHNICAL_LAST_RESORT_RESPONSE,
+    TECHNICAL_MINIMAL_PROMPT,
+)
+from services.inference_routing import (
+    extract_features,
+    score_model,
+    route_model_aliases,
+    _technical_route,
+    _learning_model_for_level,
+    _effective_alias_chain,
+)
+from services.inference_prompting import (
+    _extract_length_constraint,
+    _apply_length_constraint,
+    _normalize_whitespace,
+    _word_count,
+    _split_sentences,
+    _append_cue_if_fits,
+    _compress_sentence,
+    _enforce_word_limit,
+    _enforce_length_constraint,
+    _learning_length_policy,
+    _is_large_input,
+    _drain_complete_sentences,
+)
+from services.inference_search import _truncate_search_context, _append_search_context, _load_search_context
+from services.inference_socratic import (
+    _normalize_question_signature,
+    _extract_socratic_questions,
+    _wants_direct_answer,
+    _get_direct_answer_patterns,
+    _fallback_socratic_question,
+    _enforce_socratic_response_constraints,
+)
 
 _tech_logger = structlog.get_logger(__name__)
-
-TECHNICAL_MODEL_PRIMARY = "technical-primary"
-TECHNICAL_MODEL_FALLBACK = "technical-fallback"
-TECHNICAL_TEMPERATURE = 0.4
-TECHNICAL_MAX_TOKENS = 2048
-
-LEARNING_MODEL_SIMPLE = "default-fast"
-LEARNING_MODEL_DETAILED = "learning-detailed"
-LEARNING_DETAILED_LEVELS = {"eli15", "meme"}
-
-LEARN_GEMINI_FLASH_ALIAS = "learn-gemini-flash"
-LEARN_GROQ_FAST_ALIAS = "learn-groq-llama8b"
-LEARN_OPENROUTER_FALLBACK_ALIAS = "learn-openrouter-free"
-TECH_GEMINI_FLASH_ALIAS = "technical-gemini-flash"
-TECH_OPENROUTER_ALIAS = "technical-openrouter-free"
-TECH_GROQ_FAST_ALIAS = "technical-groq-llama8b"
-TECH_GEMINI_PRO_ALIAS = "technical-gemini-pro"
-TECH_CEREBRAS_GLM_ALIAS = "technical-cerebras-glm"
-SOCRATIC_OPENROUTER_ALIAS = "socratic-openrouter-free"
-SOCRATIC_CEREBRAS_ALIAS = "socratic-cerebras-glm"
-SOCRATIC_GEMINI_ALIAS = "socratic-gemini-pro"
-SOCRATIC_GROQ_ALIAS = "socratic-groq-llama8b"
-
-TECHNICAL_LAST_RESORT_RESPONSE = (
-    "## Core Idea\n"
-    "Unable to generate a response at this time. Please retry in a moment.\n\n"
-    "## First Principles Breakdown\n"
-    "The model service may be temporarily unavailable.\n\n"
-    "## Intuition\n"
-    "Retrying often resolves transient issues.\n\n"
-    "## Edge Cases / Limitations\n"
-    "If this persists, check service status or try a different query.\n\n"
-    "## Connections\n"
-    "No connections available - response generation failed."
-)
-
-TECHNICAL_MINIMAL_PROMPT = "Explain the topic with concise technical clarity."
-
-MODEL_PROFILES: dict[str, dict[str, float]] = {
-    LEARNING_MODEL_SIMPLE: {
-        "complexity": 0.45,
-        "reasoning": 0.45,
-        "explanation": 0.60,
-        "latency_priority": 0.95,
-    },
-    LEARNING_MODEL_DETAILED: {
-        "complexity": 0.70,
-        "reasoning": 0.78,
-        "explanation": 0.72,
-        "latency_priority": 0.70,
-    },
-    TECHNICAL_MODEL_PRIMARY: {
-        "complexity": 0.95,
-        "reasoning": 0.95,
-        "explanation": 0.88,
-        "latency_priority": 0.40,
-    },
-    TECHNICAL_MODEL_FALLBACK: {
-        "complexity": 0.60,
-        "reasoning": 0.62,
-        "explanation": 0.65,
-        "latency_priority": 0.80,
-    },
-}
-
-COST_PENALTY: dict[str, float] = {
-    LEARNING_MODEL_SIMPLE: 0.08,
-    LEARNING_MODEL_DETAILED: 0.16,
-    TECHNICAL_MODEL_PRIMARY: 0.24,
-    TECHNICAL_MODEL_FALLBACK: 0.12,
-}
-
-SEARCH_CONTEXT_MAX_CHARS = 1800
-SEARCH_CONTEXT_TIMEOUT_SECONDS = 3.5
-
-LATENCY_KEYWORDS = (
-    r"\bquick\b",
-    r"\bsummary\b",
-    r"\btldr\b",
-    r"\bshort\b",
-    r"\bfast\b",
-)
-COMPLEXITY_KEYWORDS = (
-    r"\boptimi[sz]e\b",
-    r"\bdistributed\b",
-    r"\bconcurrency\b",
-    r"\btrade[ -]?offs?\b",
-    r"\barchitecture\b",
-    r"\bscal\w+\b",
-    r"\bproof\b",
-    r"\bderive\b",
-)
-REASONING_KEYWORDS = (
-    r"\bwhy\b",
-    r"\bcompare\b",
-    r"\bversus\b",
-    r"\bshould\b",
-    r"\bpros?\b",
-    r"\bcons?\b",
-    r"\bdecision\b",
-)
-EXPLANATION_KEYWORDS = (
-    r"\bexplain\b",
-    r"\bhow\b",
-    r"\bwalk me through\b",
-    r"\bintuition\b",
-    r"\bexample\b",
-)
-
-
-class IntentFeatures(TypedDict):
-    complexity: float
-    reasoning: float
-    explanation: float
-    latency_priority: float
-
-
-def _clamp_feature(value: float) -> float:
-    return max(0.0, min(1.0, value))
-
-
-def _count_keyword_hits(text: str, patterns: tuple[str, ...]) -> int:
-    return sum(1 for pattern in patterns if re.search(pattern, text))
-
-
-def extract_features(
-    query: str,
-    *,
-    mode: str,
-    level: str,
-    intent: str | None = None,
-    depth: str | None = None,
-) -> IntentFeatures:
-    """
-    Build routing features from deterministic intent/depth + keyword signals.
-    """
-    lowered = (query or "").lower().strip()
-    resolved_intent = intent
-    resolved_depth = depth
-    if not resolved_intent or not resolved_depth:
-        try:
-            classification = detect_intent_and_depth(query)
-            resolved_intent = resolved_intent or classification.get("intent", "explain")
-            resolved_depth = resolved_depth or classification.get("depth", "medium")
-        except Exception:
-            resolved_intent = resolved_intent or "explain"
-            resolved_depth = resolved_depth or "medium"
-
-    complexity = 0.35
-    reasoning = 0.30
-    explanation = 0.45
-    latency_priority = 0.50
-
-    if resolved_depth == "deep":
-        complexity += 0.40
-        reasoning += 0.25
-        latency_priority -= 0.25
-    elif resolved_depth == "shallow":
-        complexity -= 0.10
-        latency_priority += 0.30
-        explanation += 0.08
-
-    if resolved_intent == "compare":
-        reasoning += 0.35
-        complexity += 0.10
-    elif resolved_intent == "brainstorm":
-        reasoning += 0.28
-        complexity += 0.16
-    else:
-        explanation += 0.22
-
-    complexity += 0.08 * _count_keyword_hits(lowered, COMPLEXITY_KEYWORDS)
-    reasoning += 0.07 * _count_keyword_hits(lowered, REASONING_KEYWORDS)
-    explanation += 0.06 * _count_keyword_hits(lowered, EXPLANATION_KEYWORDS)
-    latency_priority += 0.09 * _count_keyword_hits(lowered, LATENCY_KEYWORDS)
-
-    if level in LEARNING_DETAILED_LEVELS:
-        explanation += 0.08
-        complexity += 0.06
-        latency_priority -= 0.10
-
-    if mode == TECHNICAL_MODE:
-        complexity += 0.15
-        reasoning += 0.12
-        latency_priority -= 0.10
-    elif mode == SOCRATIC_MODE:
-        explanation += 0.06
-
-    return {
-        "complexity": _clamp_feature(complexity),
-        "reasoning": _clamp_feature(reasoning),
-        "explanation": _clamp_feature(explanation),
-        "latency_priority": _clamp_feature(latency_priority),
-    }
-
-
-def score_model(features: IntentFeatures, model_alias: str, *, mode: str) -> float:
-    """
-    Weighted model scoring with explicit cost offsets.
-    """
-    profile = MODEL_PROFILES.get(model_alias, MODEL_PROFILES[LEARNING_MODEL_SIMPLE])
-    score = 0.0
-    for feature_name, value in features.items():
-        score += float(value if isinstance(value, (int, float)) else 0.0) * profile.get(feature_name, 0.0)
-    score -= COST_PENALTY.get(model_alias, 0.0)
-
-    # Mode-specific tie-breakers to keep behavior intentional.
-    if mode == TECHNICAL_MODE and model_alias == TECHNICAL_MODEL_PRIMARY:
-        score += 0.15
-    if mode == LEARNING_MODE and model_alias == LEARNING_MODEL_SIMPLE:
-        score += 0.06
-
-    return score
-
-
-def _token_count(query: str) -> int:
-    return len((query or "").strip().split())
-
-
-def _looks_simple_explanation(query: str) -> bool:
-    lowered = (query or "").lower()
-    return any(marker in lowered for marker in ("what is", "explain", "define"))
-
-
-def _looks_freshness_query(query: str) -> bool:
-    lowered = (query or "").lower()
-    markers = ("latest", "today", "current", "recent", "news", "update")
-    return any(marker in lowered for marker in markers)
-
-
-def _looks_programming_query(query: str) -> bool:
-    lowered = (query or "").lower()
-    markers = (
-        "api",
-        "pagination",
-        "endpoint",
-        "database",
-        "sql",
-        "python",
-        "javascript",
-        "typescript",
-        "bug",
-        "algorithm",
-        "function",
-        "react",
-        "fastapi",
-        "code",
-    )
-    return any(marker in lowered for marker in markers)
-
-
-def _looks_math_query(query: str) -> bool:
-    lowered = (query or "").lower()
-    markers = (
-        "math",
-        "equation",
-        "solve",
-        "integral",
-        "derivative",
-        "calculus",
-        "algebra",
-        "proof",
-        "theorem",
-        "matrix",
-        "probability",
-    )
-    return any(marker in lowered for marker in markers)
-
-
-def _looks_reasoning_query(query: str) -> bool:
-    lowered = (query or "").lower()
-    return any(marker in lowered for marker in ("why", "how", "prove", "reason", "derive"))
-
-
-def _extract_length_constraint(text: str) -> tuple[str, int] | None:
-    lowered = (text or "").lower()
-    if not lowered:
-        return None
-    patterns = (
-        r"\b(?:in|within|under|max(?:imum)?|limit(?:ed)? to)\s+(\d{1,4})\s*(words?|chars?|characters?)\b",
-        r"\b(\d{1,4})\s*(words?|chars?|characters?)\b",
-        r"\b(\d{1,4})-(word|words|char|chars|character|characters)\b",
-    )
-    for pattern in patterns:
-        match = re.search(pattern, lowered)
-        if not match:
-            continue
-        count = int(match.group(1))
-        unit = match.group(2) if match.lastindex and match.lastindex >= 2 else ""
-        unit = unit.lower()
-        if "char" in unit:
-            return ("chars", max(count, 1))
-        return ("words", max(count, 1))
-    return None
-
-
-def _apply_length_constraint(prompt: str, constraint: tuple[str, int] | None) -> str:
-    if not constraint:
-        return prompt
-    unit, count = constraint
-    if unit == "chars":
-        return (
-            f"{prompt}\n\nLength constraint: respond in at most {count} characters. "
-            "If this conflicts with earlier length guidance, follow this limit "
-            "and still complete the final sentence."
-        )
-    return (
-        f"{prompt}\n\nLength constraint: respond in at most {count} words. "
-        "If this conflicts with earlier length guidance, follow this limit "
-        "and still complete the final sentence."
-    )
-
-
-def _normalize_whitespace(text: str) -> str:
-    return re.sub(r"\s+", " ", (text or "")).strip()
-
-
-def _word_count(text: str) -> int:
-    return len(re.findall(r"\S+", text or ""))
-
-
-def _split_sentences(text: str) -> list[str]:
-    normalized = _normalize_whitespace(text)
-    if not normalized:
-        return []
-    parts = re.split(r"(?<=[.!?])\s+", normalized)
-    return [part.strip() for part in parts if part and part.strip()]
-
-
-def _append_cue_if_fits(text: str, limit: int, cue: str | None) -> str:
-    if not cue:
-        return text
-    cue_words = _word_count(cue)
-    if _word_count(text) + cue_words <= limit:
-        return f"{text} {cue}".strip()
-    return text
-
-
-def _compress_sentence(sentence: str, limit: int) -> str:
-    cleaned = _normalize_whitespace(sentence)
-    if _word_count(cleaned) <= limit:
-        return cleaned
-    without_parentheticals = re.sub(r"\s*\([^)]*\)", "", cleaned).strip()
-    if _word_count(without_parentheticals) <= limit:
-        return without_parentheticals
-    words = without_parentheticals.split()
-    if not words:
-        return ""
-    cutoff = min(limit, len(words))
-    for index in range(cutoff, 0, -1):
-        if re.search(r"[,:;–—-]$", words[index - 1]):
-            trimmed = " ".join(words[:index]).rstrip(",;–—-")
-            return trimmed + ("" if trimmed.endswith((".", "!", "?")) else ".")
-    trimmed = " ".join(words[:cutoff]).rstrip(",;–—-")
-    return trimmed + ("" if trimmed.endswith((".", "!", "?")) else ".")
-
-
-def _enforce_word_limit(text: str, limit: int, *, cue: str | None = None) -> str:
-    normalized = _normalize_whitespace(text)
-    if not normalized:
-        return ""
-    if _word_count(normalized) <= limit:
-        return normalized
-    sentences = _split_sentences(normalized)
-    selected: list[str] = []
-    words_used = 0
-    for sentence in sentences:
-        sentence_words = _word_count(sentence)
-        if words_used + sentence_words <= limit:
-            selected.append(sentence)
-            words_used += sentence_words
-        else:
-            break
-    if selected:
-        result = " ".join(selected).strip()
-        return _append_cue_if_fits(result, limit, cue)
-    compressed = _compress_sentence(sentences[0] if sentences else normalized, limit)
-    return _append_cue_if_fits(compressed, limit, cue)
-
-
-def _enforce_length_constraint(text: str, constraint: tuple[str, int] | None) -> str:
-    if not constraint:
-        return text
-    unit, count = constraint
-    if count <= 0:
-        return ""
-    if unit == "chars":
-        normalized = _normalize_whitespace(text)
-        if len(normalized) <= count:
-            return normalized
-        sentences = _split_sentences(normalized)
-        selected = []
-        chars_used = 0
-        for sentence in sentences:
-            space_needed = 1 if selected else 0
-            if chars_used + space_needed + len(sentence) <= count:
-                selected.append(sentence)
-                chars_used += space_needed + len(sentence)
-            else:
-                break
-        if selected:
-            return " ".join(selected).strip()
-        return normalized[:count].rstrip() + ("." if normalized and normalized[-1] not in ".!?" else "")
-    return _enforce_word_limit(text, count)
-
-
-def _learning_length_policy(topic: str) -> tuple[int, str | None]:
-    if requests_depth(topic):
-        return (120, None)
-    return (60, None)
-
-
-def _is_large_input(text: str) -> bool:
-    settings = get_settings()
-    char_threshold = int(getattr(settings, "large_input_char_threshold", 5000))
-    token_threshold = int(getattr(settings, "large_input_token_threshold", 5000))
-    if len(text) > char_threshold:
-        return True
-    try:
-        return count_prompt_tokens(text) > token_threshold
-    except Exception:
-        return False
-
-
-def _drain_complete_sentences(buffer: str) -> tuple[list[str], str]:
-    if not buffer:
-        return [], ""
-    parts = re.split(r"(?<=[.!?])\s+", buffer)
-    if not buffer.strip().endswith((".", "!", "?")) and parts:
-        remainder = parts.pop()
-    else:
-        remainder = ""
-    sentences = [part.strip() for part in parts if part and part.strip()]
-    return sentences, remainder
 
 
 def is_low_quality(response: str) -> bool:
@@ -468,20 +72,6 @@ def is_low_quality(response: str) -> bool:
         or text.count("\n") < 2
         or "not sure" in text.lower()
     )
-
-
-def _is_cerebras_alias(alias: str) -> bool:
-    return "cerebras" in (alias or "").lower()
-
-
-def _effective_alias_chain(aliases: list[str], *, complexity: float) -> list[str]:
-    chain: list[str] = []
-    for alias in aliases:
-        if _is_cerebras_alias(alias) and complexity < 0.8:
-            continue
-        if alias not in chain:
-            chain.append(alias)
-    return chain
 
 
 async def _call_with_quality_escalation(
@@ -507,121 +97,6 @@ async def _call_with_quality_escalation(
     retry_alias = chain[1]
     retry_response = await call_model(retry_alias, prompt, max_tokens=max_tokens, **kwargs)
     return retry_response or primary_response
-
-
-def route_model_aliases(
-    query: str,
-    *,
-    mode: str,
-    level: str,
-    intent: str | None = None,
-    depth: str | None = None,
-    is_pro: bool = False,
-    search_api_used: bool = False,
-) -> list[str]:
-    features = extract_features(
-        query,
-        mode=mode,
-        level=level,
-        intent=intent,
-        depth=depth,
-    )
-    complexity = float(features.get("complexity", 0.0) or 0.0)
-    latency_priority = float(features.get("latency_priority", 0.0) or 0.0)
-    query_tokens = _token_count(query)
-    is_simple_explain = _looks_simple_explanation(query)
-    is_freshness = _looks_freshness_query(query)
-    is_programming = _looks_programming_query(query)
-    is_math = _looks_math_query(query)
-    is_reasoning = _looks_reasoning_query(query)
-    prefers_low_latency = latency_priority >= 0.72 or query_tokens < 10
-
-    aliases: list[str]
-
-    if mode == LEARNING_MODE:
-        if is_freshness:
-            aliases = [LEARN_GEMINI_FLASH_ALIAS, LEARN_GROQ_FAST_ALIAS, LEARN_OPENROUTER_FALLBACK_ALIAS]
-        elif query_tokens < 8 or latency_priority >= 0.8 or complexity < 0.3:
-            aliases = [LEARN_GROQ_FAST_ALIAS, LEARN_GEMINI_FLASH_ALIAS, LEARN_OPENROUTER_FALLBACK_ALIAS]
-        elif is_simple_explain and complexity < 0.5:
-            aliases = [LEARN_GEMINI_FLASH_ALIAS, LEARN_GROQ_FAST_ALIAS, LEARN_OPENROUTER_FALLBACK_ALIAS]
-        else:
-            aliases = [LEARN_GEMINI_FLASH_ALIAS, LEARN_GROQ_FAST_ALIAS, LEARN_OPENROUTER_FALLBACK_ALIAS]
-    elif mode == TECHNICAL_MODE:
-        if prefers_low_latency and complexity < 0.85:
-            aliases = [
-                TECH_GROQ_FAST_ALIAS,
-                TECH_GEMINI_FLASH_ALIAS,
-                TECH_GEMINI_PRO_ALIAS,
-                TECH_OPENROUTER_ALIAS,
-            ]
-            if is_pro and complexity >= 0.8:
-                aliases.append(TECH_CEREBRAS_GLM_ALIAS)
-        elif is_math and complexity >= 0.6:
-            aliases = [TECH_GEMINI_PRO_ALIAS]
-            if is_pro and complexity >= 0.8:
-                aliases.append(TECH_CEREBRAS_GLM_ALIAS)
-            aliases.extend([TECH_GROQ_FAST_ALIAS, TECH_OPENROUTER_ALIAS])
-        elif is_math and complexity < 0.4:
-            aliases = [TECH_GEMINI_FLASH_ALIAS, TECH_GROQ_FAST_ALIAS, TECH_OPENROUTER_ALIAS]
-        elif is_programming or search_api_used:
-            if complexity < 0.7:
-                aliases = [TECH_GROQ_FAST_ALIAS, TECH_GEMINI_FLASH_ALIAS, TECH_GEMINI_PRO_ALIAS, TECH_OPENROUTER_ALIAS]
-            else:
-                aliases = [TECH_GEMINI_PRO_ALIAS, TECH_GROQ_FAST_ALIAS, TECH_OPENROUTER_ALIAS]
-            if is_pro and complexity >= 0.8:
-                aliases.append(TECH_CEREBRAS_GLM_ALIAS)
-        else:
-            if complexity < 0.65:
-                aliases = [TECH_GROQ_FAST_ALIAS, TECH_GEMINI_FLASH_ALIAS, TECH_GEMINI_PRO_ALIAS, TECH_OPENROUTER_ALIAS]
-            else:
-                aliases = [TECH_GEMINI_PRO_ALIAS, TECH_GROQ_FAST_ALIAS, TECH_OPENROUTER_ALIAS]
-            if is_pro and complexity >= 0.8:
-                if aliases[0] == TECH_GEMINI_PRO_ALIAS:
-                    aliases.insert(1, TECH_CEREBRAS_GLM_ALIAS)
-                else:
-                    aliases.append(TECH_CEREBRAS_GLM_ALIAS)
-    else:
-        if prefers_low_latency and complexity < 0.8:
-            aliases = [SOCRATIC_OPENROUTER_ALIAS, SOCRATIC_GROQ_ALIAS, SOCRATIC_GEMINI_ALIAS]
-        else:
-            aliases = [SOCRATIC_OPENROUTER_ALIAS, SOCRATIC_GEMINI_ALIAS, SOCRATIC_GROQ_ALIAS]
-        if is_reasoning and complexity >= 0.8 and is_pro:
-            aliases.insert(1, SOCRATIC_CEREBRAS_ALIAS)
-
-    deduped: list[str] = []
-    for alias in aliases:
-        if alias not in deduped:
-            deduped.append(alias)
-    return deduped
-
-
-def _technical_route(
-    topic: str,
-    *,
-    intent: str,
-    depth: str,
-    is_pro: bool = False,
-    search_api_used: bool = False,
-) -> tuple[str, str]:
-    ranked = route_model_aliases(
-        topic,
-        mode=TECHNICAL_MODE,
-        level="technical",
-        intent=intent,
-        depth=depth,
-        is_pro=is_pro,
-        search_api_used=search_api_used,
-    )
-    primary = ranked[0] if ranked else TECHNICAL_MODEL_PRIMARY
-    fallback = next((alias for alias in ranked if alias != primary), TECHNICAL_MODEL_FALLBACK)
-    return primary, fallback
-
-
-def _learning_model_for_level(level: str) -> str:
-    if level in LEARNING_DETAILED_LEVELS:
-        return LEARN_GEMINI_FLASH_ALIAS
-    return LEARN_GEMINI_FLASH_ALIAS
 
 
 def build_technical_prompt(
@@ -857,113 +332,6 @@ async def close_client():
     await close_llm_client()
 
 
-def _normalize_question_signature(question: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", question.lower()).strip()
-
-
-def _extract_socratic_questions(response: str) -> list[str]:
-    if not isinstance(response, str) or not response.strip():
-        return []
-
-    candidates = [segment.strip() for segment in re.findall(r"[^?]*\?", response)]
-    if not candidates:
-        return []
-
-    unique_questions: list[str] = []
-    seen_signatures: set[str] = set()
-    for question in candidates:
-        signature = _normalize_question_signature(question)
-        if not signature or signature in seen_signatures:
-            continue
-        seen_signatures.add(signature)
-        unique_questions.append(question)
-
-    return unique_questions
-
-
-_DEFAULT_DIRECT_ANSWER_PATTERNS = (
-    r"\bjust tell me\b",
-    r"\bjust give me\b",
-    r"\bgive me the answer\b",
-    r"\btell me the answer\b",
-    r"\banswer directly\b",
-    r"\bno questions\b",
-    r"\bstop asking\b",
-    r"\bwhat is the answer\b",
-    r"\bplease answer\b",
-)
-
-
-def _wants_direct_answer(text: str) -> bool:
-    patterns = _get_direct_answer_patterns()
-    normalized = (text or "").strip().lower()
-    if not normalized:
-        return False
-    return any(re.search(pattern, normalized) for pattern in patterns)
-
-
-def _get_direct_answer_patterns() -> tuple[str, ...]:
-    settings = get_settings()
-    raw = getattr(settings, "socratic_direct_answer_patterns", "") or ""
-    raw = str(raw).strip()
-    if not raw:
-        return _DEFAULT_DIRECT_ANSWER_PATTERNS
-    parts = [part.strip() for part in re.split(r"[,\n]+", raw) if part.strip()]
-    return tuple(parts) if parts else _DEFAULT_DIRECT_ANSWER_PATTERNS
-
-
-def _fallback_socratic_question(topic: str | None) -> str:
-    topic_text = (topic or "").strip()
-    if topic_text:
-        return f"What specific factor most shapes your view on {topic_text}?"
-    return "What specific factor most shapes your view here?"
-
-
-def _enforce_socratic_response_constraints(
-    response: str,
-    *,
-    topic: str | None = None,
-    wants_direct_answer: bool = False,
-) -> str:
-    """Return a Socratic reply constrained to up to 3 unique questions, or answer+questions."""
-    cleaned = (response or "").strip()
-    questions = _extract_socratic_questions(cleaned)
-    max_questions = 3
-    footer = "Share your answer, and I will guide the next step."
-
-    if wants_direct_answer:
-        lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
-        answer_line = None
-        if lines:
-            if not lines[0].endswith("?"):
-                answer_line = lines[0]
-            else:
-                for line in lines[1:]:
-                    if not line.endswith("?"):
-                        answer_line = line
-                        break
-        if not answer_line:
-            sentence = re.split(r"[.!?]\s+", cleaned, maxsplit=1)[0].strip()
-            if sentence and not sentence.endswith("?"):
-                answer_line = sentence
-        if not answer_line:
-            answer_line = cleaned
-
-        selected_questions = questions[:max_questions]
-        if not selected_questions:
-            selected_questions = [_fallback_socratic_question(topic)]
-        
-        q_text = "\n\n".join(selected_questions)
-        return f"{answer_line}\n\n{q_text}\n\n{footer}".strip()
-
-    if questions:
-        q_text = "\n\n".join(questions[:max_questions])
-        return f"{q_text}\n\n{footer}".strip()
-
-    fallback = _fallback_socratic_question(topic)
-    return f"{fallback}\n\n{footer}".strip()
-
-
 def _extract_usage_dict(usage_obj) -> dict[str, int] | None:
     if usage_obj is None:
         return None
@@ -1004,30 +372,6 @@ def _extract_estimated_cost(result, usage: dict[str, int] | None) -> float | Non
             return float(usage_cost)
 
     return None
-
-
-def _hash_topic(topic: str) -> str:
-    return hashlib.sha256((topic or "").strip().lower().encode("utf-8")).hexdigest()
-
-
-def _truncate_search_context(value: str) -> str:
-    text = (value or "").strip()
-    if not text:
-        return ""
-    if len(text) <= SEARCH_CONTEXT_MAX_CHARS:
-        return text
-    return f"{text[:SEARCH_CONTEXT_MAX_CHARS].rstrip()}..."
-
-
-def _append_search_context(prompt: str, context: str) -> str:
-    if not context:
-        return prompt
-    return (
-        f"{prompt}\n\n"
-        "External web context (supplemental, may be incomplete):\n"
-        f"{context}\n\n"
-        "Use this context only when relevant and do not fabricate details."
-    )
 
 
 MODE_SYSTEM_PROMPTS = {
@@ -1090,28 +434,6 @@ def _build_messages(
     assert messages[-1].get("role") == "user"
     assert messages[-1].get("content") == prompt
     return messages
-
-
-async def _load_search_context(topic: str, *, mode: str) -> str:
-    normalized_topic = " ".join((topic or "").strip().split())
-    if not normalized_topic:
-        return ""
-
-    try:
-        context = await asyncio.wait_for(
-            search_service.get_search_context(normalized_topic),
-            timeout=SEARCH_CONTEXT_TIMEOUT_SECONDS,
-        )
-    except Exception as exc:
-        logger.warning(
-            "search_context_unavailable",
-            mode=mode,
-            topic_hash=_hash_topic(normalized_topic),
-            error=str(exc),
-        )
-        return ""
-
-    return _truncate_search_context(str(context or ""))
 
 
 def is_transient_http_error(exc: BaseException) -> bool:
