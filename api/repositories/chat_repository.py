@@ -156,6 +156,40 @@ class ChatRepository:
         return _insert_user, _update_conv, _insert_assistant
 
     @staticmethod
+    async def insert_message_bundle_rpc(
+        conversation_id: str,
+        content: str,
+        user_metadata: dict,
+        assistant_metadata: dict,
+        update_payload: dict,
+    ) -> str | None:
+        """Insert user + assistant messages and update conversation via RPC."""
+        supabase = get_supabase_admin()
+        if not supabase:
+            return None
+
+        payload = {
+            "p_conversation_id": conversation_id,
+            "p_user_content": content,
+            "p_user_metadata": user_metadata,
+            "p_assistant_metadata": assistant_metadata,
+            "p_update_payload": update_payload,
+        }
+        try:
+            response = await asyncio.to_thread(lambda: supabase.rpc("insert_message_bundle", payload).execute())
+            data = getattr(response, "data", None)
+            if isinstance(data, list) and data:
+                data = data[0]
+            if isinstance(data, dict):
+                candidate = data.get("insert_message_bundle") or data.get("id")
+                return str(candidate) if candidate else None
+            if data:
+                return str(data)
+        except Exception as exc:
+            logger.warning("messages_bundle_rpc_failed", error=str(exc), conversation_id=conversation_id)
+        return None
+
+    @staticmethod
     def update_assistant_message(assistant_message_id: str, full_content: str):
         """Update the content of an assistant message."""
         supabase = get_supabase_admin()
