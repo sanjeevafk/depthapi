@@ -10,7 +10,8 @@ from typing import Any, Dict, Optional, cast
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from auth import check_is_pro, get_supabase_admin, verify_token
+from auth import check_is_pro, verify_token
+from supabase.chat_repository import ChatRepository
 from config import get_settings
 from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from monitoring import capture_telemetry_event
@@ -197,22 +198,10 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         is_pro=is_pro,
     )
 
-    supabase = get_supabase_admin()
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database connection error")
-
     try:
-        conversation_resp = await asyncio.to_thread(
-            supabase.table("conversations")
-            .select("id, user_id, mode, settings")
-            .eq("id", req.conversation_id)
-            .eq("user_id", user_id)
-            .single()
-            .execute
-        )
-        if not getattr(conversation_resp, "data", None):
+        conversation = await ChatRepository.get_conversation(req.conversation_id, user_id)
+        if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
-        conversation = cast(Dict[str, Any], conversation_resp.data)
     except HTTPException:
         raise
     except Exception as exc:
@@ -327,24 +316,13 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         "updated_at": now_iso,
     }
 
-    def _insert_user():
-        return supabase.table("messages").insert({
-            "conversation_id": conversation.get("id"),
-            "role": "user",
-            "content": content,
-            "metadata": user_metadata,
-        }).execute()
-
-    def _update_conv():
-        return supabase.table("conversations").update(update_payload).eq("id", conversation.get("id")).execute()
-
-    def _insert_assistant():
-        return supabase.table("messages").insert({
-            "conversation_id": conversation.get("id"),
-            "role": "assistant",
-            "content": "",
-            "metadata": assistant_metadata,
-        }).execute()
+    _insert_user, _update_conv, _insert_assistant = ChatRepository.batch_insert_message_setup(
+        conversation.get("id"),
+        content,
+        user_metadata,
+        assistant_metadata,
+        update_payload,
+    )
 
     try:
         user_res, conv_res, assistant_resp = await asyncio.gather(
@@ -408,7 +386,6 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         idempotency_ttl_seconds=idempotency_ttl_seconds,
         idempotency_started_at=idempotency_started_at,
         is_pro=is_pro,
-        supabase=supabase,
         generate_stream_explanation=generate_stream_explanation,
         generate_explanation=generate_explanation,
         cache_set=cache_set,

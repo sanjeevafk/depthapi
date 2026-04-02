@@ -18,6 +18,7 @@ from services.streaming_orchestrator import (
     compute_fallback_timeout,
     update_idempotency_progress,
 )
+from supabase.chat_repository import ChatRepository
 from utils import TECHNICAL_MODE, SOCRATIC_MODE
 
 
@@ -85,7 +86,6 @@ def build_message_stream_response(
     idempotency_ttl_seconds: int,
     idempotency_started_at: int,
     is_pro: bool,
-    supabase,
     generate_stream_explanation,
     generate_explanation,
     cache_set,
@@ -539,7 +539,7 @@ def build_message_stream_response(
             if assistant_message_id:
                 def _update_db():
                     try:
-                        supabase.table("messages").update({"content": full_content}).eq("id", assistant_message_id).execute()
+                        ChatRepository.update_assistant_message(assistant_message_id, full_content)
                     except Exception as exc:
                         logger.error(
                             "messages_assistant_update_failed",
