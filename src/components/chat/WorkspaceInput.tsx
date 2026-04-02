@@ -4,6 +4,7 @@ import DepthDropdown from "./DepthDropdown";
 import { useChatStore } from "../../stores/useChatStore";
 import type { DepthLevel, Workspace } from "../../lib/chatStoreUtils";
 import type { ChatMode, PromptMode } from "../../types/chat";
+import { useMessageSender } from "../../hooks/useMessageSender";
 
 interface WorkspaceInputProps {
   workspace: Workspace;
@@ -35,7 +36,7 @@ export default function WorkspaceInput({
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const baseHeightRef = useRef<number | null>(null);
-  const sendMessage = useChatStore((state) => state.sendMessage);
+  const { sendMessage } = useMessageSender();
   const isLoading = useChatStore((state) => state.isLoading);
   const currentPromptMode = useChatStore((state) => state.currentPromptMode);
   const MAX_TEXTAREA_HEIGHT = 180;
