@@ -85,6 +85,26 @@ def _require_uuid(value: Optional[str], field_name: str) -> str:
         raise HTTPException(status_code=400, detail=f"{field_name} must be a UUID") from exc
 
 
+async def gatekeep_message_request(
+    *,
+    user_id: str,
+    client_ip: str,
+    content: str,
+    is_pro: bool,
+    mode: str = DEFAULT_CHAT_MODE,
+) -> int:
+    """Backwards-compatible seam for request gating logic."""
+    estimated_tokens = estimate_tokens_for_text(content)
+    await enforce_request_controls(
+        user_id=user_id,
+        client_ip=client_ip,
+        estimated_tokens=estimated_tokens,
+        mode=mode,
+        is_pro=is_pro,
+    )
+    return estimated_tokens
+
+
  
 
 
@@ -179,13 +199,13 @@ async def send_message(req: MessageRequest, request: Request, auth_data: dict = 
         raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
 
     is_pro = await check_is_pro(user_id)
-    estimated_tokens = estimate_tokens_for_text(content)
     client_ip = _resolve_client_ip(request, trusted_proxies=trusted_proxies)
-    await enforce_request_controls(
+    await gatekeep_message_request(
         user_id=user_id,
         client_ip=client_ip,
-        estimated_tokens=estimated_tokens,
+        content=content,
         is_pro=is_pro,
+        mode=normalize_mode(req.mode or DEFAULT_CHAT_MODE),
     )
 
     try:
