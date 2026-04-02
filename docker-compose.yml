@@ -1,0 +1,29 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "5173:5173"
+
+  api-tests:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: api/Dockerfile.test
+
+  frontend-tests:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend.test
+    shm_size: "1gb"
