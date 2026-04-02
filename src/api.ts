@@ -21,7 +21,6 @@ import { supabase } from "./lib/supabase";
 export interface HealthResponse {
   status: "ok" | "degraded" | "down";
   provider?: { status: "ok" | "degraded" | "down"; reachable?: boolean; key_valid?: boolean };
-  litellm: { status: "ok" | "degraded" | "down"; latency_ms: number };
   rate_limit: { status: "ok" | "degraded" | "down" };
   db: { status: "ok" | "degraded" | "down" };
   chat_enabled?: boolean;
