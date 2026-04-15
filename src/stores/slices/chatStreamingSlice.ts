@@ -405,18 +405,22 @@ export const createChatStreamingSlice: StateCreator<
 
       const apiError = error as ApiError;
       const errorDetail = apiError.detail;
-      const status = apiError?.status;
-      let retryAllowed = typeof status === "number" ? status >= 500 : true;
-      if (errorDetail?.retry_allowed === false) {
-        retryAllowed = false;
-      }
       let errorMessage = getErrorMessage(error, "Failed to send message");
+      const duplicateInProgress = /duplicate request already in progress/i.test(errorMessage);
       if (errorDetail?.type === "quota_exceeded") {
         errorMessage = "Daily quota exceeded. Please try again after your quota resets.";
       }
       if (/timed out/i.test(errorMessage)) errorMessage = "Streaming timed out. Retry.";
       if (/duplicate request already in progress/i.test(errorMessage)) {
         errorMessage = "Retry will send a new request.";
+      }
+      const status = apiError?.status;
+      let retryAllowed = typeof status === "number" ? status >= 500 : true;
+      if (duplicateInProgress) {
+        retryAllowed = true;
+      }
+      if (errorDetail?.retry_allowed === false) {
+        retryAllowed = false;
       }
 
       captureFrontendError(
