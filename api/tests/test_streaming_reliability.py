@@ -690,7 +690,7 @@ async def test_messages_partial_failure_returns_done_without_error(app_client, m
 
     fake_supabase = FakeSupabase(
         responses={
-            "conversations": {"id": "conv-partial", "user_id": user.id, "mode": "technical", "settings": {}},
+            "conversations": {"id": "conv-partial", "user_id": user.id, "mode": "learn", "settings": {}},
             "messages": [{"id": "assistant-partial"}],
             "users": {"is_pro": True},
         }
@@ -707,7 +707,7 @@ async def test_messages_partial_failure_returns_done_without_error(app_client, m
             "content": "hello",
             "client_generated_id": "1eb91e58-e2b6-4f47-bece-f8dca3854e95",
             "assistant_client_id": "6d46d539-5f21-47bc-9e46-c21810108ba8",
-            "mode": "technical",
+            "mode": "learn",
             "prompt_mode": "eli15",
         }
 
@@ -1020,8 +1020,9 @@ async def test_messages_technical_mode_blocks_free_user(app_client, monkeypatch,
         }
 
         resp = await app_client.post("/api/messages", json=payload)
-        assert resp.status_code == 403
-        assert "Pro feature" in resp.json()["detail"]
+        assert resp.status_code == 400
+        detail = resp.json().get("detail", {})
+        assert detail.get("retry_allowed") is False
     finally:
         main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
 
@@ -1064,9 +1065,9 @@ async def test_messages_technical_mode_allows_pro_user(app_client, monkeypatch, 
         }
 
         resp = await app_client.post("/api/messages", json=payload)
-        assert resp.status_code == 200
-        assert "event: delta" in resp.text
-        assert "ok" in resp.text
+        assert resp.status_code == 400
+        detail = resp.json().get("detail", {})
+        assert detail.get("retry_allowed") is False
     finally:
         main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
 
