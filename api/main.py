@@ -5,7 +5,7 @@ import os
 import time
 import structlog
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter
@@ -378,6 +378,7 @@ async def health():
             log_fn("rate_limit_health_probe_failed", severity="error" if is_prod else "warning", error=str(exc))
             return {"status": status}
 
+
     async def check_db() -> dict[str, str]:
         try:
             if not settings.supabase_url or not settings.supabase_secret_key:
@@ -414,6 +415,36 @@ async def health():
         "chat_enabled": bool(provider.get("chat_enabled", False)),
         "key_valid": bool(provider.get("key_valid", False)),
     }
+
+
+@app.get("/api/keep-alive", tags=["health"])
+async def keep_alive(request: Request):
+    """Minimal keep-alive endpoint for Supabase and Vercel cold-start mitigation."""
+    cron_secret = os.getenv("CRON_SECRET")
+    if cron_secret:
+        provided = request.query_params.get("key")
+        if not provided or provided != cron_secret:
+            return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    supabase = get_supabase_admin()
+    if not supabase:
+        return JSONResponse(status_code=503, content={"error": "supabase_unavailable"})
+
+    await asyncio.to_thread(
+        lambda: supabase.table("conversations").select("id").limit(1).execute()
+    )
+    return JSONResponse(status_code=200, content={"ok": True})
+
+
+@app.head("/api/keep-alive", tags=["health"])
+async def keep_alive_head(request: Request):
+    """HEAD variant that avoids Supabase calls."""
+    cron_secret = os.getenv("CRON_SECRET")
+    if cron_secret:
+        provided = request.query_params.get("key")
+        if not provided or provided != cron_secret:
+            return Response(status_code=401)
+    return Response(status_code=200)
 
 
 # Catch-all route for debugging (should be last)
