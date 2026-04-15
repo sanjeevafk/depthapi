@@ -1,36 +1,55 @@
-import type { HistoryItem, PinnedTopic, QueryRequest, QueryResponse, ExportRequest } from "./types";
-import type { ShareCreateRequest, ShareCreateResponse, ShareSnapshot } from "./types/shares";
+import type {
+  PinnedTopic,
+  QueryRequest,
+  QueryResponse,
+  ExportRequest,
+  HistoryItem,
+} from "./types";
+import type {
+  ShareCreateRequest,
+  ShareCreateResponse,
+  ShareSnapshot,
+} from "./types/shares";
 import { LegacyStreamChunkSchema } from "./lib/sseSchemas";
 import type { Session } from "@supabase/supabase-js";
 import { getTracePropagationHeaders } from "./lib/monitoring";
 import type { ApiError } from "./lib/httpErrors";
 import { buildApiError } from "./lib/httpErrors";
-import {
-  EventStreamContentType,
-  fetchEventSource,
-  type EventSourceMessage,
-} from "@microsoft/fetch-event-source";
 
 const API_URL = import.meta.env.VITE_API_URL || "";
 const SUPABASE_CONFIGURED =
   Boolean(import.meta.env.VITE_SUPABASE_URL) &&
-  Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY);
+  Boolean(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY);
 
 import { supabase } from "./lib/supabase";
 
 export interface HealthResponse {
   status: "ok" | "degraded" | "down";
-  provider?: { status: "ok" | "degraded" | "down"; reachable?: boolean; key_valid?: boolean };
+  provider: {
+    status: "ok" | "degraded" | "down";
+    reachable: boolean;
+    key_valid: boolean;
+  };
   rate_limit: { status: "ok" | "degraded" | "down" };
   db: { status: "ok" | "degraded" | "down" };
   chat_enabled?: boolean;
   key_valid?: boolean;
 }
 
+const refreshSessionIfNeeded = async (session: Session | null): Promise<Session | null> => {
+  if (!session?.expires_at) return session;
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (session.expires_at - nowSeconds > 60) return session;
+
+  const { data, error } = await supabase.auth.refreshSession();
+  if (!error && data.session) return data.session;
+  return session;
+};
+
 const getSupabaseSession = async (): Promise<Session | null> => {
   if (!SUPABASE_CONFIGURED) return null;
   const { data } = await supabase.auth.getSession();
-  return data.session;
+  return refreshSessionIfNeeded(data.session);
 };
 
 const isAbortError = (err: unknown): boolean => {
@@ -188,36 +207,6 @@ export async function queryTopicStream(
   const maxRetries = 2;
   const baseDelay = 750;
 
-  const sleep = (ms: number) =>
-    new Promise((resolve) => setTimeout(resolve, ms));
-
-  const createCombinedSignal = () => {
-    const controller = new AbortController();
-    const abortSignalAny = (
-      AbortSignal as unknown as {
-        any?: (signals: AbortSignal[]) => AbortSignal;
-      }
-    ).any;
-    let combinedSignal = controller.signal;
-    let onExternalAbort: (() => void) | null = null;
-    if (signal) {
-      if (abortSignalAny) {
-        combinedSignal = abortSignalAny([controller.signal, signal]);
-      } else if (signal.aborted) {
-        controller.abort();
-      } else {
-        onExternalAbort = () => controller.abort();
-        signal.addEventListener("abort", onExternalAbort, { once: true });
-      }
-    }
-    const cleanupExternal = () => {
-      if (signal && onExternalAbort) {
-        signal.removeEventListener("abort", onExternalAbort);
-      }
-    };
-    return { controller, combinedSignal, cleanupExternal };
-  };
-
   const fallbackToNonStream = async (reason: string): Promise<void> => {
     if (signal?.aborted) {
       return;
@@ -243,170 +232,185 @@ export async function queryTopicStream(
     }
   };
 
-  while (true) {
-    if (signal?.aborted) {
-      return;
-    }
-
-    let forceFallbackReason: string | null = null;
-    let streamCompleted = false;
-    let streamErrored = false;
-    let waitRetryAfterMs: number | null = null;
-
-    const { controller, combinedSignal, cleanupExternal } =
-      createCombinedSignal();
-
-    const handleMessage = (event: EventSourceMessage) => {
-      if (combinedSignal.aborted || streamCompleted || streamErrored) {
-        return;
-      }
-
-      const data = event.data?.trim();
-      if (!data) {
-        return;
-      }
-
-      if (data === "[DONE]" || event.event === "done") {
-        streamCompleted = true;
-        controller.abort();
-        onDone({});
-        return;
-      }
-
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(data);
-      } catch (e) {
-        console.warn(
-          "Failed to parse SSE chunk:",
-          data.substring(0, 100),
-          e,
-        );
-        return;
-      }
-
-      if (parsed && typeof parsed === "object") {
-        const payload = parsed as { status?: string; retry_after_ms?: number };
-        if (
-          (payload.status === "waiting" ||
-            payload.status === "in_progress") &&
-          typeof payload.retry_after_ms === "number"
-        ) {
-          waitRetryAfterMs = Math.max(250, Math.round(payload.retry_after_ms));
-          controller.abort();
-          return;
-        }
-      }
-
-      const validated = LegacyStreamChunkSchema.safeParse(parsed);
-      if (!validated.success) {
-        console.warn("Skipping invalid SSE chunk:", validated.error);
-        return;
-      }
-
-      if (validated.data.chunk) {
-        onChunk(validated.data.chunk);
-      } else if (validated.data.warning) {
-        onChunk(`\n\n${validated.data.warning}`);
-      } else if (validated.data.error) {
-        streamErrored = true;
-        controller.abort();
-        onError(new Error(validated.data.error));
-      }
-    };
-
+  const attemptStream = async (): Promise<void> => {
     try {
-      await fetchEventSource(`${API_URL}/api/query/stream`, {
+      const response = await fetch(`${API_URL}/api/query/stream`, {
         method: "POST",
         headers,
         body: JSON.stringify(req),
-        signal: combinedSignal,
-        openWhenHidden: true,
-        onopen: async (response: Response) => {
-          if (response.status === 202) {
-            const body = await response.json().catch(() => null);
-            const retryAfter =
-              body && typeof body.retry_after_ms === "number"
-                ? body.retry_after_ms
-                : 1000;
-            waitRetryAfterMs = Math.max(250, Math.round(retryAfter));
-            controller.abort();
-            return;
-          }
-          if (!response.ok) {
-            throw await buildApiError(response);
-          }
-          const contentType = response.headers.get("content-type");
-          if (!contentType?.includes(EventStreamContentType)) {
-            forceFallbackReason = `Invalid content-type: ${contentType || "unknown"}`;
-            throw new Error(forceFallbackReason);
-          }
-        },
-        onmessage: handleMessage,
-        onclose: () => {
-          if (
-            !streamCompleted &&
-            !streamErrored &&
-            !combinedSignal.aborted &&
-            waitRetryAfterMs === null
-          ) {
-            throw new Error("Stream closed unexpectedly");
-          }
-        },
-        onerror: (err: unknown) => {
-          if (isAbortError(err) || waitRetryAfterMs !== null) {
-            return;
-          }
-          if (forceFallbackReason) {
-            throw err;
-          }
-          const error = normalizeError(err) as ApiError;
-          const retryAllowed = error.detail?.retry_allowed !== false;
-          if (!retryAllowed) {
-            throw error;
-          }
-          if (retries < maxRetries) {
-            retries++;
-            const delay =
-              Math.min(8000, baseDelay * 2 ** (retries - 1)) +
-              Math.random() * 250;
-            console.warn(
-              `Stream failed, retry ${retries}/${maxRetries} in ${Math.round(delay)}ms:`,
-              error.message,
-            );
-            return delay;
-          }
-          throw error;
-        },
+        signal,
       });
-    } catch (err) {
-      cleanupExternal();
-      if (isAbortError(err)) {
-        // fall through to retry loop handling if needed
-      } else {
-        const error = normalizeError(err) as ApiError;
-        const retryAllowed = error.detail?.retry_allowed !== false;
-        if (!retryAllowed) {
-          onError(error);
-          return;
-        }
-        if (waitRetryAfterMs === null) {
-          await fallbackToNonStream(
-            forceFallbackReason || error.message || "Stream failed",
+
+      if (!response.ok) {
+        throw await buildApiError(response);
+      }
+
+      // Validate SSE content type
+      const contentType = response.headers.get("content-type");
+      if (!contentType?.includes("text/event-stream")) {
+        return fallbackToNonStream(
+          `Invalid content-type: ${contentType || "unknown"}`,
+        );
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) {
+        return fallbackToNonStream("ReadableStream not supported");
+      }
+
+      let buffer = "";
+      const READ_TIMEOUT_MS = 20000;
+
+      while (true) {
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        const readPromise = reader.read();
+        const timeoutPromise = new Promise<
+          ReadableStreamReadResult<Uint8Array>
+        >((_, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error("Stream read timed out")),
+            READ_TIMEOUT_MS,
           );
-          return;
+        });
+
+        let readResult: ReadableStreamReadResult<Uint8Array>;
+        try {
+          readResult = await Promise.race([readPromise, timeoutPromise]);
+        } catch (e) {
+          clearTimeout(timeoutId);
+          reader.cancel().catch(() => {});
+          throw e;
+        } finally {
+          clearTimeout(timeoutId);
+        }
+        const { done, value } = readResult;
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6).trim();
+            if (data === "[DONE]") {
+              onDone({});
+              return;
+            }
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(data);
+            } catch (e) {
+              console.warn(
+                "Failed to parse SSE chunk:",
+                data.substring(0, 100),
+                e,
+              );
+              continue;
+            }
+
+            const validated = LegacyStreamChunkSchema.safeParse(parsed);
+            if (!validated.success) {
+              console.warn("Skipping invalid SSE chunk:", validated.error);
+              continue;
+            }
+
+            if (validated.data.chunk) {
+              onChunk(validated.data.chunk);
+            } else if (validated.data.warning) {
+              // Display warning as part of the response
+              onChunk(`\n\n${validated.data.warning}`);
+            } else if (validated.data.error) {
+              onError(new Error(validated.data.error));
+              return;
+            }
+          }
         }
       }
-    } finally {
-      cleanupExternal();
-    }
 
-    if (waitRetryAfterMs !== null && !signal?.aborted) {
-      await sleep(waitRetryAfterMs);
-      continue;
+      // Flush remaining buffer if stream ended without [DONE]
+      if (buffer.trim()) {
+        const trimmed = buffer.trim();
+        if (trimmed.startsWith("data: ")) {
+          const data = trimmed.slice(6).trim();
+          if (data !== "[DONE]") {
+            try {
+              const parsed = JSON.parse(data);
+              const validated = LegacyStreamChunkSchema.safeParse(parsed);
+              if (validated.success && validated.data.chunk) {
+                onChunk(validated.data.chunk);
+              }
+            } catch {
+              console.warn("Stream ended with incomplete data in buffer:", trimmed.substring(0, 100));
+            }
+          }
+        } else {
+          console.warn("Stream ended with incomplete data in buffer:", trimmed.substring(0, 100));
+        }
+      }
+      // Stream ended without [DONE], still notify completion
+      onDone({});
+    } catch (err) {
+      if (isAbortError(err)) {
+        console.log("Stream aborted by user");
+        return;
+      }
+
+      const error = normalizeError(err);
+      const isApiError = (e: unknown): e is ApiError =>
+        typeof e === "object" && e !== null && "status" in e;
+      const status = isApiError(err) ? err.status : undefined;
+      let retryAllowed = typeof status === "number" ? status >= 500 : true;
+      if (isApiError(err) && err.detail?.retry_allowed === false) {
+        retryAllowed = false;
+      }
+      if (!retryAllowed) {
+        onError(error);
+        return;
+      }
+
+      // Retry on network errors if not aborted
+      if (retries < maxRetries && !signal?.aborted) {
+        retries++;
+        const delay =
+          Math.min(8000, baseDelay * 2 ** (retries - 1)) + Math.random() * 250;
+        console.warn(
+          `Stream failed, retry ${retries}/${maxRetries} in ${Math.round(delay)}ms:`,
+          error.message,
+        );
+        await new Promise((r) => setTimeout(r, delay));
+        return attemptStream();
+      }
+
+      await fallbackToNonStream(error.message || "Stream failed");
     }
-    break;
+  };
+
+  await attemptStream();
+}
+
+export async function createShare(
+  payload: ShareCreateRequest,
+): Promise<ShareCreateResponse> {
+  return fetchAPI("/api/shares", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchShareByToken(
+  token: string,
+  options?: { password?: string },
+): Promise<ShareSnapshot> {
+  const headers: Record<string, string> = {};
+  if (options?.password) {
+    headers["x-share-password"] = options.password;
   }
+  return fetchAPI(`/api/shares/${encodeURIComponent(token)}`, {
+    headers,
+  });
 }
 
 export async function exportExplanations(req: ExportRequest): Promise<Blob> {
@@ -429,25 +433,4 @@ export async function deleteHistoryItem(id: string): Promise<void> {
 
 export async function clearHistory(): Promise<void> {
   return fetchAPI("/api/history", { method: "DELETE" });
-}
-
-export async function createShare(req: ShareCreateRequest): Promise<ShareCreateResponse> {
-  return fetchAPI("/api/shares", {
-    method: "POST",
-    body: JSON.stringify(req),
-  });
-}
-
-export async function fetchShareByToken(
-  token: string,
-  options?: { password?: string },
-): Promise<ShareSnapshot> {
-  if (options?.password) {
-    return fetchAPI(`/api/shares/${encodeURIComponent(token)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: options.password }),
-    });
-  }
-  return fetchAPI(`/api/shares/${encodeURIComponent(token)}`);
 }

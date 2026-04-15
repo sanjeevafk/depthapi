@@ -134,3 +134,53 @@ async def test_concurrent_lock_serialization(app_client, monkeypatch, test_setti
             messages_module._release_conversation_lock(payload_two["conversation_id"])
     finally:
         main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
+
+
+@pytest.mark.asyncio
+async def test_messages_rejects_invalid_mode(app_client, monkeypatch):
+    user = SimpleNamespace(id="user-invalid", email="user@example.com", user_metadata={})
+
+    async def fake_verify_token():
+        return {"user": user, "is_pro": False, "exp": time.time() + 600}
+
+    main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
+
+    try:
+        payload = {
+            "conversation_id": "conv-invalid",
+            "content": "hello",
+            "client_generated_id": "20c96963-6108-4a6b-8ce3-0bcbf6e6d3d1",
+            "assistant_client_id": "b48d4c61-b55b-4b12-bfd0-ccf7ff915713",
+            "mode": "technical",
+        }
+        resp = await app_client.post("/api/messages", json=payload)
+        assert resp.status_code == 400
+        detail = resp.json().get("detail", {})
+        assert detail.get("retry_allowed") is False
+    finally:
+        main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
+
+
+@pytest.mark.asyncio
+async def test_messages_rejects_client_user_id(app_client, monkeypatch):
+    user = SimpleNamespace(id="user-client-id", email="user@example.com", user_metadata={})
+
+    async def fake_verify_token():
+        return {"user": user, "is_pro": False, "exp": time.time() + 600}
+
+    main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
+
+    try:
+        payload = {
+            "conversation_id": "conv-user-id",
+            "content": "hello",
+            "client_generated_id": "a1c1d5c7-2666-4d3e-8e9f-77e3c4d93ef8",
+            "assistant_client_id": "c9eb9cf8-6a7d-4b1d-88f2-7c1a2edbb5c4",
+            "user_id": "123",
+        }
+        resp = await app_client.post("/api/messages", json=payload)
+        assert resp.status_code == 400
+        detail = resp.json().get("detail", {})
+        assert detail.get("retry_allowed") is False
+    finally:
+        main_app.app.dependency_overrides.pop(messages_module.verify_token, None)

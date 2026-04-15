@@ -735,7 +735,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const apiError = error as ApiError;
       const errorDetail = apiError.detail;
-      const retryAllowed = errorDetail?.retry_allowed !== false;
+      const status = apiError?.status;
+      let retryAllowed = typeof status === "number" ? status >= 500 : true;
+      if (errorDetail?.retry_allowed === false) {
+        retryAllowed = false;
+      }
       let errorMessage = getErrorMessage(
         error,
         "Request failed. Please try again.",
