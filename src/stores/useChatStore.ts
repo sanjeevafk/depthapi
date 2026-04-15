@@ -735,15 +735,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const apiError = error as ApiError;
       const errorDetail = apiError.detail;
-      const status = apiError?.status;
-      let retryAllowed = typeof status === "number" ? status >= 500 : true;
-      if (errorDetail?.retry_allowed === false) {
-        retryAllowed = false;
-      }
       let errorMessage = getErrorMessage(
         error,
         "Request failed. Please try again.",
       );
+      const duplicateInProgress = /duplicate request already in progress/i.test(errorMessage);
       if (errorDetail?.type === "quota_exceeded") {
         errorMessage =
           "Rate limited for today. Please try again after your quota resets.";
@@ -753,6 +749,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       if (/duplicate request already in progress/i.test(errorMessage)) {
         errorMessage = "A similar request is still running. Retry to send a new request.";
+      }
+      const status = apiError?.status;
+      let retryAllowed = typeof status === "number" ? status >= 500 : true;
+      if (duplicateInProgress) {
+        retryAllowed = true;
+      }
+      if (errorDetail?.retry_allowed === false) {
+        retryAllowed = false;
       }
 
       captureFrontendError(
