@@ -18,6 +18,38 @@ def _messages_key(conversation_id: str) -> str:
     return f"knowbear:conversation:{conversation_id}:messages"
 
 
+WARM_SNAPSHOT_LUA = """
+-- KEYS: [meta_key, messages_key]
+-- ARGV: [meta_json, ttl_seconds, max_messages, message_json...]
+local meta_key = KEYS[1]
+local list_key = KEYS[2]
+local meta_json = ARGV[1]
+local ttl = tonumber(ARGV[2]) or 0
+local max_messages = tonumber(ARGV[3]) or 0
+
+redis.call('DEL', list_key)
+if ttl > 0 then
+    redis.call('SETEX', meta_key, ttl, meta_json)
+else
+    redis.call('SET', meta_key, meta_json)
+end
+
+if #ARGV > 3 then
+    for i = 4, #ARGV do
+        redis.call('RPUSH', list_key, ARGV[i])
+    end
+    if max_messages > 0 then
+        redis.call('LTRIM', list_key, -max_messages, -1)
+    end
+    if ttl > 0 then
+        redis.call('EXPIRE', list_key, ttl)
+    end
+end
+
+return 1
+"""
+
+
 async def warm_conversation_snapshot(conversation_id: str, user_id: str | None) -> None:
     supabase = get_supabase_admin()
     if not supabase:
@@ -70,16 +102,17 @@ async def warm_conversation_snapshot(conversation_id: str, user_id: str | None) 
     if not redis:
         return
     try:
-        await redis.pipeline(
-            [
-                ["DEL", _messages_key(conversation_id)],
-                ["SETEX", _meta_key(conversation_id), 3600, orjson.dumps(meta_payload).decode("utf-8")],
-            ]
+        payloads = [orjson.dumps(msg).decode("utf-8") for msg in messages]
+        await redis.eval(
+            WARM_SNAPSHOT_LUA,
+            2,
+            _meta_key(conversation_id),
+            _messages_key(conversation_id),
+            orjson.dumps(meta_payload).decode("utf-8"),
+            3600,
+            history_limit,
+            *payloads,
         )
-        if messages:
-            payloads = [orjson.dumps(msg).decode("utf-8") for msg in messages]
-            await redis.rpush(_messages_key(conversation_id), *payloads)
-            await redis.ltrim(_messages_key(conversation_id), -history_limit, -1)
     except Exception as exc:
         logger.warning(
             "messages_snapshot_warm_redis_failed",

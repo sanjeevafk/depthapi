@@ -7,6 +7,7 @@ import orjson
 
 from config import get_settings
 from logging_config import logger
+from services.message_utils import safeJsonParse
 
 UNIFIED_IDEMPOTENCY_CACHE_LUA = """
 -- unified_idempotency_cache
@@ -248,13 +249,13 @@ async def check_idempotency_and_cache(
         if status_code == 3:
             if payload is None:
                 return {"status": "new"}
-            if isinstance(payload, (bytes, bytearray)):
-                raw_payload = bytes(payload)
-            else:
-                raw_payload = str(payload).encode("utf-8")
-            loaded = orjson.loads(raw_payload)
+            loaded = safeJsonParse(payload)
             if isinstance(loaded, dict):
                 return {"status": "cache_hit", "cached": loaded}
+            try:
+                await redis.delete(cache_key)
+            except Exception:
+                pass
         return {"status": "new"}
     except Exception as exc:
         logger.warning(
@@ -272,14 +273,15 @@ async def cache_get(key: str) -> dict[str, Any] | None:
         val = await r.get(key)
         if val is None:
             return None
-        if isinstance(val, (bytes, bytearray)):
-            payload = bytes(val)
-        elif isinstance(val, str):
-            payload = val.encode("utf-8")
-        else:
-            payload = str(val).encode("utf-8")
-        loaded = orjson.loads(payload)
-        return loaded if isinstance(loaded, dict) else None
+        loaded = safeJsonParse(val)
+        if isinstance(loaded, dict):
+            return loaded
+        try:
+            await r.delete(key)
+        except Exception:
+            pass
+        logger.warning("cache_json_parse_failed", key=key)
+        return None
     except Exception as e:
         logger.warning("cache_get_failed", key=key, error=str(e))
         return None

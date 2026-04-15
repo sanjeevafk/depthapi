@@ -25,7 +25,10 @@ const messageFromDetail = (detail: ApiErrorDetail): string => {
     return "Model service is temporarily unavailable. Please try again shortly.";
   }
   if (detail.type === "bad_request") {
-    return "Request could not be processed. Please review the prompt and retry.";
+    return "Request could not be processed. Please review the prompt.";
+  }
+  if (detail.type === "auth_required") {
+    return "Authentication required. Please sign in and try again.";
   }
   if (detail.type === "llm_error") {
     return "API error from the model provider. Please retry.";

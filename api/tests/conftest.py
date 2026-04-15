@@ -186,6 +186,27 @@ class DummyRedis:
                 payload = json.dumps({"status": "in_progress", "started_at": now_ts})
                 self.store[idempotency_key] = payload
             return [0, ""]
+        if "meta_key" in script_text and "list_key" in script_text and "RPUSH" in script_text:
+            meta_key = str(args[0])
+            list_key = str(args[1])
+            meta_json = args[2]
+            ttl = int(args[3])
+            max_messages = int(args[4])
+            payloads = list(args[5:])
+
+            await self.delete(list_key)
+            if ttl > 0:
+                await self.setex(meta_key, ttl, meta_json)
+            else:
+                self.store[meta_key] = meta_json
+
+            if payloads:
+                await self.rpush(list_key, *payloads)
+                if max_messages > 0:
+                    await self.ltrim(list_key, -max_messages, -1)
+                if ttl > 0:
+                    await self.expire(list_key, ttl)
+            return 1
         if "unified_controls" in script_text:
             keys = list(args[:_num_keys])
             argv = list(args[_num_keys:])
