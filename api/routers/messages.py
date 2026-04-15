@@ -228,13 +228,69 @@ def _message_cache_key(
     context_signature: str = "",
     intent_type: str = "",
     intent_payload: str = "",
+    conversation_id: str | None = None,
+    user_id: str | None = None,
 ) -> str:
     digest = hashlib.sha256(
-        f"{system_prompt}\x00{context_signature}\x00{content}\x00{temperature:.2f}\x00{model_alias}\x00{mode}\x00{prompt_mode}\x00{intent_type}\x00{intent_payload}".encode(
+        f"{conversation_id or ''}\x00{user_id or ''}\x00{system_prompt}\x00{context_signature}\x00{content}\x00{temperature:.2f}\x00{model_alias}\x00{mode}\x00{prompt_mode}\x00{intent_type}\x00{intent_payload}".encode(
             "utf-8"
         )
     ).hexdigest()
     return f"knowbear:cache:{digest}"
+
+
+async def _load_conversation_from_db(
+    conversation_id: str,
+    user_id: str,
+    history_limit: int,
+) -> tuple[dict[str, Any], list[ConversationMessage]]:
+    supabase = get_supabase_admin()
+    if not supabase:
+        return {}, []
+
+    try:
+        conversation_resp = await asyncio.to_thread(
+            lambda: supabase.table("conversations")
+            .select("id, user_id, mode, settings, updated_at")
+            .eq("id", conversation_id)
+            .single()
+            .execute()
+        )
+        conversation = getattr(conversation_resp, "data", None)
+        if not isinstance(conversation, dict):
+            return {}, []
+        if str(conversation.get("user_id") or "") != user_id:
+            return {}, []
+
+        messages_resp = await asyncio.to_thread(
+            lambda: supabase.table("messages")
+            .select("role, content, created_at, sequence_id")
+            .eq("conversation_id", conversation_id)
+            .order("sequence_id", desc=True, nullsfirst=False)
+            .order("created_at", desc=True)
+            .limit(history_limit)
+            .execute()
+        )
+        rows = getattr(messages_resp, "data", None)
+        raw_messages = list(reversed(rows)) if isinstance(rows, list) else []
+    except Exception as exc:
+        logger.warning(
+            "messages_db_snapshot_failed",
+            conversation_id=conversation_id,
+            error=str(exc),
+        )
+        return {}, []
+
+    history_messages: list[ConversationMessage] = []
+    for row in raw_messages:
+        if not isinstance(row, dict):
+            continue
+        role = str(row.get("role") or "").strip()
+        content = str(row.get("content") or "").strip()
+        if role and content:
+            history_messages.append({"role": role, "content": content})
+
+    return conversation, history_messages
 
 
 def _ack_response(mode: str) -> str:
@@ -462,7 +518,6 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
             max_messages=history_limit,
             timeout_seconds=0.08,
         )
-        snapshot_degraded = not snapshot_meta_raw and not snapshot_raw_messages
         snapshot_meta = await _parse_snapshot_meta(snapshot_meta_raw, req.conversation_id)
         if snapshot_meta and snapshot_meta.get("user_id") and str(snapshot_meta.get("user_id")) != user_id:
             await _ingress_dedupe_clear(client_message_id)
@@ -485,6 +540,13 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
                     conversation_id=req.conversation_id,
                     error_type=type(exc).__name__,
                 )
+            snapshot_meta_raw, snapshot_raw_messages = await fetch_conversation_snapshot(
+                conversation_id=req.conversation_id,
+                max_messages=history_limit,
+                timeout_seconds=0.08,
+            )
+            if snapshot_meta_raw:
+                snapshot_meta = await _parse_snapshot_meta(snapshot_meta_raw, req.conversation_id)
 
         mode_candidate = (
             normalized_mode
@@ -568,6 +630,25 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
     
         # ── Conversation context & intent ──────────────────────────────────────
         history_messages = await _parse_snapshot_messages(snapshot_raw_messages, req.conversation_id)
+        if not history_messages:
+            db_meta, db_messages = await _load_conversation_from_db(
+                req.conversation_id,
+                user_id,
+                history_limit,
+            )
+            if db_meta:
+                snapshot_meta = db_meta
+            if db_messages:
+                history_messages = db_messages
+                logger.info(
+                    "messages_context_db_fallback",
+                    request_id=request_id,
+                    conversation_id=req.conversation_id,
+                    history_length=len(history_messages),
+                )
+            if not snapshot_meta and not history_messages and get_supabase_admin() is not None:
+                await _ingress_dedupe_clear(client_message_id)
+                raise HTTPException(status_code=404, detail="Conversation not found")
         last_user_message, last_assistant_message = extract_last_turns(history_messages)
         has_prior = bool(last_user_message or last_assistant_message)
         intent = classify_conversation_intent(content, has_prior=has_prior)
@@ -685,6 +766,8 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
             context_signature=context_signature,
             intent_type=intent.type,
             intent_payload=intent_payload,
+            conversation_id=req.conversation_id,
+            user_id=user_id,
         )
         cached_response = None
         if not req.regenerate:
