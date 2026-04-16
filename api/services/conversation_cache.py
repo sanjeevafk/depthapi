@@ -71,15 +71,20 @@ async def warm_conversation_snapshot(conversation_id: str, user_id: str | None) 
         if user_id and str(conversation.get("user_id") or "") != user_id:
             return
 
-        history_resp = await asyncio.to_thread(
-            lambda: supabase.table("messages")
-            .select("id, role, content, created_at, metadata, sequence_id")
-            .eq("conversation_id", conversation_id)
-            .order("sequence_id", desc=True, nullsfirst=False)
-            .order("created_at", desc=True)
-            .limit(history_limit)
-            .execute()
-        )
+        def _history_query():
+            base = (
+                supabase.table("messages")
+                .select("id, role, content, created_at, metadata, sequence_id")
+                .eq("conversation_id", conversation_id)
+            )
+            # Some test doubles and SDK adapters don't support nullsfirst.
+            try:
+                ordered = base.order("sequence_id", desc=True, nullsfirst=False)
+            except TypeError:
+                ordered = base.order("sequence_id", desc=True)
+            return ordered.limit(history_limit).execute()
+
+        history_resp = await asyncio.to_thread(_history_query)
         rows = getattr(history_resp, "data", None)
         messages = list(reversed(rows)) if isinstance(rows, list) else []
     except Exception as exc:

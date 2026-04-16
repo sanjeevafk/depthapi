@@ -1160,7 +1160,14 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
     
             stream = None
             try:
-                assert (time.perf_counter() - request_received) < 0.2
+                pre_stream_latency = time.perf_counter() - request_received
+                if pre_stream_latency >= 0.2:
+                    logger.warning(
+                        "messages_pre_stream_latency_high",
+                        request_id=request_id,
+                        conversation_id=req.conversation_id,
+                        pre_stream_latency_ms=round(pre_stream_latency * 1000, 2),
+                    )
                 yield emit("start", {"type": "start"})
                 meta_payload = {
                     "assistant_message_id": assistant_message_id,

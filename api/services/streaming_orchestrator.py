@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import asyncio
 from typing import Any, Callable, Awaitable
 
 from logging_config import logger
@@ -12,7 +13,11 @@ async def close_stream(stream) -> None:
     close_fn = getattr(stream, "aclose", None)
     if close_fn:
         try:
-            await close_fn()
+            close_task = asyncio.create_task(close_fn())
+            try:
+                await asyncio.wait_for(close_task, timeout=0.25)
+            except asyncio.TimeoutError:
+                close_task.cancel()
         except Exception:
             pass
 
