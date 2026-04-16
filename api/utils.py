@@ -1,10 +1,12 @@
 """Input validation and mode normalization utilities."""
 
+import asyncio
 import html
 import json
 import logging
 import os
 import re
+from typing import Awaitable, TypeVar
 
 MAX_TOPIC_LENGTH = 200
 _logger = logging.getLogger(__name__)
@@ -30,6 +32,8 @@ _DEFAULT_CHAT_MODE_DATA = {
     "prompt_modes": PROMPT_LEVELS,
     "legacy_modes": [],
 }
+
+T = TypeVar("T")
 
 
 def sanitize_topic(topic: str) -> str:
@@ -158,3 +162,32 @@ def requests_depth(text: str) -> bool:
     if not lowered:
         return False
     return any(re.search(pattern, lowered) for pattern in DEPTH_REQUEST_PATTERNS)
+
+
+async def with_timeout(
+    coro: Awaitable[T],
+    timeout_seconds: float,
+    error_on_timeout: bool = False,
+    default: T | None = None,
+    context_label: str = "operation",
+) -> T | None:
+    """Run awaitable with a timeout and graceful fallback behavior."""
+    try:
+        return await asyncio.wait_for(coro, timeout=timeout_seconds)
+    except asyncio.TimeoutError:
+        _logger.warning(
+            "component_timeout",
+            extra={"timeout_seconds": timeout_seconds, "context": context_label},
+        )
+        if error_on_timeout:
+            raise
+        return default
+    except asyncio.CancelledError:
+        _logger.debug("timeout_wrapper_cancelled", extra={"context": context_label})
+        return default
+    except Exception as exc:
+        _logger.warning(
+            "timeout_wrapper_exception",
+            extra={"context": context_label, "error": str(exc)},
+        )
+        return default
