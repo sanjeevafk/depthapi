@@ -8,6 +8,9 @@ import orjson
 from config import get_settings
 from logging_config import logger
 from services.message_utils import safeJsonParse
+from utils import with_timeout
+
+REDIS_REST_CALL_TIMEOUT_SECONDS = 0.3
 
 UNIFIED_IDEMPOTENCY_CACHE_LUA = """
 -- unified_idempotency_cache
@@ -66,7 +69,14 @@ class UpstashRedisCompat:
 
     async def _execute(self, *command: Any) -> Any:
         payload = [[str(part) for part in command]]
-        response = await self._client.post("/pipeline", json=payload)
+        response = await with_timeout(
+            self._client.post("/pipeline", json=payload),
+            timeout_seconds=REDIS_REST_CALL_TIMEOUT_SECONDS,
+            default=None,
+            context_label=f"redis_call_{str(command[0]).lower() if command else 'unknown'}",
+        )
+        if response is None:
+            raise RuntimeError("Redis REST call timed out or failed")
         response.raise_for_status()
         data = response.json()
         if not isinstance(data, list) or not data:
@@ -81,7 +91,14 @@ class UpstashRedisCompat:
 
     async def _execute_pipeline(self, commands: list[list[Any]]) -> list[Any]:
         payload = [[str(part) for part in command] for command in commands]
-        response = await self._client.post("/pipeline", json=payload)
+        response = await with_timeout(
+            self._client.post("/pipeline", json=payload),
+            timeout_seconds=REDIS_REST_CALL_TIMEOUT_SECONDS,
+            default=None,
+            context_label="redis_call_pipeline",
+        )
+        if response is None:
+            raise RuntimeError("Redis REST pipeline call timed out or failed")
         response.raise_for_status()
         data = response.json()
         if not isinstance(data, list):
