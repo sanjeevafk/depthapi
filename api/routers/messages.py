@@ -657,24 +657,38 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
             correction_text=content if intent.type == "correction" else None,
             clarification_text=content if intent.type == "clarification" else None,
         )
-        prompt_build_start = time.perf_counter()
-        context_messages, context_signature = build_context_messages(
-            history_messages,
-            max_tokens=max(int(getattr(config_settings, "conversation_context_max_tokens", 1200)), 1),
-            summary_max_tokens=max(int(getattr(config_settings, "conversation_context_summary_tokens", 240)), 0),
-            max_turns=4,
-        )
+        context_messages: list[ConversationMessage] = []
+        context_signature = ""
+        prompt_build_ms = 0.0
         socratic_context = build_socratic_context(history_messages)
-        prompt_build_ms = (time.perf_counter() - prompt_build_start) * 1000
+
+        async def load_context_for_stream() -> tuple[list[ConversationMessage], str, float]:
+            local_prompt_build_start = time.perf_counter()
+            loaded_messages, loaded_signature = build_context_messages(
+                history_messages,
+                max_tokens=max(int(getattr(config_settings, "conversation_context_max_tokens", 1200)), 1),
+                summary_max_tokens=max(int(getattr(config_settings, "conversation_context_summary_tokens", 240)), 0),
+                max_turns=4,
+            )
+            local_prompt_build_ms = (time.perf_counter() - local_prompt_build_start) * 1000
+            logger.info(
+                "context_messages_ready",
+                request_id=request_id,
+                conversation_id=req.conversation_id,
+                context_messages_count=len(loaded_messages),
+                context_signature_prefix=loaded_signature[:16],
+                context_build_ms=round(local_prompt_build_ms, 2),
+            )
+            return loaded_messages, loaded_signature, local_prompt_build_ms
+
+        context_messages_task = asyncio.create_task(load_context_for_stream())
     
         last_three = history_messages[-3:]
         logger.info(
-            "messages_context_loaded",
+            "messages_context_task_started",
             request_id=request_id,
             conversation_id=req.conversation_id,
             history_length=len(history_messages),
-            context_messages_count=len(context_messages),
-            context_signature_prefix=context_signature[:16],
             last_3_message_roles=[msg["role"] for msg in last_three],
             last_3_message_lengths=[len(msg["content"]) for msg in last_three],
         )
@@ -938,6 +952,38 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
             user_sequence_id: int | None = None
             assistant_sequence_id: int | None = None
             redis_append_failed = False
+            context_load_timeout_seconds = 1.0
+            context_loaded_for_stream = False
+
+            async def ensure_context_for_stream() -> None:
+                nonlocal context_messages, context_signature, prompt_build_ms, context_loaded_for_stream
+                if context_loaded_for_stream:
+                    return
+                context_loaded_for_stream = True
+                try:
+                    loaded_messages, loaded_signature, loaded_prompt_build_ms = await asyncio.wait_for(
+                        context_messages_task,
+                        timeout=context_load_timeout_seconds,
+                    )
+                    context_messages = loaded_messages
+                    context_signature = loaded_signature
+                    prompt_build_ms = loaded_prompt_build_ms
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    logger.warning(
+                        "context_load_timeout_in_stream",
+                        request_id=request_id,
+                        timeout_seconds=context_load_timeout_seconds,
+                    )
+                    context_messages = []
+                    context_signature = ""
+                except Exception as exc:
+                    logger.warning(
+                        "context_load_error_in_stream",
+                        request_id=request_id,
+                        error=str(exc),
+                    )
+                    context_messages = []
+                    context_signature = ""
     
             asyncio.create_task(
                 _capture_telemetry_async(
@@ -1183,6 +1229,7 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
                     return
     
                 if force_non_stream:
+                    await ensure_context_for_stream()
                     try:
                         fallback_content = await generate_explanation(
                             effective_content,
@@ -1225,6 +1272,7 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
                     return
     
                 system_parts: list[str] = []
+                await ensure_context_for_stream()
                 base_prompt = SYSTEM_PROMPT.strip()
                 if base_prompt:
                     system_parts.append(base_prompt)
