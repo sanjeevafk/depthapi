@@ -74,6 +74,7 @@ class UpstashRedisCompat:
             timeout_seconds=REDIS_REST_CALL_TIMEOUT_SECONDS,
             default=None,
             context_label=f"redis_call_{str(command[0]).lower() if command else 'unknown'}",
+            swallow_exceptions=True,
         )
         if response is None:
             raise RuntimeError("Redis REST call timed out or failed")
@@ -96,6 +97,7 @@ class UpstashRedisCompat:
             timeout_seconds=REDIS_REST_CALL_TIMEOUT_SECONDS,
             default=None,
             context_label="redis_call_pipeline",
+            swallow_exceptions=True,
         )
         if response is None:
             raise RuntimeError("Redis REST pipeline call timed out or failed")

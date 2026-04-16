@@ -400,7 +400,7 @@ async def query_topic_stream(
         now_ts = int(time.time())
         idem_check = await check_idempotency_and_cache(
             idempotency_key=idempotency_key,
-            cache_key=cache_key,
+            cache_key=cache_key(topic, level, mode),
             now_ts=now_ts,
             idempotency_ttl=idempotency_ttl_seconds,
             idempotency_stale=idempotency_stale_seconds,
