@@ -9,8 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from auth import check_is_pro, ensure_user_exists, get_supabase_admin, verify_token_optional
-from api.repositories.chat_repository import ChatRepository
-from services.query_helpers import normalize_levels, cache_key, persist_history_safely
+from services.query_helpers import normalize_levels, cache_key
 from config import get_settings
 from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from services.cache import cache_get, cache_get_many, cache_set, cache_set_many, check_idempotency_and_cache
@@ -57,8 +56,83 @@ class QueryResponse(BaseModel):
 
 
 async def save_to_history(user, topic: str, levels: list[str], mode: str) -> None:
-    """Backwards-compatible alias expected by tests."""
-    await persist_history_safely(user, topic, levels, mode)
+    """Persist query history without surfacing storage errors to callers."""
+    normalized_mode = normalize_mode(mode)
+    user_id_hash = anonymize_user_id(str(getattr(user, "id", "") or "") or None)
+    topic_hash = anonymize_text(topic)
+
+    try:
+        await ensure_user_exists(user)
+    except Exception as exc:
+        logger.error(
+            "save_to_history_ensure_user_failed",
+            error=str(exc),
+            error_type=type(exc).__name__,
+            user_id_hash=user_id_hash,
+            sampled=False,
+        )
+        return
+
+    supabase = get_supabase_admin()
+    if not supabase:
+        logger.error("save_to_history_no_supabase_admin", user_id_hash=user_id_hash, sampled=False)
+        return
+
+    try:
+        existing = await asyncio.to_thread(
+            lambda: supabase.table("history")
+            .select("id, levels")
+            .eq("user_id", user.id)
+            .eq("topic", topic)
+            .eq("mode", normalized_mode)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error(
+            "save_to_history_fetch_failed",
+            error=str(exc),
+            error_type=type(exc).__name__,
+            user_id_hash=user_id_hash,
+            topic_hash=topic_hash,
+            sampled=False,
+        )
+        return
+
+    try:
+        data = getattr(existing, "data", None)
+        if isinstance(data, list) and data and isinstance(data[0], dict):
+            item_id = data[0].get("id")
+            existing_levels = set(data[0].get("levels") or [])
+            new_levels = list(existing_levels.union(set(levels)))
+            await asyncio.to_thread(
+                lambda: supabase.table("history")
+                .update({"levels": new_levels, "mode": normalized_mode})
+                .eq("id", item_id)
+                .execute()
+            )
+        else:
+            await asyncio.to_thread(
+                lambda: supabase.table("history")
+                .insert(
+                    {
+                        "user_id": user.id,
+                        "topic": topic,
+                        "levels": levels,
+                        "mode": normalized_mode,
+                    }
+                )
+                .execute()
+            )
+    except Exception as exc:
+        logger.error(
+            "save_to_history_write_failed",
+            error=str(exc),
+            error_type=type(exc).__name__,
+            user_id_hash=user_id_hash,
+            topic_hash=topic_hash,
+            mode=normalized_mode,
+            sampled=False,
+        )
 
 
 
@@ -81,12 +155,13 @@ async def query_topic(
     mode = normalize_mode(req.mode)
     if mode not in SUPPORTED_CHAT_MODES:
         mode = DEFAULT_CHAT_MODE
-    if mode == TECHNICAL_MODE:
-        config_state = get_provider_config_state()
-        if not bool(config_state.get("chat_enabled", False)):
-            raise LLMUnavailable("Chat is disabled because no LLM providers are configured correctly.")
+    config_state = get_provider_config_state()
+    if not bool(config_state.get("chat_enabled", False)):
+        raise LLMUnavailable("Chat is disabled because no LLM providers are configured correctly.")
 
-    is_verified_pro = bool(auth_data and await check_is_pro(auth_data["user"].id))
+    is_verified_pro = bool(auth_data.get("is_pro")) if auth_data and "is_pro" in auth_data else bool(
+        auth_data and await check_is_pro(auth_data["user"].id)
+    )
     req.premium = is_verified_pro
     if mode == TECHNICAL_MODE:
         if not auth_data:
@@ -115,14 +190,22 @@ async def query_topic(
     missing_levels: list[str] = []
 
     if not req.bypass_cache:
-        cache_keys = {level: cache_key(topic, level, mode) for level in levels}
-        cached_map = await cache_get_many(list(cache_keys.values()))
-        for level in levels:
-            cached = cached_map.get(cache_keys[level])
-            if cached and cached.get("text"):
-                explanations[level] = cached.get("text", "")
+        if len(levels) == 1:
+            only_level = levels[0]
+            single_cached = await cache_get(cache_key(topic, only_level, mode))
+            if single_cached and single_cached.get("text"):
+                explanations[only_level] = single_cached.get("text", "")
             else:
-                missing_levels.append(level)
+                missing_levels.append(only_level)
+        else:
+            cache_keys = {level: cache_key(topic, level, mode) for level in levels}
+            cached_map = await cache_get_many(list(cache_keys.values()))
+            for level in levels:
+                cached = cached_map.get(cache_keys[level])
+                if cached and cached.get("text"):
+                    explanations[level] = cached.get("text", "")
+                else:
+                    missing_levels.append(level)
     else:
         missing_levels = levels
 
@@ -233,12 +316,13 @@ async def query_topic_stream(
     mode = normalize_mode(req.mode)
     if mode not in SUPPORTED_CHAT_MODES:
         mode = DEFAULT_CHAT_MODE
-    if mode == TECHNICAL_MODE:
-        config_state = get_provider_config_state()
-        if not bool(config_state.get("chat_enabled", False)):
-            raise LLMUnavailable("Chat is disabled because no LLM providers are configured correctly.")
+    config_state = get_provider_config_state()
+    if not bool(config_state.get("chat_enabled", False)):
+        raise LLMUnavailable("Chat is disabled because no LLM providers are configured correctly.")
 
-    is_verified_pro = bool(auth_data and await check_is_pro(auth_data["user"].id))
+    is_verified_pro = bool(auth_data.get("is_pro")) if auth_data and "is_pro" in auth_data else bool(
+        auth_data and await check_is_pro(auth_data["user"].id)
+    )
     req.premium = is_verified_pro
     if mode == TECHNICAL_MODE:
         if not auth_data:

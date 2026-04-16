@@ -66,8 +66,18 @@ _tech_logger = structlog.get_logger(__name__)
 
 
 class _SearchServiceShim:
+    async def get_search_context(self, topic: str):
+        return await _load_search_context(topic, mode=LEARNING_MODE)
+
     async def load_search_context(self, topic: str, *, mode: str):
-        return await _load_search_context(topic, mode=mode)
+        default_impl = getattr(self.get_search_context, "__func__", None) is _SearchServiceShim.get_search_context
+        if default_impl:
+            return await _load_search_context(topic, mode=mode)
+        try:
+            context = await self.get_search_context(topic)
+        except Exception:
+            return ""
+        return _truncate_search_context(str(context or ""))
 
 
 search_service = _SearchServiceShim()
