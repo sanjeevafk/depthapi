@@ -35,6 +35,7 @@ from services.conversation_context import (
     extract_last_turns,
 )
 from services.conversation_intent import (
+    ConversationIntent,
     classify_conversation_intent,
     build_intent_system_prompt,
 )
@@ -663,7 +664,14 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
                 raise HTTPException(status_code=404, detail="Conversation not found")
         last_user_message, last_assistant_message = extract_last_turns(history_messages)
         has_prior = bool(last_user_message or last_assistant_message)
-        intent = classify_conversation_intent(content, has_prior=has_prior)
+        intent = await with_timeout(
+            asyncio.to_thread(classify_conversation_intent, content, has_prior=has_prior),
+            timeout_seconds=CONTEXT_LOAD_TIMEOUTS["intent_classify"],
+            default=ConversationIntent(type="new_query", reason="intent_timeout_default"),
+            context_label="intent_classification",
+        )
+        if intent is None:
+            intent = ConversationIntent(type="new_query", reason="intent_none_default")
         intent_system_prompt = build_intent_system_prompt(
             intent,
             correction_text=content if intent.type == "correction" else None,
