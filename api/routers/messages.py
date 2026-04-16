@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, ValidationError
 import orjson
 
 from auth import check_is_pro, get_supabase_admin, verify_token
-from config import get_settings
+from config import CONTEXT_LOAD_TIMEOUTS, get_settings
 from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from monitoring import capture_telemetry_event
 from services.analytics import build_llm_request_payload, record_llm_request
@@ -59,6 +59,7 @@ from utils import (
     SOCRATIC_MODE,
     TECHNICAL_MODE,
     normalize_prompt_level,
+    with_timeout,
 )
 
 router = APIRouter(tags=["messages"])
@@ -631,11 +632,22 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
         # ── Conversation context & intent ──────────────────────────────────────
         history_messages = await _parse_snapshot_messages(snapshot_raw_messages, req.conversation_id)
         if not history_messages:
-            db_meta, db_messages = await _load_conversation_from_db(
-                req.conversation_id,
-                user_id,
-                history_limit,
+            db_meta, db_messages = await with_timeout(
+                _load_conversation_from_db(
+                    req.conversation_id,
+                    user_id,
+                    history_limit,
+                ),
+                timeout_seconds=CONTEXT_LOAD_TIMEOUTS["db_context"],
+                default=({}, []),
+                context_label="db_context_load",
             )
+            if not db_messages:
+                logger.warning(
+                    "db_context_timeout_fallback_to_empty",
+                    conversation_id=req.conversation_id,
+                    request_id=request_id,
+                )
             if db_meta:
                 snapshot_meta = db_meta
             if db_messages:
