@@ -397,6 +397,9 @@ def _final_fallback_message(mode: str) -> str:
 async def send_message(request: Request, auth_data: dict = Depends(verify_token)):
     request_received = time.perf_counter()
     request_id = str(getattr(request.state, "request_id", "") or "")
+    snapshot_ms = 0.0
+    db_ms = 0.0
+    snapshot_degraded = False
 
     try:
         raw_payload = await request.json()
@@ -515,6 +518,7 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
         trusted_proxies = _trusted_proxies_from_settings(config_settings)
 
         history_limit = max(int(getattr(config_settings, "conversation_context_fetch_limit", 80)), 1)
+        snapshot_start = time.perf_counter()
         snapshot_meta_raw, snapshot_raw_messages = await fetch_conversation_snapshot(
             conversation_id=req.conversation_id,
             max_messages=history_limit,
@@ -549,6 +553,15 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
             )
             if snapshot_meta_raw:
                 snapshot_meta = await _parse_snapshot_meta(snapshot_meta_raw, req.conversation_id)
+        snapshot_ms = (time.perf_counter() - snapshot_start) * 1000
+        snapshot_degraded = not bool(snapshot_meta_raw)
+        logger.info(
+            "timing_snapshot_load",
+            request_id=request_id,
+            conversation_id=req.conversation_id,
+            snapshot_ms=round(snapshot_ms, 2),
+            snapshot_degraded=snapshot_degraded,
+        )
 
         mode_candidate = (
             normalized_mode
@@ -633,6 +646,7 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
         # ── Conversation context & intent ──────────────────────────────────────
         history_messages = await _parse_snapshot_messages(snapshot_raw_messages, req.conversation_id)
         if not history_messages:
+            db_start = time.perf_counter()
             db_meta, db_messages = await with_timeout(
                 _load_conversation_from_db(
                     req.conversation_id,
@@ -642,6 +656,14 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
                 timeout_seconds=CONTEXT_LOAD_TIMEOUTS["db_context"],
                 default=({}, []),
                 context_label="db_context_load",
+            )
+            db_ms = (time.perf_counter() - db_start) * 1000
+            logger.info(
+                "timing_db_load",
+                request_id=request_id,
+                conversation_id=req.conversation_id,
+                db_ms=round(db_ms, 2),
+                db_messages_count=len(db_messages),
             )
             if not db_messages:
                 logger.warning(
@@ -1716,6 +1738,18 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
             event_generator(),
             media_type="text/event-stream",
             headers=SSE_RESPONSE_HEADERS,
+        )
+        preliminary_ms = (time.perf_counter() - request_received) * 1000
+        logger.info(
+            "timing_preliminary_work",
+            request_id=request_id,
+            conversation_id=req.conversation_id,
+            total_ms=round(preliminary_ms, 2),
+            breakdown={
+                "snapshot_ms": round(snapshot_ms, 2),
+                "db_ms": round(db_ms, 2),
+                "context_build_ms": round(prompt_build_ms, 2),
+            },
         )
         response_started = True
         return response
