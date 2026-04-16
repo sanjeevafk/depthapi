@@ -139,6 +139,18 @@ def build_query_stream_response(
         telemetry_sink: dict[str, Any] = {}
         model_alias: str | None = None
         last_progress_update = start_time
+        pending_chunk_task: asyncio.Task[str] | None = None
+
+        async def cancel_pending_chunk_task() -> None:
+            nonlocal pending_chunk_task
+            if pending_chunk_task is None:
+                return
+            pending_chunk_task.cancel()
+            try:
+                await asyncio.wait_for(pending_chunk_task, timeout=0.25)
+            except BaseException:
+                pass
+            pending_chunk_task = None
 
         async def update_progress() -> None:
             nonlocal last_progress_update
@@ -211,6 +223,7 @@ def build_query_stream_response(
                 elapsed = time.perf_counter() - start_time
                 if elapsed >= stream_max_seconds:
                     timed_out = True
+                    await cancel_pending_chunk_task()
                     await close_stream(stream)
                     break
 
@@ -219,19 +232,27 @@ def build_query_stream_response(
                     timeout = min(timeout, max(0.0, start_deadline - time.perf_counter()))
                     if timeout <= 0:
                         start_timeout = True
+                        await cancel_pending_chunk_task()
                         await close_stream(stream)
                         break
 
                 try:
-                    chunk = await asyncio.wait_for(stream_iter.__anext__(), timeout=timeout)
+                    if pending_chunk_task is None:
+                        async def get_next_chunk():
+                            return await anext(stream_iter)
+                        pending_chunk_task = asyncio.create_task(get_next_chunk())
+                    chunk = await asyncio.wait_for(asyncio.shield(pending_chunk_task), timeout=timeout)
+                    pending_chunk_task = None
                 except asyncio.TimeoutError:
                     yield emit("heartbeat", {"ts": time.time()})
                     if chunk_count == 0 and time.perf_counter() >= start_deadline:
                         start_timeout = True
+                        await cancel_pending_chunk_task()
                         await close_stream(stream)
                         break
                     continue
                 except StopAsyncIteration:
+                    pending_chunk_task = None
                     break
 
                 full_content += chunk
@@ -295,6 +316,7 @@ def build_query_stream_response(
                     await cache_set(cache_key_value, {"text": full_content})
                 if auth_data:
                     await persist_history(auth_data["user"], topic, [level], mode)
+                return
             if timed_out:
                 cutoff_message = "\n\n[Response truncated to stay within serverless limits. Retry to continue.]"
                 yield emit("chunk", {"chunk": cutoff_message})
@@ -380,6 +402,7 @@ def build_query_stream_response(
             yield emit("error", {"error": "An error occurred while streaming. Please try again."})
             yield emit("done", "[DONE]")
         finally:
+            await cancel_pending_chunk_task()
             if idempotency_key and message_id:
                 now_ts = int(time.time())
                 if full_content.strip():
