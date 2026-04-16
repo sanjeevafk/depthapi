@@ -88,6 +88,11 @@ def build_message_stream_response(
     is_pro: bool,
     generate_stream_explanation,
     generate_explanation,
+    context_messages: Optional[list[dict[str, str]]] = None,
+    context_messages_task: Optional[asyncio.Task] = None,
+    context_load_timeout_seconds: float = 1.0,
+    socratic_context: Optional[list[dict[str, str]]] = None,
+    intent_system_prompt: Optional[str] = None,
     cache_set,
     log_context: dict[str, Any],
     log_sampled_success_fn=None,
@@ -202,6 +207,29 @@ def build_message_stream_response(
                 return
 
             generation_start = time.perf_counter()
+            actual_context_messages = context_messages
+            actual_socratic_context = socratic_context
+            if context_messages_task and not actual_context_messages:
+                try:
+                    actual_context_messages = await asyncio.wait_for(
+                        context_messages_task,
+                        timeout=context_load_timeout_seconds,
+                    )
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    logger.warning(
+                        "context_load_timeout_in_stream",
+                        request_id=request_id,
+                        timeout_seconds=context_load_timeout_seconds,
+                    )
+                    actual_context_messages = None
+                except Exception as exc:
+                    logger.warning(
+                        "context_load_error_in_stream",
+                        request_id=request_id,
+                        error=_error_text(exc),
+                    )
+                    actual_context_messages = None
+
             stream = generate_stream_explanation(
                 content,
                 prompt_mode,
@@ -211,6 +239,9 @@ def build_message_stream_response(
                 request_id=request_id,
                 user_id=user_id,
                 telemetry_sink=telemetry_sink,
+                conversation_messages=actual_context_messages,
+                conversation_context=actual_socratic_context,
+                intent_system_prompt=intent_system_prompt,
             )
             stream_iter = stream.__aiter__()
             start_deadline = start_time + stream_start_timeout_seconds
@@ -296,6 +327,9 @@ def build_message_stream_response(
                             request_id=request_id,
                             user_id=user_id,
                             telemetry_sink=telemetry_sink,
+                            conversation_messages=actual_context_messages,
+                            conversation_context=actual_socratic_context,
+                            intent_system_prompt=intent_system_prompt,
                         ),
                         timeout=fallback_timeout,
                     )
@@ -405,6 +439,9 @@ def build_message_stream_response(
                             request_id=request_id,
                             user_id=user_id,
                             telemetry_sink=telemetry_sink,
+                                conversation_messages=actual_context_messages,
+                                conversation_context=actual_socratic_context,
+                                intent_system_prompt=intent_system_prompt,
                         ),
                         timeout=fallback_timeout,
                     )
