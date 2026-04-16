@@ -36,6 +36,17 @@ class StreamConfig:
 _STREAM_CONFIG: StreamConfig | None = None
 
 
+# Per-component timeout budgets (seconds) for pre-LLM work.
+CONTEXT_LOAD_TIMEOUTS: dict[str, float] = {
+    "redis_snapshot": 0.5,
+    "db_context": 1.0,
+    "search_context": 2.0,
+    "intent_classify": 0.2,
+}
+
+PRELIMINARY_WORK_TIMEOUT_SECONDS = 4.0
+
+
 def _compute_stream_config() -> StreamConfig:
     """Compute pre-cached streaming config from settings."""
     settings = get_settings()
