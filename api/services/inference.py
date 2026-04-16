@@ -283,13 +283,8 @@ async def technical_mode_handler(
     response = await _call_and_validate(primary_alias)
 
     if response is None:
-        _tech_logger.info("technical_primary_retry", intent=intent, depth=depth)
-        response = await _call_and_validate(primary_alias)
-        response_alias = primary_alias
-
-    if response is None:
         fallback_triggered = True
-        fallback_reason = "primary_exhausted"
+        fallback_reason = "primary_failed_no_retry"
         _tech_logger.info(
             "technical_fallback_triggered",
             reason=fallback_reason,
