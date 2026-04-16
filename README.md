@@ -1,245 +1,321 @@
-# KnowBear – Layered AI Knowledge Engine
+# KnowBear: Layered AI Knowledge Engine
 
-KnowBear is an AI-powered product that delivers explanations at exactly the right depth for any topic, from ELI5 to technical deep dives. It routes requests through native `AsyncOpenAI` provider clients, enforces mode-specific behavior, caches repeat queries, and provides exportable responses in a focused UI.
+KnowBear is a full-stack AI application that delivers explanations at the right depth for each user context, from beginner-friendly summaries to technical analysis.
 
-- Live demo: https://knowbear.vercel.app (now-deprecated v1)
-- Deprecated v1 repo: https://github.com/voidcommit-afk/knowbear-v1
+It combines:
 
-## Status
+- A React + TypeScript frontend for chat, history, and mode selection.
+- A FastAPI backend for orchestration, routing, streaming, and policy checks.
+- Multi-provider LLM inference with fallback chains.
+- Supabase for auth/data and Redis for caching and fast replay.
 
-- v2 is implemented and live in this repository, including technical-mode intent/depth handling, streaming reliability hardening, Pro/payment enforcement, and degraded-mode health behavior.
-- v3 is the next track, focused on grounded retrieval and citation-backed responses.
+## Core Capabilities
 
-## Core Features
-
-- Layered explanation levels: ELI5, ELI10, ELI12, ELI15, Meme
-- Dedicated modes: Learning, Technical, Socratic
-- Technical mode v2 with intent detection (explain, compare, brainstorm), depth control, and optional diagram guidance
-- Stable alias-based model routing through native provider fallback chains
-- Production chat sidebar with full thread history, New Thread reset, Go to Home action, and auth-aware sign in/out controls
-- Fresh-thread guarantees on reload and thread switch (stale-message race guarded with request-tokened loads)
-- SSE streaming with heartbeat, start timeout, and graceful cutoffs
-- Fast repeat queries via Redis caching
-- Export formats: .txt, .md
-- Authentication and Pro gating for premium modes
-- Sentry telemetry with PII redaction and release tagging
-
-## Architecture Overview
-
-```
-KnowBear monorepo
-├── api/                      # FastAPI backend
-│   ├── main.py               # uvicorn entrypoint
-│   ├── routers/              # FastAPI APIRouter modules
-│   │   ├── query.py
-│   │   ├── messages.py
-│   │   ├── export.py
-│   │   ├── pinned.py
-│   │   └── health.py
-│   ├── services/
-│   │   ├── inference.py      # model alias routing + streaming
-│   │   ├── intent.py         # technical intent/depth/diagram detection
-│   │   ├── cache.py          # Redis abstraction
-│   │   ├── auth.py           # Supabase / JWT verification
-│   │   └── rate_limit.py     # per-user / global limits
-│   └── schemas/              # Pydantic models
-├── src/                      # React + Vite frontend
-│   ├── components/
-│   ├── pages/
-│   ├── hooks/
-│   └── lib/
-├── api/tests/                # backend pytest
-├── tests/                    # frontend vitest + Playwright e2e
-├── public/
-├── vercel.json
-└── README.md
-```
-
-## Model Routing (Native Providers)
-
-All model calls go through `api/services/llm_client.py` using native `AsyncOpenAI` clients against:
-
-- Groq (`llama-3.1-8b-instant`)
-- Gemini (`gemini-2.5-flash`, `gemini-2.5-pro`)
-- Cerebras (`zai-glm-4.7`)
-- OpenRouter (Venice uncensored via `cognitivecomputations/dolphin-mistral-24b-venice-edition:free`) for Socratic
-- OpenRouter (`openrouter/free`) as optional fallback elsewhere
-
-Primary app-level MoE routing is defined in `api/services/inference.py` and alias-to-provider fallback mapping lives in `api/services/llm_client.py`.
-Socratic mode prioritizes the uncensored Venice model via OpenRouter for question quality. If you see slow first-token latency locally, raise `OPENROUTER_TIMEOUT_SECONDS` and/or `STREAM_START_TIMEOUT_SECONDS`.
-
-### MoE Routing Matrix (Mode -> Alias Chain)
-
-| Mode | Condition | Ranked Alias Chain (first -> fallback) |
-|------|-----------|-----------------------------------------|
-| Learning | Freshness query (`latest`, `today`, `recent`, etc.) | `learn-gemini-flash` -> `learn-groq-llama8b` -> `learn-openrouter-free` |
-| Learning | Short/latency-biased query (`<8` tokens or high latency priority) | `learn-groq-llama8b` -> `learn-gemini-flash` -> `learn-openrouter-free` |
-| Learning | Default | `learn-gemini-flash` -> `learn-groq-llama8b` -> `learn-openrouter-free` |
-| Technical | Math-heavy, high complexity (`>=0.6`) | `technical-gemini-pro` -> (`technical-cerebras-glm` when Pro and complexity `>=0.8`) -> `technical-groq-llama8b` -> `technical-openrouter-free` |
-| Technical | Math-heavy, low complexity (`<0.4`) | `technical-gemini-flash` -> `technical-groq-llama8b` -> `technical-openrouter-free` |
-| Technical | Programming query or search-context assisted | `technical-gemini-pro` -> `technical-groq-llama8b` -> `technical-openrouter-free` (+ `technical-cerebras-glm` appended when Pro and complexity `>=0.8`) |
-| Technical | Default | `technical-gemini-pro` -> (`technical-cerebras-glm` inserted at rank 2 when Pro and complexity `>=0.8`) -> `technical-groq-llama8b` -> `technical-openrouter-free` |
-| Socratic | Default | `socratic-openrouter-free` -> `socratic-gemini-pro` -> `socratic-groq-llama8b` |
-| Socratic | High-reasoning Pro path (reasoning + complexity `>=0.8`) | `socratic-cerebras-glm` -> `socratic-openrouter-free` -> `socratic-gemini-pro` -> `socratic-groq-llama8b` |
-
-### Alias-to-Provider Matrix (Provider Model Fallback)
-
-| Alias | Provider Fallback Order (provider:model) |
-|------|-------------------------------------------|
-| `learn-gemini-flash` | `gemini:gemini-2.5-flash` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
-| `learn-groq-llama8b` | `groq:llama-3.1-8b-instant` -> `gemini:gemini-2.5-flash` -> `openrouter:openrouter/free` |
-| `learn-openrouter-free` | `gemini:gemini-2.5-flash` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
-| `technical-gemini-flash` | `gemini:gemini-2.5-flash` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
-| `technical-gemini-pro` | `gemini:gemini-2.5-pro` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
-| `technical-groq-llama8b` | `groq:llama-3.1-8b-instant` -> `gemini:gemini-2.5-pro` -> `openrouter:openrouter/free` |
-| `technical-openrouter-free` | `gemini:gemini-2.5-pro` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
-| `technical-cerebras-glm` | `cerebras:zai-glm-4.7` -> `gemini:gemini-2.5-pro` -> `groq:llama-3.1-8b-instant` |
-| `socratic-gemini-pro` | `gemini:gemini-2.5-pro` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
-| `socratic-groq-llama8b` | `groq:llama-3.1-8b-instant` -> `gemini:gemini-2.5-pro` -> `openrouter:openrouter/free` |
-| `socratic-openrouter-free` | `openrouter:cognitivecomputations/dolphin-mistral-24b-venice-edition:free` |
-| `socratic-cerebras-glm` | `cerebras:zai-glm-4.7` -> `gemini:gemini-2.5-pro` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
-
-## API Endpoints (public)
-
-| Method | Path | Description | Auth? | Rate-limited? |
-|--------|------|-------------|-------|---------------|
-| GET | `/api/health` | Dependency status | No | No |
-| GET | `/api/pinned` | Curated & trending topics | No | Light |
-| POST | `/api/query` | Main query endpoint — returns layered output | Optional | Yes |
-| POST | `/api/export` | Convert result to file (txt/md) | No | Yes |
-| GET | `/api/usage` | Current user quota & usage (Pro users) | Yes | No |
-
-## Streaming Behavior
-
-- SSE heartbeat is emitted at least every 2 seconds.
-- Stream duration is capped by `STREAM_MAX_SECONDS` (default 25s; longer in non-production).
-- Stream start timeout is mode-sensitive (technical mode uses the maximum window; other modes use a tighter cap).
-- If streaming cannot start in time, the backend falls back to non-streamed output.
-
-## Frontend UX (Task 14)
-
-- Sidebar now shows complete conversation history for the authenticated user (no 20-thread cap).
-- Sidebar includes:
-  - `New Thread` (immediate draft reset)
-  - `Go to Home` (landing page redirect)
-  - auth-aware `Sign in` / `Sign out` action in the account rail
-- Thread loading behavior is now deterministic and race-safe:
-  - selecting a thread clears visible messages immediately before loading the selected thread
-  - out-of-order async loads are ignored using a per-request message-load token
-  - reload/thread-switch paths always show the correct backend thread without stale bleed-through
-- Sidebar collapse preference is hydrated after mount to keep client state and rendered UI in sync.
-
-## Degraded Mode (Provider Routing)
-
-- On startup, the backend validates provider API key config and logs structured warning/error events.
-- Missing provider config disables chat endpoints in degraded mode (`503`) while keeping the rest of the app available.
-- Invalid provider credentials return structured errors (`invalid_api_key`).
-- Frontend polls `/api/health` and shows a banner when chat is unavailable.
-
-`/api/health` response shape:
-
-```json
-{
-  "status": "ok|degraded|down",
-  "provider": {
-    "status": "ok|degraded|down",
-    "reachable": true,
-    "key_valid": true
-  },
-  "rate_limit": { "status": "ok|degraded|down" },
-  "db": { "status": "ok|degraded|down" }
-}
-```
-
-## Monitoring and Telemetry (Sentry)
-
-- Backend Sentry is enabled only when `SENTRY_DSN` is present and `SENTRY_ENABLED` is not `false`.
-- Frontend Sentry is enabled only when `VITE_SENTRY_DSN` is present and `VITE_SENTRY_ENABLED` is not `false`.
-- Release tagging is supported via `SENTRY_RELEASE` (backend) and `VITE_SENTRY_RELEASE` (frontend).
-- Sampling is enabled by default to reduce noise.
-- PII and secrets are redacted before telemetry is emitted (emails, auth tokens, cookies, headers, and query strings).
-- Distributed tracing headers (`sentry-trace`, `baggage`) are propagated from frontend calls to backend and forwarded to provider requests.
-- CI release automation lives in `.github/workflows/sentry-release.yml`.
-- Alert bootstrap script: `scripts/setup_sentry_alerts.sh`.
-
-## Payments and Pro Verification
-
-- Upgrade CTA calls backend `POST /api/payments/create-checkout` and redirects to the provider checkout URL.
-- Pro status is updated only by verified webhook events (`POST /api/payments/webhook/dodo` or legacy `/webhooks/dodo`).
-- Webhook events require valid HMAC signature verification and are processed idempotently.
-- Payment success grants Pro, while failed payments do not grant Pro; cancellation and renewal failure revoke Pro.
-- `/success` only refreshes profile state and redirects to `/app`; it never grants Pro by redirect alone.
+- Multi-mode responses: `learning`, `technical`, `socratic`
+- Layered output levels: `ELI5`, `ELI10`, `ELI12`, `ELI15`, `Meme`
+- Intent-aware technical routing with depth adaptation
+- SSE streaming responses with timeout guards and fail-soft fallback
+- Conversation persistence and replay
+- Export support for response artifacts (`.txt`, `.md`)
 
 ## Tech Stack
 
 | Layer | Technologies |
 |------|--------------|
-| Frontend | React 18, TypeScript, Vite, Tailwind CSS, Framer Motion, Zustand, React Query |
-| Backend | FastAPI, Python 3.11+, Pydantic v2, Structlog, Upstash Redis REST |
-| AI Inference | Native AsyncOpenAI clients, Groq, Gemini, Cerebras, OpenRouter |
-| Auth | Supabase Auth (JWT + OAuth) |
-| Cache | Redis (Upstash) |
-| Deployment | Vercel (frontend + serverless backend) |
-| Testing | pytest, vitest, Playwright |
-| License | Apache License 2.0 |
+| Frontend | React 18, TypeScript, Vite, Zustand, React Query, Tailwind CSS |
+| Backend | FastAPI, Python 3.11+, Pydantic v2, Structlog |
+| AI Providers | AsyncOpenAI-compatible clients, Gemini, Groq, Cerebras, OpenRouter |
+| Data/Auth | Supabase |
+| Cache | Upstash Redis |
+| Testing | pytest, Vitest, Playwright |
 
-## Vercel Deployment Automation
+## Repository Structure (ASCII)
 
-GitHub Actions workflow: `.github/workflows/vercel-deploy.yml`
+```text
+KnowBear/
+|-- api/
+|   |-- routers/          # HTTP routes and endpoint contracts
+|   |-- services/         # inference, streaming, cache, auth, orchestration
+|   |-- repositories/     # persistence abstraction
+|   `-- tests/            # backend test suite
+|-- src/
+|   |-- components/       # UI building blocks
+|   |-- pages/            # route-level UI
+|   |-- stores/           # client state
+|   `-- services/         # frontend API wrappers
+|-- supabase/
+|   `-- migrations/       # SQL migration history
+|-- tests/
+|   `-- e2e/              # browser-level end-to-end tests
+`-- README.md
+```
 
-- Push to `main` deploys to **production**.
-- Manual run (`workflow_dispatch`) supports **preview** or **production**.
-- Deployment is blocked unless `/api/health` returns HTTP `200` and overall status is not `degraded`/`down`.
+## High-Level Architecture
 
-Required GitHub repository secrets:
+```mermaid
+flowchart LR
+    U[User Browser] --> FE[React Frontend]
+    FE --> API[FastAPI API Layer]
+    API --> ORCH[Streaming Orchestrator]
+    ORCH --> INF[Inference Router]
+    INF --> P1[Gemini]
+    INF --> P2[Groq]
+    INF --> P3[Cerebras]
+    INF --> P4[OpenRouter]
+    API --> CACHE[(Redis Cache)]
+    API --> DB[(Supabase)]
+```
 
-- `VERCEL_TOKEN`
-- `VERCEL_ORG_ID`
-- `VERCEL_PROJECT_ID`
+### Quick Runtime View (ASCII)
+
+```text
++---------+      +-----------+      +-----------------+
+| Browser | ---> | Frontend  | ---> | FastAPI Routers |
++---------+      +-----------+      +-----------------+
+                                          |
+                                          v
+                                +----------------------+
+                                | Streaming Orchestr.  |
+                                +----------------------+
+                                     |     |      |
+                                     |     |      +--> Redis cache check
+                                     |     +---------> Supabase history/context
+                                     +--------------> Inference router -> LLM providers
+```
+
+## Low-Level Backend Architecture
+
+```mermaid
+flowchart TD
+    RQ[routers/query.py] --> SO[services/streaming_orchestrator.py]
+    RM[routers/messages.py] --> SO
+    SO --> MSGS[services/query_streaming.py]
+    MSGS --> INF[services/inference.py]
+    MSGS --> CC[services/conversation_cache.py]
+    INF --> LLM[services/llm_client.py]
+    CC --> REDIS[services/cache.py]
+    MSGS --> REPO[repositories/chat_repository.py]
+    REPO --> SUPABASE[(Supabase)]
+    REDIS --> UPSTASH[(Upstash Redis)]
+```
+
+## UML: Core Class Relationships
+
+```mermaid
+classDiagram
+    class StreamingOrchestrator {
+      +stream_query(request, user_context)
+      +build_context_task(...)
+    }
+
+    class QueryStreamingService {
+      +stream_response(...)
+      +emit_heartbeat(...)
+      +finalize_stream(...)
+    }
+
+    class InferenceService {
+      +route_and_run(...)
+      +run_with_fallback(...)
+      +select_alias_chain(...)
+    }
+
+    class LLMClient {
+      +stream_chat(provider, model, prompt)
+      +complete_chat(provider, model, prompt)
+    }
+
+    class ConversationCache {
+      +get_snapshot(...)
+      +set_snapshot(...)
+      +invalidate(...)
+    }
+
+    class ChatRepository {
+      +load_history(...)
+      +persist_message(...)
+      +persist_turn(...)
+    }
+
+    StreamingOrchestrator --> QueryStreamingService : coordinates
+    QueryStreamingService --> InferenceService : requests output
+    InferenceService --> LLMClient : provider calls
+    QueryStreamingService --> ConversationCache : read/write
+    QueryStreamingService --> ChatRepository : persistence
+```
+
+## UML: Sequence for `POST /api/query`
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant R as Query Router
+    participant O as Streaming Orchestrator
+    participant S as Query Streaming Service
+    participant I as Inference Service
+    participant L as LLM Client
+    participant K as Redis Cache
+    participant D as Supabase
+
+    C->>R: POST /api/query
+    R->>O: normalize + validate request
+    O->>S: start stream pipeline
+    S->>K: lookup cached result
+    alt cache hit
+        K-->>S: cached payload
+        S-->>C: stream cached response
+    else cache miss
+        S->>D: load conversation context
+        S->>I: route model chain
+        I->>L: stream completion
+        L-->>I: tokens/chunks
+        I-->>S: normalized stream chunks
+        S-->>C: SSE chunks
+        S->>K: write cache
+        S->>D: persist turn
+    end
+```
+
+## Routing Model
+
+KnowBear uses alias chains to decouple endpoint behavior from concrete provider IDs.
+The backend selects an alias chain by mode and query characteristics, then attempts providers in order until one succeeds.
+
+### LLM Routing Matrix (Mode x Query Characteristics)
+
+| Mode | Query Characteristics | Ranked Alias Chain (first -> fallback) |
+|------|------------------------|-----------------------------------------|
+| `learning` | Freshness terms (`latest`, `today`, `recent`, `news`) | `learn-gemini-flash` -> `learn-groq-llama8b` -> `learn-openrouter-free` |
+| `learning` | Short query (`<8` tokens) or latency-biased request | `learn-groq-llama8b` -> `learn-gemini-flash` -> `learn-openrouter-free` |
+| `learning` | Default learning query | `learn-gemini-flash` -> `learn-groq-llama8b` -> `learn-openrouter-free` |
+| `technical` | Math-heavy and high complexity (`>=0.6`) | `technical-gemini-pro` -> `technical-cerebras-glm` -> `technical-groq-llama8b` -> `technical-openrouter-free` |
+| `technical` | Math-heavy and low complexity (`<0.4`) | `technical-gemini-flash` -> `technical-groq-llama8b` -> `technical-openrouter-free` |
+| `technical` | Programming query or context-augmented technical query | `technical-gemini-pro` -> `technical-groq-llama8b` -> `technical-openrouter-free` |
+| `technical` | Default technical query | `technical-gemini-pro` -> `technical-groq-llama8b` -> `technical-openrouter-free` |
+| `socratic` | Default Socratic conversation | `socratic-openrouter-free` -> `socratic-gemini-pro` -> `socratic-groq-llama8b` |
+| `socratic` | High-reasoning query with elevated complexity (`>=0.8`) | `socratic-cerebras-glm` -> `socratic-openrouter-free` -> `socratic-gemini-pro` -> `socratic-groq-llama8b` |
+
+### Alias-to-Provider Matrix (Provider Model Fallback)
+
+| Alias | Provider Fallback Order (`provider:model`) |
+|------|---------------------------------------------|
+| `learn-gemini-flash` | `gemini:gemini-2.5-flash` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
+| `learn-groq-llama8b` | `groq:llama-3.1-8b-instant` -> `gemini:gemini-2.5-flash` -> `openrouter:openrouter/free` |
+| `learn-openrouter-free` | `openrouter:openrouter/free` -> `gemini:gemini-2.5-flash` -> `groq:llama-3.1-8b-instant` |
+| `technical-gemini-flash` | `gemini:gemini-2.5-flash` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
+| `technical-gemini-pro` | `gemini:gemini-2.5-pro` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
+| `technical-groq-llama8b` | `groq:llama-3.1-8b-instant` -> `gemini:gemini-2.5-pro` -> `openrouter:openrouter/free` |
+| `technical-openrouter-free` | `openrouter:openrouter/free` -> `gemini:gemini-2.5-pro` -> `groq:llama-3.1-8b-instant` |
+| `technical-cerebras-glm` | `cerebras:zai-glm-4.7` -> `gemini:gemini-2.5-pro` -> `groq:llama-3.1-8b-instant` |
+| `socratic-openrouter-free` | `openrouter:cognitivecomputations/dolphin-mistral-24b-venice-edition:free` |
+| `socratic-gemini-pro` | `gemini:gemini-2.5-pro` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
+| `socratic-groq-llama8b` | `groq:llama-3.1-8b-instant` -> `gemini:gemini-2.5-pro` -> `openrouter:openrouter/free` |
+| `socratic-cerebras-glm` | `cerebras:zai-glm-4.7` -> `gemini:gemini-2.5-pro` -> `groq:llama-3.1-8b-instant` -> `openrouter:openrouter/free` |
+
+## Public API Surface
+
+| Method | Path | Purpose |
+|------|------|---------|
+| `GET` | `/api/health` | Basic service availability |
+| `GET` | `/api/pinned` | Curated topic feed |
+| `POST` | `/api/query` | Main query execution |
+| `POST` | `/api/export` | Export generated response |
+| `GET` | `/api/usage` | User plan/usage view |
+
+## Request and Event Shapes
+
+### JSON Request Example (`/api/query`)
+
+```json
+{
+  "prompt": "Explain consensus algorithms with a practical analogy",
+  "mode": "technical",
+  "level": "ELI12",
+  "conversation_id": "9e8f8b9c-56ad-4738-95f8-8f63f83c2f65",
+  "stream": true
+}
+```
+
+### JSON Streaming Event Example (SSE chunk)
+
+```json
+{
+  "type": "chunk",
+  "token": "Raft",
+  "position": 18,
+  "done": false
+}
+```
+
+## XML Examples
+
+The following XML snippets are integration-oriented examples for teams that exchange config or response metadata in XML.
+
+### XML Provider Chain Configuration
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<routing profile="technical-default" version="1">
+  <mode name="technical"/>
+  <aliases>
+    <alias rank="1" id="technical-gemini-pro"/>
+    <alias rank="2" id="technical-groq-llama8b"/>
+    <alias rank="3" id="technical-openrouter-free"/>
+  </aliases>
+  <streaming heartbeatSeconds="2" startTimeoutSeconds="20" maxDurationSeconds="25"/>
+</routing>
+```
+
+### XML Prompt Policy Structure
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<promptPolicy mode="socratic" level="ELI10">
+  <behavior>
+    <askFollowUp>true</askFollowUp>
+    <directAnswer>false</directAnswer>
+  </behavior>
+  <constraints>
+    <maxTokens>800</maxTokens>
+    <citeWhenAvailable>true</citeWhenAvailable>
+  </constraints>
+</promptPolicy>
+```
+
+### XML Conversation Export Example
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<conversation id="9e8f8b9c-56ad-4738-95f8-8f63f83c2f65" mode="learning">
+  <message role="user" at="2026-04-16T10:22:58Z">What is eventual consistency?</message>
+  <message role="assistant" at="2026-04-16T10:23:04Z">Eventual consistency means replicas converge over time...</message>
+</conversation>
+```
 
 ## Local Development
 
 Prerequisites:
+
 - Node.js 18+
 - Python 3.11+
 
-From the repository root:
-
-### Backend (FastAPI)
+### Backend
 
 ```bash
 python3 -m venv .venv
 npm run api:install
 cp .env.example .env
-
-# Required environment variables:
-# GROQ_API_KEY=...
-# GEMINI_API_KEY=...
-# OPENROUTER_API_KEY=...
-# OPENROUTER_TIMEOUT_SECONDS=90
-# SUPABASE_URL=...
-# SUPABASE_PUBLISHABLE_KEY=...
-# SUPABASE_SECRET_KEY=...
-# UPSTASH_REDIS_REST_URL=...
-# SOCRATIC_DIRECT_ANSWER_PATTERNS=comma-or-newline-separated-regexes
-
 npm run api:dev
 ```
 
-Open http://localhost:8000/docs to see the Swagger UI.
-
-### Frontend (React + Vite)
+### Frontend
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open http://localhost:5173 (it should proxy `/api` calls to the backend at http://localhost:8000/api).
-
-### One-command dev
-
-Run both frontend and backend with:
+### Full Stack
 
 ```bash
 npm run dev:full
@@ -255,48 +331,22 @@ npm run test:smoke
 npm run api:test
 ```
 
-## Database Migrations (Supabase)
-
-Before running migrations, back up your Supabase database.
-
-Initialize if needed:
-
-```bash
-npx supabase init
-```
-
-Apply migrations:
+## Database Migrations
 
 ```bash
 npx supabase migration up
 ```
 
-Run the v1 history to v2 conversations/messages migration (dry-run by default):
+Migration helper:
 
 ```bash
 .venv/bin/python scripts/migrate_v1_to_v2_history.py
 ```
 
-To write data:
-
-```bash
-.venv/bin/python scripts/migrate_v1_to_v2_history.py --dry-run=false
-```
-
-Required environment variables for the migration script:
-
-- `SUPABASE_URL`
-- `SUPABASE_SECRET_KEY` (preferred for bypassing RLS) or `SUPABASE_PUBLISHABLE_KEY`
-
 ## Contributing
 
-Contributions welcome. Please open an issue first for larger changes.
-
-Suggested areas:
-- Additional explanation styles
-- Improved test coverage
-- UX and accessibility polish
+Please open an issue for major changes, then submit a focused PR with tests.
 
 ## License
 
-This project is licensed under the Apache License 2.0.
+Apache License 2.0
