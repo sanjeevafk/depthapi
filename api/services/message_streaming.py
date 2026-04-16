@@ -608,6 +608,21 @@ def build_message_stream_response(
                 fallback_used=fallback_used,
             )
 
+            logger.info(
+                "messages_request_complete",
+                request_id=request_id,
+                total_ms=round(total_ms, 2),
+                fallback_used=fallback_used,
+                cache_hit=bool(cached_response),
+                components_timed_out={
+                    "redis": False,
+                    "db": False,
+                    "search": False,
+                },
+                first_token_ms=round(first_token_ms, 2) if first_token_ms is not None else None,
+                stream_duration_ms=stream_duration_ms,
+            )
+
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
