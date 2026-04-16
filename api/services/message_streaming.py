@@ -120,6 +120,8 @@ def build_message_stream_response(
         telemetry_sink: dict[str, Any] = {}
         stream_failed = False
         last_progress_update = start_time
+        actual_context_messages = context_messages
+        actual_socratic_context = socratic_context
 
         async def update_progress() -> None:
             nonlocal last_progress_update
@@ -207,8 +209,6 @@ def build_message_stream_response(
                 return
 
             generation_start = time.perf_counter()
-            actual_context_messages = context_messages
-            actual_socratic_context = socratic_context
             if context_messages_task and not actual_context_messages:
                 try:
                     actual_context_messages = await asyncio.wait_for(
@@ -574,16 +574,18 @@ def build_message_stream_response(
                 sampled=True,
             )
             if assistant_message_id:
+                current_assistant_message_id = assistant_message_id
+
                 def _update_db():
                     try:
-                        ChatRepository.update_assistant_message(assistant_message_id, full_content)
+                        ChatRepository.update_assistant_message(current_assistant_message_id, full_content)
                     except Exception as exc:
                         logger.error(
                             "messages_assistant_update_failed",
                             error=str(exc),
                             request_id=request_id,
                             user_id_hash=user_id_hash,
-                            message_id=assistant_message_id,
+                            message_id=current_assistant_message_id,
                             retry=bool(req.regenerate),
                             sampled=False,
                         )

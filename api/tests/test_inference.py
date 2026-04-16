@@ -116,6 +116,25 @@ async def test_generate_explanation_search_failure_is_fail_soft(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_search_service_load_search_context_forwards_mode_to_override(monkeypatch):
+    captured: dict[str, str] = {}
+
+    async def fake_search_context(_topic: str, *, mode: str):
+        captured["mode"] = mode
+        return f"context for {mode}"
+
+    monkeypatch.setattr(inference_module.search_service, "get_search_context", fake_search_context)
+
+    result = await inference_module.search_service.load_search_context(
+        "dns",
+        mode=inference_module.SOCRATIC_MODE,
+    )
+
+    assert result == "context for socratic"
+    assert captured["mode"] == inference_module.SOCRATIC_MODE
+
+
+@pytest.mark.asyncio
 async def test_learning_length_policy_default_adds_cue_when_trimmed(monkeypatch):
     async def fake_search_context(_topic: str):
         return ""

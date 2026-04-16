@@ -1,10 +1,11 @@
 """Native multi-provider inference service."""
 
 import asyncio
+import inspect
 import json
 import re
 import time
-from typing import cast
+from typing import Any, cast
 import httpx
 import structlog
 from openai import APIConnectionError, APIStatusError, APITimeoutError
@@ -66,15 +67,31 @@ _tech_logger = structlog.get_logger(__name__)
 
 
 class _SearchServiceShim:
-    async def get_search_context(self, topic: str):
-        return await _load_search_context(topic, mode=LEARNING_MODE)
+    async def get_search_context(self, topic: str, mode: str):
+        return await _load_search_context(topic, mode=mode)
 
     async def load_search_context(self, topic: str, *, mode: str):
         default_impl = getattr(self.get_search_context, "__func__", None) is _SearchServiceShim.get_search_context
         if default_impl:
             return await _load_search_context(topic, mode=mode)
+
+        get_context = cast(Any, self.get_search_context)
+        supports_mode = False
         try:
-            context = await self.get_search_context(topic)
+            signature = inspect.signature(get_context)
+            supports_mode = any(
+                param.kind is inspect.Parameter.VAR_KEYWORD or param.name == "mode"
+                for param in signature.parameters.values()
+            )
+        except (TypeError, ValueError):
+            # If signature inspection fails (e.g. dynamic callables), prefer the new contract.
+            supports_mode = True
+
+        try:
+            if supports_mode:
+                context = await get_context(topic, mode=mode)
+            else:
+                context = await get_context(topic)
         except Exception:
             return ""
         return _truncate_search_context(str(context or ""))

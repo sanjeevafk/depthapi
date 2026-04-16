@@ -170,6 +170,7 @@ async def with_timeout(
     error_on_timeout: bool = False,
     default: T | None = None,
     context_label: str = "operation",
+    swallow_exceptions: bool = False,
 ) -> T | None:
     """Run awaitable with a timeout and graceful fallback behavior."""
     try:
@@ -184,10 +185,9 @@ async def with_timeout(
         return default
     except asyncio.CancelledError:
         _logger.debug("timeout_wrapper_cancelled", extra={"context": context_label})
-        return default
-    except Exception as exc:
-        _logger.warning(
-            "timeout_wrapper_exception",
-            extra={"context": context_label, "error": str(exc)},
-        )
-        return default
+        raise
+    except Exception:
+        _logger.exception("timeout_wrapper_exception context=%s", context_label)
+        if swallow_exceptions:
+            return default
+        raise

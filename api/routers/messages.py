@@ -647,7 +647,7 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
         history_messages = await _parse_snapshot_messages(snapshot_raw_messages, req.conversation_id)
         if not history_messages:
             db_start = time.perf_counter()
-            db_meta, db_messages = await with_timeout(
+            db_result = await with_timeout(
                 _load_conversation_from_db(
                     req.conversation_id,
                     user_id,
@@ -656,7 +656,12 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
                 timeout_seconds=CONTEXT_LOAD_TIMEOUTS["db_context"],
                 default=({}, []),
                 context_label="db_context_load",
+                swallow_exceptions=True,
             )
+            if db_result is None:
+                db_meta, db_messages = {}, []
+            else:
+                db_meta, db_messages = db_result
             db_ms = (time.perf_counter() - db_start) * 1000
             logger.info(
                 "timing_db_load",
@@ -665,12 +670,8 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
                 db_ms=round(db_ms, 2),
                 db_messages_count=len(db_messages),
             )
-            if not db_messages:
-                logger.warning(
-                    "db_context_timeout_fallback_to_empty",
-                    conversation_id=req.conversation_id,
-                    request_id=request_id,
-                )
+            # Note: with_timeout already logs timeout scenarios internally.
+            # Empty db_messages for new conversations is expected behavior.
             if db_meta:
                 snapshot_meta = db_meta
             if db_messages:
@@ -691,6 +692,7 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
             timeout_seconds=CONTEXT_LOAD_TIMEOUTS["intent_classify"],
             default=ConversationIntent(type="new_query", reason="intent_timeout_default"),
             context_label="intent_classification",
+            swallow_exceptions=True,
         )
         if intent is None:
             intent = ConversationIntent(type="new_query", reason="intent_none_default")
@@ -702,6 +704,7 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
         context_messages: list[ConversationMessage] = []
         context_signature = ""
         prompt_build_ms = 0.0
+        context_materialized = False
         socratic_context = build_socratic_context(history_messages)
 
         async def load_context_for_stream() -> tuple[list[ConversationMessage], str, float]:
@@ -724,6 +727,41 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
             return loaded_messages, loaded_signature, local_prompt_build_ms
 
         context_messages_task = asyncio.create_task(load_context_for_stream())
+
+        async def ensure_context_materialized(
+            *, timeout_seconds: float, source: str
+        ) -> None:
+            nonlocal context_messages, context_signature, prompt_build_ms, context_materialized
+            if context_materialized:
+                return
+            try:
+                loaded_messages, loaded_signature, loaded_prompt_build_ms = await asyncio.wait_for(
+                    asyncio.shield(context_messages_task),
+                    timeout=timeout_seconds,
+                )
+                context_messages = loaded_messages
+                context_signature = loaded_signature
+                prompt_build_ms = loaded_prompt_build_ms
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                logger.warning(
+                    "context_load_timeout",
+                    request_id=request_id,
+                    timeout_seconds=timeout_seconds,
+                    source=source,
+                )
+                context_messages = []
+                context_signature = ""
+            except Exception as exc:
+                logger.warning(
+                    "context_load_error",
+                    request_id=request_id,
+                    source=source,
+                    error=str(exc),
+                )
+                context_messages = []
+                context_signature = ""
+            finally:
+                context_materialized = True
     
         last_three = history_messages[-3:]
         logger.info(
@@ -812,6 +850,7 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
         system_prompt_bundle = "\n".join(
             [part for part in (system_prompt, mode_prompt, intent_prompt) if part]
         )
+        await ensure_context_materialized(timeout_seconds=1.0, source="pre_cache")
         cache_key = _message_cache_key(
             content=effective_content,
             mode=selected_mode,
@@ -994,38 +1033,9 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
             user_sequence_id: int | None = None
             assistant_sequence_id: int | None = None
             redis_append_failed = False
-            context_load_timeout_seconds = 1.0
-            context_loaded_for_stream = False
 
             async def ensure_context_for_stream() -> None:
-                nonlocal context_messages, context_signature, prompt_build_ms, context_loaded_for_stream
-                if context_loaded_for_stream:
-                    return
-                context_loaded_for_stream = True
-                try:
-                    loaded_messages, loaded_signature, loaded_prompt_build_ms = await asyncio.wait_for(
-                        context_messages_task,
-                        timeout=context_load_timeout_seconds,
-                    )
-                    context_messages = loaded_messages
-                    context_signature = loaded_signature
-                    prompt_build_ms = loaded_prompt_build_ms
-                except (asyncio.TimeoutError, asyncio.CancelledError):
-                    logger.warning(
-                        "context_load_timeout_in_stream",
-                        request_id=request_id,
-                        timeout_seconds=context_load_timeout_seconds,
-                    )
-                    context_messages = []
-                    context_signature = ""
-                except Exception as exc:
-                    logger.warning(
-                        "context_load_error_in_stream",
-                        request_id=request_id,
-                        error=str(exc),
-                    )
-                    context_messages = []
-                    context_signature = ""
+                await ensure_context_materialized(timeout_seconds=1.0, source="stream")
     
             asyncio.create_task(
                 _capture_telemetry_async(
@@ -1712,13 +1722,7 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
                 elif status == "aborted":
                     error_type = "aborted"
                     error_message = "User aborted stream"
-                safe_user_id = safeNumber(user_id, default=None)
-                if safe_user_id is None:
-                    logger.warning(
-                        "messages_user_id_not_numeric",
-                        request_id=request_id,
-                        user_id_hash=user_id_hash,
-                    )
+                safe_user_id = user_id or None
                 payload = build_llm_request_payload(
                     request_id=request_id,
                     user_id=safe_user_id,
@@ -1755,12 +1759,13 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
             breakdown={
                 "snapshot_ms": round(snapshot_ms, 2),
                 "db_ms": round(db_ms, 2),
-                "context_build_ms": round(prompt_build_ms, 2),
             },
         )
         response_started = True
         return response
     finally:
+        if not response_started:
+            await _ingress_dedupe_clear(client_message_id)
         if not response_started and not lock_released:
             _release_conversation_lock(req.conversation_id)
             lock_released = True
