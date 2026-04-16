@@ -7,6 +7,8 @@ import Mermaid from "../Mermaid";
 import SafeImage from "../SafeImage";
 import MessageActionToolbar from "./MessageActionToolbar";
 import { useChatStore } from "../../stores/useChatStore";
+import { useConversationStore } from "../../stores/useConversationStore";
+import { useMessageStore } from "../../stores/useMessageStore";
 import { useMessageSender } from "../../hooks/useMessageSender";
 import { formatModeLabel } from "../../lib/chatModes";
 
@@ -56,13 +58,13 @@ const markdownComponents: Components = {
 };
 
 export default function MessageList(): JSX.Element {
-  const messageIds = useChatStore((state) => state.messageIds);
-  const isLoading = useChatStore((state) => state.isLoading);
+  const messageIds = useMessageStore((state) => state.messageIds);
+  const isLoading = useConversationStore((state) => state.isLoading);
   const scrollRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
 
   const lastMessageId = messageIds[messageIds.length - 1];
-  const lastContent = useChatStore((state) =>
+  const lastContent = useMessageStore((state) =>
     lastMessageId ? state.messagesById[lastMessageId]?.content : undefined,
   );
   const handleScroll = () => {
@@ -110,7 +112,7 @@ export default function MessageList(): JSX.Element {
 }
 
 function MessageItem({ messageId }: { messageId: string }): JSX.Element | null {
-  const message = useChatStore((state) => state.messagesById[messageId]);
+  const message = useMessageStore((state) => state.messagesById[messageId]);
   const openRegenerationModal = useChatStore(
     (state) => state.openRegenerationModal,
   );
