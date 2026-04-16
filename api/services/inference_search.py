@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import asyncio
+import time
 
 from services.search import search_service
 from services.inference_constants import SEARCH_CONTEXT_MAX_CHARS, SEARCH_CONTEXT_TIMEOUT_SECONDS
@@ -39,11 +40,29 @@ async def _load_search_context(topic: str, *, mode: str) -> str:
     if not normalized_topic:
         return ""
 
+    search_start = time.perf_counter()
     try:
         context = await asyncio.wait_for(
             search_service.get_search_context(normalized_topic),
             timeout=SEARCH_CONTEXT_TIMEOUT_SECONDS,
         )
+        search_ms = (time.perf_counter() - search_start) * 1000
+        logger.info(
+            "timing_search_context_success",
+            mode=mode,
+            topic_hash=_hash_topic(normalized_topic),
+            search_ms=round(search_ms, 2),
+        )
+    except asyncio.TimeoutError:
+        search_ms = (time.perf_counter() - search_start) * 1000
+        logger.warning(
+            "timing_search_context_timeout",
+            mode=mode,
+            topic_hash=_hash_topic(normalized_topic),
+            search_ms=round(search_ms, 2),
+            timeout_seconds=SEARCH_CONTEXT_TIMEOUT_SECONDS,
+        )
+        return ""
     except Exception as exc:
         logger.warning(
             "search_context_unavailable",
