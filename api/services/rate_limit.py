@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from config import get_settings
 from logging_config import anonymize_user_id, logger
 from services.cache import get_redis
+from services.redis_safe import safe_redis_call
 from services.token_count import count_prompt_tokens
 
 UNIFIED_CONTROLS_SCRIPT = """
@@ -212,7 +213,9 @@ async def check_rate_limit(
     key = f"knowbear:ratelimit:{namespace}:{identifier}:{mode_label}"
 
     try:
-        redis = await get_redis()
+        redis = await safe_redis_call(get_redis, operation="connect")
+        if redis is None:
+            raise RuntimeError("redis unavailable")
         script = (
             "local count = redis.call('INCR', KEYS[1])\n"
             "local ttl = redis.call('TTL', KEYS[1])\n"
@@ -222,7 +225,9 @@ async def check_rate_limit(
             "end\n"
             "return {count, ttl}\n"
         )
-        result = await redis.eval(script, 1, key, window_seconds)
+        result = await safe_redis_call(redis.eval, script, 1, key, window_seconds, operation="eval")
+        if not isinstance(result, (list, tuple)):
+            raise RuntimeError("redis result unavailable")
         count = int(result[0] if result else 0)
         ttl = int(result[1] if result and len(result) > 1 else window_seconds)
 
@@ -271,7 +276,9 @@ async def check_daily_quota(*, key: str, limit: int, requested: int, window_seco
     if limit <= 0:
         return QuotaResult(allowed=True, consumed=0, limit=0, retry_after=max(window_seconds, 1))
 
-    redis = await get_redis()
+    redis = await safe_redis_call(get_redis, operation="connect")
+    if redis is None:
+        return QuotaResult(allowed=True, consumed=0, limit=limit, retry_after=max(window_seconds, 1))
     requested_tokens = max(int(requested), 1)
 
     script = (
@@ -294,7 +301,9 @@ async def check_daily_quota(*, key: str, limit: int, requested: int, window_seco
         "return {1, new_total, ttl}\n"
     )
 
-    result = await redis.eval(script, 1, key, requested_tokens, limit, window_seconds)
+    result = await safe_redis_call(redis.eval, script, 1, key, requested_tokens, limit, window_seconds, operation="eval")
+    if not isinstance(result, (list, tuple)):
+        return QuotaResult(allowed=True, consumed=0, limit=limit, retry_after=max(window_seconds, 1))
     allowed_flag = int(result[0]) if isinstance(result, (list, tuple)) and result else 0
     consumed = int(result[1]) if isinstance(result, (list, tuple)) and len(result) > 1 else 0
     ttl = int(result[2]) if isinstance(result, (list, tuple)) and len(result) > 2 else window_seconds
@@ -312,7 +321,9 @@ async def check_hourly_quota(*, key: str, limit: int, requested: int, now_minute
     if limit <= 0:
         return QuotaResult(allowed=True, consumed=0, limit=0, retry_after=3600)
 
-    redis = await get_redis()
+    redis = await safe_redis_call(get_redis, operation="connect")
+    if redis is None:
+        return QuotaResult(allowed=True, consumed=0, limit=limit, retry_after=3600)
     requested_tokens = max(int(requested), 1)
     window_minutes = 60
 
@@ -343,7 +354,19 @@ async def check_hourly_quota(*, key: str, limit: int, requested: int, now_minute
         "return {1, total + requested, window * 60}\n"
     )
 
-    result = await redis.eval(script, 1, key, now_minute, requested_tokens, limit, window_minutes)
+    result = await safe_redis_call(
+        redis.eval,
+        script,
+        1,
+        key,
+        now_minute,
+        requested_tokens,
+        limit,
+        window_minutes,
+        operation="eval",
+    )
+    if not isinstance(result, (list, tuple)):
+        return QuotaResult(allowed=True, consumed=0, limit=limit, retry_after=3600)
     allowed_flag = int(result[0]) if isinstance(result, (list, tuple)) and result else 0
     consumed = int(result[1]) if isinstance(result, (list, tuple)) and len(result) > 1 else 0
     ttl = int(result[2]) if isinstance(result, (list, tuple)) and len(result) > 2 else 3600
@@ -363,7 +386,9 @@ async def refund_tokens(reservation: TokenReservation, actual_tokens: int) -> No
     if refund <= 0:
         return
 
-    redis = await get_redis()
+    redis = await safe_redis_call(get_redis, operation="connect")
+    if redis is None:
+        return
 
     daily_script = (
         "local key = KEYS[1]\n"
@@ -376,7 +401,7 @@ async def refund_tokens(reservation: TokenReservation, actual_tokens: int) -> No
         "if ttl > 0 then redis.call('EXPIRE', key, ttl) end\n"
         "return next\n"
     )
-    await redis.eval(daily_script, 1, reservation.daily_key, refund)
+    await safe_redis_call(redis.eval, daily_script, 1, reservation.daily_key, refund, operation="eval")
 
     hourly_bucket = str(reservation.hourly_bucket)
     hourly_script = (
@@ -389,7 +414,7 @@ async def refund_tokens(reservation: TokenReservation, actual_tokens: int) -> No
         "redis.call('HSET', key, bucket, next)\n"
         "return next\n"
     )
-    await redis.eval(hourly_script, 1, reservation.hourly_key, hourly_bucket, refund)
+    await safe_redis_call(redis.eval, hourly_script, 1, reservation.hourly_key, hourly_bucket, refund, operation="eval")
 
 
 async def check_circuit_breaker(*, estimated_tokens: int, fail_open: bool) -> CircuitBreakerResult:
@@ -409,7 +434,9 @@ async def check_circuit_breaker(*, estimated_tokens: int, fail_open: bool) -> Ci
     open_key = "knowbear:circuit:open"
 
     try:
-        redis = await get_redis()
+        redis = await safe_redis_call(get_redis, operation="connect")
+        if redis is None:
+            raise RuntimeError("redis unavailable")
         script = (
             "local open = redis.call('GET', KEYS[2])\n"
             "if open then\n"
@@ -427,7 +454,8 @@ async def check_circuit_breaker(*, estimated_tokens: int, fail_open: bool) -> Ci
             "end\n"
             "return {1, 0}\n"
         )
-        result = await redis.eval(
+        result = await safe_redis_call(
+            redis.eval,
             script,
             2,
             usage_key,
@@ -435,7 +463,10 @@ async def check_circuit_breaker(*, estimated_tokens: int, fail_open: bool) -> Ci
             max(int(estimated_tokens), 1),
             threshold,
             open_seconds,
+            operation="eval",
         )
+        if not isinstance(result, (list, tuple)):
+            raise RuntimeError("redis result unavailable")
         allowed_flag = int(result[0] if result else 0)
         retry_after = int(result[1] if result and len(result) > 1 else 1)
 
@@ -542,8 +573,11 @@ async def enforce_request_controls(
     requested_tokens = max(int(token_hint or 0), 1)
 
     try:
-        redis = await get_redis()
-        result = await redis.eval(
+        redis = await safe_redis_call(get_redis, operation="connect")
+        if redis is None:
+            raise RuntimeError("redis unavailable")
+        result = await safe_redis_call(
+            redis.eval,
             UNIFIED_CONTROLS_SCRIPT,
             6,
             burst_key,
@@ -564,7 +598,10 @@ async def enforce_request_controls(
             daily_window,
             60,
             circuit_open_seconds,
+            operation="eval",
         )
+        if not isinstance(result, (list, tuple)):
+            raise RuntimeError("redis result unavailable")
     except Exception as exc:
         logger.warning(
             "unified_controls_failed",
