@@ -1657,8 +1657,6 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
                 if not gatekeeper.degraded:
                     try:
                         redis = await safe_redis_call(cache_module.get_redis, operation="connect")
-                        if redis is None:
-                            redis = None
                         if full_content.strip():
                             response_hash = hashlib.sha256(full_content.encode("utf-8")).hexdigest()
                             if redis is not None:
