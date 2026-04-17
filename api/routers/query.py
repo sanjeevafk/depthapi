@@ -357,8 +357,6 @@ async def query_topic_stream(
     environment = str(getattr(settings, "environment", "") or "").strip().lower()
     is_prod = environment == "production"
     stream_max_seconds = max(int(getattr(settings, "stream_max_seconds", 25)), 1)
-    if not is_prod:
-        stream_max_seconds = max(stream_max_seconds, 60)
     fallback_budget_seconds = max(
         1.0,
         min(float(getattr(settings, "stream_fallback_budget_seconds", 6)), float(stream_max_seconds)),
@@ -377,9 +375,7 @@ async def query_topic_stream(
         5,
         min(int(getattr(settings, "stream_idempotency_stale_seconds", 20)), idempotency_ttl_seconds),
     )
-    if mode == LEARNING_MODE and not is_prod:
-        stream_start_timeout_seconds = max(raw_start_timeout, float(stream_max_seconds))
-    elif mode == TECHNICAL_MODE:
+    if mode == TECHNICAL_MODE:
         stream_max_seconds = max(stream_max_seconds, int(getattr(settings, "technical_stream_max_seconds", 45)))
         technical_start_timeout = float(
             getattr(settings, "technical_stream_start_timeout_seconds", max(raw_start_timeout, 6.0))
@@ -473,4 +469,3 @@ async def query_topic_stream(
         idempotency_ttl_seconds=idempotency_ttl_seconds,
         idempotency_started_at=idempotency_started_at,
     )
-

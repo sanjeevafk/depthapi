@@ -279,6 +279,7 @@ async def append_conversation_message(
     timeout_seconds: float = 0.8,
 ) -> int | None:
     settings = get_settings()
+    ttl_seconds = int(getattr(settings, "message_cache_ttl_seconds", 3600))
     seq_key = f"knowbear:conversation:{conversation_id}:seq"
     list_key = f"knowbear:conversation:{conversation_id}:messages"
     redis = await safe_redis_call(get_redis, timeout=timeout_seconds, operation="connect")
@@ -293,7 +294,7 @@ async def append_conversation_message(
             list_key,
             message_json,
             max_messages,
-            settings.message_cache_ttl_seconds,
+            ttl_seconds,
             timeout=timeout_seconds,
             operation="eval",
         )
