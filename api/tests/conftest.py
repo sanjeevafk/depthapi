@@ -27,6 +27,7 @@ import services.rate_limit as rate_limit_module
 import services.message_gate as message_gate_module
 import services.conversation_cache as conversation_cache_module
 import services.user_cache as user_cache_module
+import services.redis_safe as redis_safe_module
 
 
 class AppClientWrapper:
@@ -623,8 +624,10 @@ def test_settings():
 def patch_settings(monkeypatch, test_settings):
     if _RUN_REAL_PROVIDER_TESTS:
         # Use real runtime configuration for sampled real-provider tests.
-        return config_module.get_settings()
+        yield config_module.get_settings()
+        return
 
+    snapshot = dict(vars(test_settings))
     monkeypatch.setattr(config_module, "get_settings", lambda: test_settings)
     if hasattr(main_app, "get_settings"):
         monkeypatch.setattr(main_app, "get_settings", lambda: test_settings)
@@ -634,7 +637,13 @@ def patch_settings(monkeypatch, test_settings):
     monkeypatch.setattr(llm_client_module, "get_settings", lambda: test_settings)
     # Reset the cached stream config so it recomputes with test settings
     config_module.reset_stream_config()
-    return test_settings
+    yield test_settings
+    # Restore shared mutable session-scoped settings to avoid cross-test leakage.
+    for key in list(vars(test_settings).keys()):
+        if key not in snapshot:
+            delattr(test_settings, key)
+    for key, value in snapshot.items():
+        setattr(test_settings, key, value)
 
 
 @pytest.fixture(autouse=True)
@@ -670,6 +679,12 @@ def patch_asyncio_to_thread(monkeypatch):
         return func(*args, **kwargs)
 
     monkeypatch.setattr(auth_module.asyncio, "to_thread", fake_to_thread)
+
+
+@pytest.fixture(autouse=True)
+def reset_redis_safety_state():
+    # Redis circuit-breaker state is module-global; reset between tests.
+    redis_safe_module.reset_redis_safety_state()
 
 
 @pytest.fixture
