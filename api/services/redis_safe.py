@@ -30,6 +30,15 @@ def redis_metrics_snapshot() -> dict[str, int]:
     }
 
 
+def reset_redis_safety_state() -> None:
+    """Reset circuit-breaker and counters (used by tests for isolation)."""
+    global _REDIS_DISABLED_UNTIL, _REDIS_DISABLED_LOGGED_UNTIL, _REDIS_RECOVERY_PENDING
+    _REDIS_DISABLED_UNTIL = 0.0
+    _REDIS_DISABLED_LOGGED_UNTIL = 0.0
+    _REDIS_RECOVERY_PENDING = False
+    _REDIS_METRICS.clear()
+
+
 def _metrics_increment(name: str) -> None:
     _REDIS_METRICS[name] += 1
 
