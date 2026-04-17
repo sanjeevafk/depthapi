@@ -353,14 +353,14 @@ async def cache_set(key: str, value: dict[str, Any], ttl: int | None = None) -> 
             return False
         settings = get_settings()
         ttl_seconds = int(ttl or getattr(settings, "cache_ttl", 3600))
-        result = await safe_redis_call(
+        await safe_redis_call(
             r.setex,
             key,
             ttl_seconds,
             orjson.dumps(value).decode("utf-8"),
             operation="setex",
         )
-        return result is not None
+        return True
     except Exception as e:
         logger.warning("cache_set_failed", key=key, error=str(e))
         return False
@@ -380,8 +380,8 @@ async def cache_set_many(values: dict[str, dict[str, Any]], ttl: int | None = No
         for key, value in values.items():
             payload = orjson.dumps(value).decode("utf-8")
             commands.append(["SETEX", key, ttl_seconds, payload])
-        result = await safe_redis_call(r.pipeline, commands, operation="pipeline")
-        return result is not None
+        await safe_redis_call(r.pipeline, commands, operation="pipeline")
+        return True
     except Exception as e:
         logger.warning("cache_set_many_failed", key_count=len(values), error=str(e))
         return False
