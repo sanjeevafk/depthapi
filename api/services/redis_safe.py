@@ -30,6 +30,15 @@ def redis_metrics_snapshot() -> dict[str, int]:
     }
 
 
+def reset_redis_safety_state() -> None:
+    """Reset circuit-breaker and counters (used by tests for isolation)."""
+    global _REDIS_DISABLED_UNTIL, _REDIS_DISABLED_LOGGED_UNTIL, _REDIS_RECOVERY_PENDING
+    _REDIS_DISABLED_UNTIL = 0.0
+    _REDIS_DISABLED_LOGGED_UNTIL = 0.0
+    _REDIS_RECOVERY_PENDING = False
+    _REDIS_METRICS.clear()
+
+
 def _metrics_increment(name: str) -> None:
     _REDIS_METRICS[name] += 1
 
@@ -75,12 +84,11 @@ async def safe_redis_call(
             _REDIS_DISABLED_LOGGED_UNTIL = 0.0
         return None
 
-    _log_recovered_if_needed()
-
     bounded_timeout = max(float(timeout), 0.8)
     try:
         result = await asyncio.wait_for(fn(*args), timeout=bounded_timeout)
         _metrics_increment("redis.success")
+        _log_recovered_if_needed()
         return result
     except asyncio.TimeoutError as exc:
         _metrics_increment("redis.timeout")
