@@ -278,16 +278,16 @@ async def _acquire_webhook_idempotency_key(event_id: str) -> bool:
             timeout=0.8,
         )
         if result is None:
-            logger.info("webhook_idempotency_degraded_fail_open", event_id=event_id)
-            return True
+            logger.warning("webhook_idempotency_degraded_fail_closed", event_id=event_id)
+            return False
         return bool(result)
     except Exception as exc:
         logger.warning(
-            "webhook_idempotency_store_unavailable_fail_open",
+            "webhook_idempotency_store_unavailable_fail_closed",
             error=str(exc),
             event_id=event_id,
         )
-        return True
+        return False
 
 
 def _normalize_payload_dict(payload: dict[str, Any]) -> dict[str, Any]:
@@ -380,7 +380,8 @@ def process_dodo_webhook_payload(payload: dict[str, Any], supabase: Any) -> Paym
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Failed to persist payment state",
         )
-    invalidate_pro_cache(user_id)
+    if user_id:
+        invalidate_pro_cache(user_id)
 
     return PaymentWebhookResult(
         event=event_type,
