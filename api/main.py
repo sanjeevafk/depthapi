@@ -27,7 +27,8 @@ from routers import (
     shares,
 )
 from auth import get_supabase_admin
-from services.cache import close_redis, get_redis
+from services.cache import close_redis
+from services.redis_safe import redis_circuit_active
 from services.inference import close_client
 from services.search import close_search_client
 from services.llm_client import get_provider_config_state
@@ -43,9 +44,6 @@ from config import get_settings
 from monitoring import init_sentry, capture_exception, continue_trace_from_headers, set_request_context
 
 
-redis_available = False
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
 
@@ -53,9 +51,6 @@ async def lifespan(app: FastAPI):
     setup_logging()
     init_sentry(get_settings())
     
-    global redis_available
-    redis_available = False
-
     config_state = get_provider_config_state()
     issues = config_state.get("issues")
     if not isinstance(issues, list):
@@ -76,23 +71,7 @@ async def lifespan(app: FastAPI):
         else:
             logger.warning(event, **payload)
     
-    try:
-        r = await get_redis()
-        await r.ping()
-        redis_available = True
-        logger.info("redis_connected_rate_limiter_init")
-    except Exception as e:
-
-        logger.error("redis_connection_failed", error=str(e))
-
-        # Soften enforcement to prevent total site blackout if Redis is just flapping
-        is_prod = get_settings().environment == "production"
-        if is_prod:
-            logger.error("PROD_REDIS_FAILURE_CONTINUING_UNPROTECTED", error=str(e))
-            # Site will still run, but rate limiting will be off. 
-            # This prevents the "Failed to Fetch" error caused by the app crashing on startup.
-        else:
-            logger.warning("redis_unavailable_dev_mode_continuing", error=str(e))
+    logger.info("redis_optional_cache_mode_enabled")
 
     logger.info("startup")
     
@@ -367,16 +346,10 @@ async def health():
         }
 
     async def check_rate_limit() -> dict[str, str]:
-        try:
-            redis = await asyncio.wait_for(get_redis(), timeout=2.0)
-            await asyncio.wait_for(redis.ping(), timeout=2.0)
-            return {"status": "ok"}
-        except Exception as exc:
-            is_prod = settings.environment == "production"
-            status = "down" if is_prod else "degraded"
-            log_fn = logger.error if is_prod else logger.warning
-            log_fn("rate_limit_health_probe_failed", severity="error" if is_prod else "warning", error=str(exc))
-            return {"status": status}
+        if redis_circuit_active():
+            logger.info("rate_limit_health_degraded_redis_optional")
+            return {"status": "degraded"}
+        return {"status": "ok"}
 
 
     async def check_db() -> dict[str, str]:

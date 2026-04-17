@@ -17,6 +17,7 @@ from logging_config import anonymize_user_id, logger
 from monitoring import hash_for_monitoring, set_user_context
 from supabase import create_client, Client
 from services.cache import get_redis
+from services.redis_safe import safe_redis_call
 
 security = HTTPBearer(auto_error=False)
 _PRO_STATE_CACHE: "OrderedDict[str, tuple[bool, float]]" = OrderedDict()
@@ -68,8 +69,10 @@ def invalidate_pro_cache(user_id: str) -> None:
         _PRO_STATE_CACHE.pop(user_id, None)
     try:
         async def _clear() -> None:
-            redis = await get_redis()
-            await redis.delete(f"knowbear:user:is_pro:{user_id}")
+            redis = await safe_redis_call(get_redis, operation="connect")
+            if redis is None:
+                return
+            await safe_redis_call(redis.delete, f"knowbear:user:is_pro:{user_id}", operation="delete")
         asyncio.create_task(_clear())
     except Exception:
         # Best-effort cache invalidation only.
@@ -273,8 +276,8 @@ async def check_is_pro(user_id: str, force_refresh: bool = False) -> bool:
                 _PRO_STATE_CACHE.move_to_end(user_id)
                 return cached[0]
         try:
-            redis = await get_redis()
-            raw = await redis.get(f"knowbear:user:is_pro:{user_id}")
+            redis = await safe_redis_call(get_redis, operation="connect")
+            raw = await safe_redis_call(redis.get, f"knowbear:user:is_pro:{user_id}", operation="get") if redis else None
             if raw is not None:
                 value = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else str(raw)
                 is_pro = value == "1"
@@ -299,9 +302,16 @@ async def check_is_pro(user_id: str, force_refresh: bool = False) -> bool:
         data = getattr(response, "data", None)
         is_pro = bool(data.get("is_pro", False)) if isinstance(data, dict) else False
         try:
-            redis = await get_redis()
+            redis = await safe_redis_call(get_redis, operation="connect")
             redis_ttl = max(_pro_cache_ttl_seconds() * 10, 60)
-            await redis.setex(f"knowbear:user:is_pro:{user_id}", redis_ttl, "1" if is_pro else "0")
+            if redis is not None:
+                await safe_redis_call(
+                    redis.setex,
+                    f"knowbear:user:is_pro:{user_id}",
+                    redis_ttl,
+                    "1" if is_pro else "0",
+                    operation="setex",
+                )
         except Exception:
             pass
         with _PRO_STATE_CACHE_LOCK:
