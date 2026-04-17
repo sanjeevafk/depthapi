@@ -317,7 +317,7 @@ async def test_webhook_on_hold_revokes_pro(app_client, monkeypatch, test_setting
 
 
 @pytest.mark.asyncio
-async def test_webhook_returns_503_when_idempotency_store_is_unavailable(
+async def test_webhook_treats_event_as_duplicate_when_idempotency_store_is_unavailable(
     app_client,
     monkeypatch,
     test_settings,
@@ -349,6 +349,8 @@ async def test_webhook_returns_503_when_idempotency_store_is_unavailable(
         headers={**headers, "content-type": "application/json"},
     )
 
-    assert resp.status_code == 503
-    assert "idempotency backend unavailable" in resp.json()["detail"].lower()
+    assert resp.status_code == 200
+    body_json = resp.json()
+    assert body_json["duplicate"] is True
+    assert body_json["state"] == "duplicate"
     assert fake_supabase.updates == []

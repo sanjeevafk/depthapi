@@ -75,12 +75,11 @@ async def safe_redis_call(
             _REDIS_DISABLED_LOGGED_UNTIL = 0.0
         return None
 
-    _log_recovered_if_needed()
-
     bounded_timeout = max(float(timeout), 0.8)
     try:
         result = await asyncio.wait_for(fn(*args), timeout=bounded_timeout)
         _metrics_increment("redis.success")
+        _log_recovered_if_needed()
         return result
     except asyncio.TimeoutError as exc:
         _metrics_increment("redis.timeout")
