@@ -24,6 +24,7 @@ from config import get_settings
 from logging_config import logger
 from services.cache import get_redis
 from services.llm_errors import LLMBadRequest, LLMInvalidAPIKey, LLMUnavailable
+from services.redis_safe import safe_redis_call
 
 
 ProviderName = Literal["groq", "cerebras", "gemini", "openrouter"]
@@ -170,8 +171,8 @@ class ProviderStateManager:
         )
 
         try:
-            redis = await get_redis()
-            raw = await redis.get(self._redis_key(provider))
+            redis = await safe_redis_call(get_redis, operation="connect")
+            raw = await safe_redis_call(redis.get, self._redis_key(provider), operation="get") if redis else None
             if raw is not None:
                 if isinstance(raw, (bytes, bytearray)):
                     payload = raw.decode("utf-8")
@@ -209,8 +210,15 @@ class ProviderStateManager:
         self._memory_state[provider] = dict(normalized)
 
         try:
-            redis = await get_redis()
-            await redis.setex(self._redis_key(provider), self.state_ttl_seconds, json.dumps(normalized))
+            redis = await safe_redis_call(get_redis, operation="connect")
+            if redis is not None:
+                await safe_redis_call(
+                    redis.setex,
+                    self._redis_key(provider),
+                    self.state_ttl_seconds,
+                    json.dumps(normalized),
+                    operation="setex",
+                )
         except Exception:
             pass
 
@@ -442,18 +450,22 @@ def _provider_tokens_key(provider: ProviderName) -> str:
 
 async def _increment_provider_usage(provider: ProviderName, usage: dict[str, int] | None) -> None:
     try:
-        redis = await get_redis()
+        redis = await safe_redis_call(get_redis, operation="connect")
+        if redis is None:
+            return
         request_key = _provider_requests_key(provider)
-        requests_total = int(await redis.incrby(request_key, 1))
+        raw_requests_total = await safe_redis_call(redis.incrby, request_key, 1, operation="incrby")
+        requests_total = int(raw_requests_total or 0)
         if requests_total <= 1:
-            await redis.expire(request_key, 86400)
+            await safe_redis_call(redis.expire, request_key, 86400, operation="expire")
 
         total_tokens = int((usage or {}).get("total_tokens") or 0)
         if total_tokens > 0:
             token_key = _provider_tokens_key(provider)
-            token_total = int(await redis.incrby(token_key, total_tokens))
+            raw_token_total = await safe_redis_call(redis.incrby, token_key, total_tokens, operation="incrby")
+            token_total = int(raw_token_total or 0)
             if token_total <= total_tokens:
-                await redis.expire(token_key, 86400)
+                await safe_redis_call(redis.expire, token_key, 86400, operation="expire")
     except Exception:
         # Never block inference on usage accounting.
         return
@@ -461,9 +473,12 @@ async def _increment_provider_usage(provider: ProviderName, usage: dict[str, int
 
 async def _provider_within_runtime_limits(provider: ProviderName) -> bool:
     try:
-        redis = await get_redis()
+        redis = await safe_redis_call(get_redis, operation="connect")
+        if redis is None:
+            return True
         if provider == "openrouter":
-            req_count = int(await redis.get(_provider_requests_key("openrouter")) or 0)
+            req_count_raw = await safe_redis_call(redis.get, _provider_requests_key("openrouter"), operation="get")
+            req_count = int(req_count_raw or 0)
             if req_count >= OPENROUTER_DAILY_REQUEST_LIMIT:
                 logger.warning(
                     "provider_runtime_limit_reached",
@@ -477,7 +492,8 @@ async def _provider_within_runtime_limits(provider: ProviderName) -> bool:
         if provider == "cerebras":
             settings = get_settings()
             budget = max(int(getattr(settings, "cerebras_daily_token_budget", CEREBRAS_DAILY_TOKEN_BUDGET_DEFAULT)), 0)
-            used_tokens = int(await redis.get(_provider_tokens_key("cerebras")) or 0)
+            used_tokens_raw = await safe_redis_call(redis.get, _provider_tokens_key("cerebras"), operation="get")
+            used_tokens = int(used_tokens_raw or 0)
             remaining = max(budget - used_tokens, 0)
             if remaining < CEREBRAS_MIN_TOKENS_REMAINING:
                 logger.warning(

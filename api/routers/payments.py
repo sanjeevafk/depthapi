@@ -24,6 +24,7 @@ from services.email_templates import (
     build_cancellation_email,
 )
 from services.rate_limit import check_rate_limit
+from services.redis_safe import safe_redis_command
 
 logger = structlog.get_logger()
 
@@ -269,20 +270,24 @@ def _event_transition(event_type: str) -> tuple[str, Optional[bool], str]:
 async def _acquire_webhook_idempotency_key(event_id: str) -> bool:
     key = f"payments:webhook:event:{event_id}"
     try:
-        from services.cache import get_redis
-
-        redis = await get_redis()
-        return await redis.set_if_not_exists(key, WEBHOOK_IDEMPOTENCY_TTL_SECONDS, "1")
+        result = await safe_redis_command(
+            "set_if_not_exists",
+            key,
+            WEBHOOK_IDEMPOTENCY_TTL_SECONDS,
+            "1",
+            timeout=0.8,
+        )
+        if result is None:
+            logger.info("webhook_idempotency_degraded_fail_open", event_id=event_id)
+            return True
+        return bool(result)
     except Exception as exc:
-        logger.error(
-            "webhook_idempotency_store_unavailable",
+        logger.warning(
+            "webhook_idempotency_store_unavailable_fail_open",
             error=str(exc),
             event_id=event_id,
         )
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Webhook idempotency backend unavailable; retry later",
-        )
+        return True
 
 
 def _normalize_payload_dict(payload: dict[str, Any]) -> dict[str, Any]:

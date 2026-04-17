@@ -687,12 +687,11 @@ async def app_client(monkeypatch, dummy_redis):
 
     monkeypatch.setattr(cache_module, "get_redis", _get_redis)
     monkeypatch.setattr(rate_limit_module, "get_redis", _get_redis)
-    monkeypatch.setattr(api_main_app, "get_redis", _get_redis)
     monkeypatch.setattr(message_gate_module, "get_redis", _get_redis)
     monkeypatch.setattr(conversation_cache_module, "get_redis", _get_redis)
     monkeypatch.setattr(user_cache_module, "get_redis", _get_redis)
+    monkeypatch.setattr(api_main_app, "redis_circuit_active", lambda: False)
     monkeypatch.setattr(api_main_app, "close_redis", _noop_close)
-    monkeypatch.setattr(api_main_app, "redis_available", False)
     main_app.app.dependency_overrides = {}
 
     transport = httpx.ASGITransport(app=main_app.app)

@@ -8,14 +8,7 @@ from services.llm_errors import LLMInvalidAPIKey
 
 @pytest.mark.asyncio
 async def test_health_ok(app_client, monkeypatch):
-    class DummyRedis:
-        async def ping(self):
-            return True
-
-    async def fake_get_redis():
-        return DummyRedis()
-
-    monkeypatch.setattr(main_app, "get_redis", fake_get_redis)
+    monkeypatch.setattr(main_app, "redis_circuit_active", lambda: False)
     resp = await app_client.get("/api/health")
     assert resp.status_code == 200
     data = resp.json()
@@ -32,20 +25,12 @@ async def test_health_ok(app_client, monkeypatch):
 async def test_health_redis_failure_in_prod(app_client, monkeypatch, test_settings):
     old_env = test_settings.environment
     test_settings.environment = "production"
-
-    class DummyRedis:
-        async def ping(self):
-            raise RuntimeError("down")
-
-    async def fake_get_redis():
-        return DummyRedis()
-
-    monkeypatch.setattr(main_app, "get_redis", fake_get_redis)
+    monkeypatch.setattr(main_app, "redis_circuit_active", lambda: True)
     resp = await app_client.get("/api/health")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "down"
-    assert data["rate_limit"]["status"] == "down"
+    assert data["status"] == "degraded"
+    assert data["rate_limit"]["status"] == "degraded"
     test_settings.environment = old_env
 
 

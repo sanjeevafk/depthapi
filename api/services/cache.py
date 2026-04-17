@@ -8,9 +8,10 @@ import orjson
 from config import get_settings
 from logging_config import logger
 from services.message_utils import safeJsonParse
+from services.redis_safe import safe_redis_call
 from utils import with_timeout
 
-REDIS_REST_CALL_TIMEOUT_SECONDS = 0.3
+REDIS_REST_CALL_TIMEOUT_SECONDS = 0.8
 
 UNIFIED_IDEMPOTENCY_CACHE_LUA = """
 -- unified_idempotency_cache
@@ -247,8 +248,11 @@ async def check_idempotency_and_cache(
     check_cache: bool,
 ) -> dict[str, Any]:
     try:
-        redis = await get_redis()
-        result = await redis.eval(
+        redis = await safe_redis_call(get_redis, operation="connect")
+        if redis is None:
+            return {"status": "new"}
+        result = await safe_redis_call(
+            redis.eval,
             UNIFIED_IDEMPOTENCY_CACHE_LUA,
             2,
             idempotency_key,
@@ -258,7 +262,10 @@ async def check_idempotency_and_cache(
             idempotency_stale,
             1 if set_in_progress else 0,
             1 if check_cache else 0,
+            operation="eval",
         )
+        if result is None:
+            return {"status": "new"}
         status_code = int(result[0]) if isinstance(result, (list, tuple)) and result else 0
         payload = result[1] if isinstance(result, (list, tuple)) and len(result) > 1 else None
         if status_code == 1:
@@ -272,7 +279,7 @@ async def check_idempotency_and_cache(
             if isinstance(loaded, dict):
                 return {"status": "cache_hit", "cached": loaded}
             try:
-                await redis.delete(cache_key)
+                await safe_redis_call(redis.delete, cache_key, operation="delete")
             except Exception:
                 pass
         return {"status": "new"}
@@ -288,15 +295,17 @@ async def check_idempotency_and_cache(
 async def cache_get(key: str) -> dict[str, Any] | None:
     """Get cached JSON value."""
     try:
-        r = await get_redis()
-        val = await r.get(key)
+        r = await safe_redis_call(get_redis, operation="connect")
+        if r is None:
+            return None
+        val = await safe_redis_call(r.get, key, operation="get")
         if val is None:
             return None
         loaded = safeJsonParse(val)
         if isinstance(loaded, dict):
             return loaded
         try:
-            await r.delete(key)
+            await safe_redis_call(r.delete, key, operation="delete")
         except Exception:
             pass
         logger.warning("cache_json_parse_failed", key=key)
@@ -311,8 +320,12 @@ async def cache_get_many(keys: list[str]) -> dict[str, dict[str, Any]]:
     if not keys:
         return {}
     try:
-        r = await get_redis()
-        results = await r.pipeline([["GET", key] for key in keys])
+        r = await safe_redis_call(get_redis, operation="connect")
+        if r is None:
+            return {}
+        results = await safe_redis_call(r.pipeline, [["GET", key] for key in keys], operation="pipeline")
+        if not isinstance(results, list):
+            return {}
         out: dict[str, dict[str, Any]] = {}
         for key, val in zip(keys, results):
             if val is None:
@@ -335,13 +348,21 @@ async def cache_get_many(keys: list[str]) -> dict[str, dict[str, Any]]:
 async def cache_set(key: str, value: dict[str, Any], ttl: int | None = None) -> bool:
     """Set cached JSON value with TTL."""
     try:
-        r = await get_redis()
+        r = await safe_redis_call(get_redis, operation="connect")
+        if r is None:
+            return False
         settings = get_settings()
         ttl_seconds = int(ttl or getattr(settings, "cache_ttl", 3600))
-        await r.setex(key, ttl_seconds, orjson.dumps(value).decode("utf-8"))
-        return True
+        result = await safe_redis_call(
+            r.setex,
+            key,
+            ttl_seconds,
+            orjson.dumps(value).decode("utf-8"),
+            operation="setex",
+        )
+        return result is not None
     except Exception as e:
-        logger.error("cache_set_failed", key=key, error=str(e))
+        logger.warning("cache_set_failed", key=key, error=str(e))
         return False
 
 
@@ -350,28 +371,33 @@ async def cache_set_many(values: dict[str, dict[str, Any]], ttl: int | None = No
     if not values:
         return True
     try:
-        r = await get_redis()
+        r = await safe_redis_call(get_redis, operation="connect")
+        if r is None:
+            return False
         settings = get_settings()
         ttl_seconds = int(ttl or getattr(settings, "cache_ttl", 3600))
         commands = []
         for key, value in values.items():
             payload = orjson.dumps(value).decode("utf-8")
             commands.append(["SETEX", key, ttl_seconds, payload])
-        await r.pipeline(commands)
-        return True
+        result = await safe_redis_call(r.pipeline, commands, operation="pipeline")
+        return result is not None
     except Exception as e:
-        logger.error("cache_set_many_failed", key_count=len(values), error=str(e))
+        logger.warning("cache_set_many_failed", key_count=len(values), error=str(e))
         return False
 
 
 async def cache_set_if_absent(key: str, value: dict[str, Any], ttl: int) -> bool:
     """Set cached JSON value only if the key is missing."""
     try:
-        r = await get_redis()
+        r = await safe_redis_call(get_redis, operation="connect")
+        if r is None:
+            return False
         payload = orjson.dumps(value).decode("utf-8")
-        return await r.set_if_not_exists(key, ttl, payload)
+        result = await safe_redis_call(r.set_if_not_exists, key, ttl, payload, operation="set_if_not_exists")
+        return bool(result)
     except Exception as e:
-        logger.error("cache_set_if_absent_failed", key=key, error=str(e))
+        logger.warning("cache_set_if_absent_failed", key=key, error=str(e))
         return False
 
 

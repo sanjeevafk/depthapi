@@ -49,6 +49,7 @@ from services.message_gate import (
     gatekeep_message_request,
 )
 from services.message_utils import normalizeMode, safeJsonParse, safeNumber
+from services.redis_safe import safe_redis_call
 from services.rate_limit import _resolve_limits, enforce_request_controls
 from services.streaming import SseEventBuilder, SSE_RESPONSE_HEADERS
 from services.token_count import count_prompt_tokens
@@ -176,8 +177,9 @@ async def _parse_snapshot_meta(raw: str | None, conversation_id: str) -> dict[st
     if isinstance(loaded, dict):
         return loaded
     try:
-        redis = await cache_module.get_redis()
-        await redis.delete(_snapshot_meta_key(conversation_id))
+        redis = await safe_redis_call(cache_module.get_redis, operation="connect")
+        if redis is not None:
+            await safe_redis_call(redis.delete, _snapshot_meta_key(conversation_id), operation="delete")
     except Exception:
         pass
     return {}
@@ -198,8 +200,9 @@ async def _parse_snapshot_messages(raw_messages: list[str], conversation_id: str
                 messages.append({"role": role, "content": content})
     if corrupted:
         try:
-            redis = await cache_module.get_redis()
-            await redis.delete(_snapshot_messages_key(conversation_id))
+            redis = await safe_redis_call(cache_module.get_redis, operation="connect")
+            if redis is not None:
+                await safe_redis_call(redis.delete, _snapshot_messages_key(conversation_id), operation="delete")
         except Exception:
             pass
     return messages
@@ -466,8 +469,8 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
 
     if not await _ingress_dedupe_check(client_message_id):
         try:
-            redis = await cache_module.get_redis()
-            status = await redis.hget(idempotency_key, "status")
+            redis = await safe_redis_call(cache_module.get_redis, operation="connect")
+            status = await safe_redis_call(redis.hget, idempotency_key, "status", operation="hget") if redis else None
         except Exception:
             status = None
         if status == "COMPLETED":
@@ -522,7 +525,7 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
         snapshot_meta_raw, snapshot_raw_messages = await fetch_conversation_snapshot(
             conversation_id=req.conversation_id,
             max_messages=history_limit,
-            timeout_seconds=0.08,
+            timeout_seconds=0.8,
         )
         snapshot_meta = await _parse_snapshot_meta(snapshot_meta_raw, req.conversation_id)
         if snapshot_meta and snapshot_meta.get("user_id") and str(snapshot_meta.get("user_id")) != user_id:
@@ -532,7 +535,7 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
             try:
                 await asyncio.wait_for(
                     warm_conversation_snapshot(req.conversation_id, user_id),
-                    timeout=0.3,
+                    timeout=0.8,
                 )
             except asyncio.TimeoutError:
                 logger.warning(
@@ -549,7 +552,7 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
             snapshot_meta_raw, snapshot_raw_messages = await fetch_conversation_snapshot(
                 conversation_id=req.conversation_id,
                 max_messages=history_limit,
-                timeout_seconds=0.08,
+                timeout_seconds=0.8,
             )
             if snapshot_meta_raw:
                 snapshot_meta = await _parse_snapshot_meta(snapshot_meta_raw, req.conversation_id)
@@ -815,7 +818,7 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
             circuit_threshold=max(int(getattr(config_settings, "circuit_breaker_tokens_per_minute", 0)), 0),
             circuit_open_seconds=max(int(getattr(config_settings, "circuit_breaker_open_seconds", 60)), 1),
             idempotency_key=idempotency_key,
-            timeout_seconds=0.05,
+            timeout_seconds=0.8,
         )
         redis_degraded = gatekeeper.degraded
         redis_eval_ms = gatekeeper.redis_eval_ms
@@ -866,7 +869,7 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
         )
         cached_response = None
         if not req.regenerate:
-            cached_response = await cache_get_value(cache_key, timeout_seconds=0.05)
+            cached_response = await cache_get_value(cache_key, timeout_seconds=0.8)
         logger.info(
             "messages_cache_lookup",
             request_id=request_id,
@@ -1129,13 +1132,13 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
                     conversation_id=req.conversation_id,
                     message_json=orjson.dumps(assistant_payload).decode("utf-8"),
                     max_messages=history_limit,
-                    timeout_seconds=0.05,
+                    timeout_seconds=0.8,
                 )
                 if assistant_sequence_id is None:
                     redis_append_failed = True
                 asyncio.create_task(_persist_assistant_message(assistant_sequence_id, content_value))
                 if cacheable and stream_completed:
-                    await cache_set_value(cache_key, content_value, cache_ttl_seconds, timeout_seconds=0.05)
+                    await cache_set_value(cache_key, content_value, cache_ttl_seconds, timeout_seconds=0.8)
                 elif cacheable and not stream_completed:
                     logger.warning(
                         "messages_partial_stream_skip_cache",
@@ -1153,14 +1156,28 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
                 )
                 if not gatekeeper.degraded:
                     try:
-                        redis = await cache_module.get_redis()
+                        redis = await safe_redis_call(cache_module.get_redis, operation="connect")
+                        if redis is None:
+                            return
                         response_hash = hashlib.sha256(content_value.encode("utf-8")).hexdigest()
-                        await redis.hset(idempotency_key, "status", "COMPLETED")
-                        await redis.hset(idempotency_key, "response", content_value)
-                        await redis.hset(idempotency_key, "response_hash", response_hash)
-                        await redis.hset(idempotency_key, "assistant_message_id", assistant_message_id)
-                        await redis.hset(idempotency_key, "completed_at", int(time.time()))
-                        await redis.expire(idempotency_key, idempotency_ttl_seconds)
+                        await safe_redis_call(redis.hset, idempotency_key, "status", "COMPLETED", operation="hset")
+                        await safe_redis_call(redis.hset, idempotency_key, "response", content_value, operation="hset")
+                        await safe_redis_call(redis.hset, idempotency_key, "response_hash", response_hash, operation="hset")
+                        await safe_redis_call(
+                            redis.hset,
+                            idempotency_key,
+                            "assistant_message_id",
+                            assistant_message_id,
+                            operation="hset",
+                        )
+                        await safe_redis_call(
+                            redis.hset,
+                            idempotency_key,
+                            "completed_at",
+                            int(time.time()),
+                            operation="hset",
+                        )
+                        await safe_redis_call(redis.expire, idempotency_key, idempotency_ttl_seconds, operation="expire")
                     except Exception as exc:
                         logger.warning(
                             "messages_idempotency_update_failed",
@@ -1200,7 +1217,7 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
                     conversation_id=req.conversation_id,
                     message_json=orjson.dumps(user_payload).decode("utf-8"),
                     max_messages=history_limit,
-                    timeout_seconds=0.05,
+                    timeout_seconds=0.8,
                 )
                 if user_sequence_id is None:
                     redis_append_failed = True
@@ -1221,7 +1238,7 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
                         conversation_id=req.conversation_id,
                         message_json=orjson.dumps(assistant_payload).decode("utf-8"),
                         max_messages=history_limit,
-                        timeout_seconds=0.05,
+                        timeout_seconds=0.8,
                     )
                     if assistant_sequence_id is None:
                         redis_append_failed = True
@@ -1267,7 +1284,7 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
                         conversation_id=req.conversation_id,
                         message_json=orjson.dumps(assistant_payload).decode("utf-8"),
                         max_messages=history_limit,
-                        timeout_seconds=0.05,
+                        timeout_seconds=0.8,
                     )
                     if assistant_sequence_id is None:
                         redis_append_failed = True
@@ -1639,18 +1656,41 @@ async def send_message(request: Request, auth_data: dict = Depends(verify_token)
                 estimated_cost_usd = telemetry_sink.get("estimated_cost_usd")
                 if not gatekeeper.degraded:
                     try:
-                        redis = await cache_module.get_redis()
+                        redis = await safe_redis_call(cache_module.get_redis, operation="connect")
+                        if redis is None:
+                            redis = None
                         if full_content.strip():
                             response_hash = hashlib.sha256(full_content.encode("utf-8")).hexdigest()
-                            await redis.hset(idempotency_key, "status", "COMPLETED")
-                            await redis.hset(idempotency_key, "response", full_content)
-                            await redis.hset(idempotency_key, "response_hash", response_hash)
-                            await redis.hset(idempotency_key, "assistant_message_id", assistant_message_id)
-                            await redis.hset(idempotency_key, "completed_at", int(time.time()))
+                            if redis is not None:
+                                await safe_redis_call(redis.hset, idempotency_key, "status", "COMPLETED", operation="hset")
+                                await safe_redis_call(redis.hset, idempotency_key, "response", full_content, operation="hset")
+                                await safe_redis_call(redis.hset, idempotency_key, "response_hash", response_hash, operation="hset")
+                                await safe_redis_call(
+                                    redis.hset,
+                                    idempotency_key,
+                                    "assistant_message_id",
+                                    assistant_message_id,
+                                    operation="hset",
+                                )
+                                await safe_redis_call(
+                                    redis.hset,
+                                    idempotency_key,
+                                    "completed_at",
+                                    int(time.time()),
+                                    operation="hset",
+                                )
                         else:
-                            await redis.hset(idempotency_key, "status", "EXPIRED")
-                            await redis.hset(idempotency_key, "expired_at", int(time.time()))
-                        await redis.expire(idempotency_key, idempotency_ttl_seconds)
+                            if redis is not None:
+                                await safe_redis_call(redis.hset, idempotency_key, "status", "EXPIRED", operation="hset")
+                                await safe_redis_call(
+                                    redis.hset,
+                                    idempotency_key,
+                                    "expired_at",
+                                    int(time.time()),
+                                    operation="hset",
+                                )
+                        if redis is not None:
+                            await safe_redis_call(redis.expire, idempotency_key, idempotency_ttl_seconds, operation="expire")
                     except Exception as exc:
                         logger.warning(
                             "messages_idempotency_update_failed",

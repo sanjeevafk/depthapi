@@ -1,4 +1,3 @@
-import asyncio
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -6,6 +5,7 @@ from typing import Any
 from config import get_settings
 from logging_config import logger
 from services.cache import get_redis
+from services.redis_safe import safe_redis_call
 
 
 @dataclass
@@ -175,7 +175,7 @@ async def gatekeep_message_request(
     circuit_threshold: int,
     circuit_open_seconds: int,
     idempotency_key: str,
-    timeout_seconds: float = 0.05,
+    timeout_seconds: float = 0.8,
 ) -> GatekeeperResult:
     settings = get_settings()
     now_ts = int(time.time())
@@ -206,22 +206,41 @@ async def gatekeep_message_request(
         idempotency_stale,
     ]
 
-    redis = await get_redis()
+    redis = await safe_redis_call(get_redis, timeout=timeout_seconds, operation="connect")
+    if redis is None:
+        return GatekeeperResult(
+            allowed=True,
+            retry_after=0,
+            idempotency_status=None,
+            idempotency_response=None,
+            degraded=True,
+            redis_eval_ms=0.0,
+        )
     start = time.perf_counter()
     try:
-        result = await asyncio.wait_for(
-            redis.eval(
-                GATEKEEP_LUA,
-                5,
-                token_bucket_key,
-                quota_key,
-                circuit_minute_key,
-                circuit_open_key,
-                idempotency_key,
-                *args,
-            ),
+        result = await safe_redis_call(
+            redis.eval,
+            GATEKEEP_LUA,
+            5,
+            token_bucket_key,
+            quota_key,
+            circuit_minute_key,
+            circuit_open_key,
+            idempotency_key,
+            *args,
             timeout=timeout_seconds,
+            operation="eval",
         )
+        if result is None:
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            return GatekeeperResult(
+                allowed=True,
+                retry_after=0,
+                idempotency_status=None,
+                idempotency_response=None,
+                degraded=True,
+                redis_eval_ms=round(elapsed_ms, 2),
+            )
         elapsed_ms = (time.perf_counter() - start) * 1000
         allowed = bool(int(result[0])) if isinstance(result, (list, tuple)) else False
         retry_after = int(result[1]) if isinstance(result, (list, tuple)) and len(result) > 1 else 0
@@ -257,25 +276,29 @@ async def append_conversation_message(
     conversation_id: str,
     message_json: str,
     max_messages: int,
-    timeout_seconds: float = 0.05,
+    timeout_seconds: float = 0.8,
 ) -> int | None:
     settings = get_settings()
     seq_key = f"knowbear:conversation:{conversation_id}:seq"
     list_key = f"knowbear:conversation:{conversation_id}:messages"
-    redis = await get_redis()
+    redis = await safe_redis_call(get_redis, timeout=timeout_seconds, operation="connect")
+    if redis is None:
+        return None
     try:
-        result = await asyncio.wait_for(
-            redis.eval(
-                APPEND_MESSAGE_LUA,
-                2,
-                seq_key,
-                list_key,
-                message_json,
-                max_messages,
-                settings.message_cache_ttl_seconds,
-            ),
+        result = await safe_redis_call(
+            redis.eval,
+            APPEND_MESSAGE_LUA,
+            2,
+            seq_key,
+            list_key,
+            message_json,
+            max_messages,
+            settings.message_cache_ttl_seconds,
             timeout=timeout_seconds,
+            operation="eval",
         )
+        if result is None:
+            return None
         return int(result) if result is not None else None
     except Exception as exc:
         logger.warning(
@@ -290,22 +313,26 @@ async def fetch_conversation_snapshot(
     *,
     conversation_id: str,
     max_messages: int,
-    timeout_seconds: float = 0.08,
+    timeout_seconds: float = 0.8,
 ) -> tuple[str | None, list[str]]:
     meta_key = f"knowbear:conversation:{conversation_id}:meta"
     list_key = f"knowbear:conversation:{conversation_id}:messages"
-    redis = await get_redis()
+    redis = await safe_redis_call(get_redis, timeout=timeout_seconds, operation="connect")
+    if redis is None:
+        return (None, [])
     try:
-        result = await asyncio.wait_for(
-            redis.eval(
-                SNAPSHOT_LUA,
-                2,
-                meta_key,
-                list_key,
-                max_messages,
-            ),
+        result = await safe_redis_call(
+            redis.eval,
+            SNAPSHOT_LUA,
+            2,
+            meta_key,
+            list_key,
+            max_messages,
             timeout=timeout_seconds,
+            operation="eval",
         )
+        if result is None:
+            return (None, [])
         if isinstance(result, (list, tuple)) and len(result) >= 2:
             meta = result[0]
             msgs = result[1] if isinstance(result[1], list) else []
@@ -320,27 +347,43 @@ async def fetch_conversation_snapshot(
         return (None, [])
 
 
-async def cache_get_value(key: str, *, timeout_seconds: float = 0.05) -> str | None:
-    redis = await get_redis()
+async def cache_get_value(key: str, *, timeout_seconds: float = 0.8) -> str | None:
+    redis = await safe_redis_call(get_redis, timeout=timeout_seconds, operation="connect")
+    if redis is None:
+        return None
     try:
-        result = await asyncio.wait_for(
-            redis.eval(CACHE_GET_LUA, 1, key),
+        result = await safe_redis_call(
+            redis.eval,
+            CACHE_GET_LUA,
+            1,
+            key,
             timeout=timeout_seconds,
+            operation="eval",
         )
+        if result is None:
+            return None
         return str(result) if result is not None else None
     except Exception as exc:
         logger.warning("messages_cache_get_failed", key=key, error=str(exc))
         return None
 
 
-async def cache_set_value(key: str, value: str, ttl_seconds: int, *, timeout_seconds: float = 0.05) -> bool:
-    redis = await get_redis()
+async def cache_set_value(key: str, value: str, ttl_seconds: int, *, timeout_seconds: float = 0.8) -> bool:
+    redis = await safe_redis_call(get_redis, timeout=timeout_seconds, operation="connect")
+    if redis is None:
+        return False
     try:
-        await asyncio.wait_for(
-            redis.eval(CACHE_SET_LUA, 1, key, ttl_seconds, value),
+        result = await safe_redis_call(
+            redis.eval,
+            CACHE_SET_LUA,
+            1,
+            key,
+            ttl_seconds,
+            value,
             timeout=timeout_seconds,
+            operation="eval",
         )
-        return True
+        return result is not None
     except Exception as exc:
         logger.warning("messages_cache_set_failed", key=key, error=str(exc))
         return False

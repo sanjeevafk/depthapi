@@ -8,6 +8,7 @@ from auth import get_supabase_admin
 from config import get_settings
 from logging_config import logger
 from services.cache import get_redis
+from services.redis_safe import safe_redis_call
 
 
 def _meta_key(conversation_id: str) -> str:
@@ -104,12 +105,13 @@ async def warm_conversation_snapshot(conversation_id: str, user_id: str | None) 
         "refreshed_at": time.time(),
     }
 
-    redis = await get_redis()
-    if not redis:
+    redis = await safe_redis_call(get_redis, operation="connect")
+    if redis is None:
         return
     try:
         payloads = [orjson.dumps(msg).decode("utf-8") for msg in messages]
-        await redis.eval(
+        await safe_redis_call(
+            redis.eval,
             WARM_SNAPSHOT_LUA,
             2,
             _meta_key(conversation_id),
@@ -118,6 +120,7 @@ async def warm_conversation_snapshot(conversation_id: str, user_id: str | None) 
             3600,
             history_limit,
             *payloads,
+            operation="eval",
         )
     except Exception as exc:
         logger.warning(

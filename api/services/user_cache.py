@@ -4,6 +4,7 @@ import time
 from auth import get_supabase_admin
 from logging_config import anonymize_user_id, logger
 from services.cache import get_redis
+from services.redis_safe import safe_redis_call
 
 
 async def refresh_is_pro_cache(user_id: str, *, ttl_seconds: int = 900) -> None:
@@ -18,8 +19,15 @@ async def refresh_is_pro_cache(user_id: str, *, ttl_seconds: int = 900) -> None:
         )
         data = getattr(response, "data", None)
         is_pro = bool(data.get("is_pro", False)) if isinstance(data, dict) else False
-        redis = await get_redis()
-        await redis.setex(f"knowbear:user:is_pro:{user_id}", ttl_seconds, "1" if is_pro else "0")
+        redis = await safe_redis_call(get_redis, operation="connect")
+        if redis is not None:
+            await safe_redis_call(
+                redis.setex,
+                f"knowbear:user:is_pro:{user_id}",
+                ttl_seconds,
+                "1" if is_pro else "0",
+                operation="setex",
+            )
     except Exception as exc:
         logger.warning(
             "user_cache_refresh_failed",
