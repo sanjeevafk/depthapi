@@ -14,6 +14,11 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 from config import get_settings
 from logging_config import anonymize_user_id, logger, log_sampled_success
 from prompts import SYSTEM_PROMPT, build_prompt
+from services.inference_constants import (
+    TECHNICAL_MAX_TOKENS,
+    TECHNICAL_MINIMAL_PROMPT,
+    TECHNICAL_TEMPERATURE,
+)
 from services.inference_classifier import IntentClassifier
 from services.inference_message_builder import (
     COMPARISON_SYSTEM_PROMPT,
@@ -22,7 +27,12 @@ from services.inference_message_builder import (
     is_comparison_query,
     trim_history_for_cost,
 )
-from services.inference_routing import _effective_alias_chain, extract_features
+from services.inference_routing import (
+    _effective_alias_chain,
+    _technical_route,
+    extract_features,
+    route_model_aliases,
+)
 from services.inference_search import _append_search_context, _load_search_context, _truncate_search_context
 from services.inference_socratic import (
     _enforce_socratic_response_constraints,
@@ -141,6 +151,7 @@ def build_technical_prompt(topic: str, intent: str, depth: str, diagram_type: st
 async def technical_mode_handler(topic: str, **kwargs: Any) -> str:
     return await technical_mode_handler_impl(
         topic,
+        build_technical_prompt_fn=build_technical_prompt,
         detect_intent_and_depth_fn=detect_intent_and_depth,
         detect_diagram_type_fn=detect_diagram_type,
         validate_technical_response_fn=validate_technical_response,
@@ -339,6 +350,7 @@ async def generate_stream_explanation(topic: str, level: str, model: str | None 
         build_messages_fn=_build_messages,
         stream_chat_completion_fn=stream_chat_completion,
         technical_mode_handler_fn=technical_mode_handler,
+        technical_route_fn=_technical_route,
         model_router=_model_router,
         response_builder=_response_builder,
         prompt_orchestrator=_prompt_orchestrator,
