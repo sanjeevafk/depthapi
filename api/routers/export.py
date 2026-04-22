@@ -1,14 +1,16 @@
+"""Data export endpoints."""
+
 import asyncio
 import io
-import structlog
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends
+import structlog
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from auth import verify_token, check_is_pro
-from utils import DEFAULT_CHAT_MODE, FREE_LEVELS, LEARNING_MODE, SUPPORTED_CHAT_MODES, normalize_mode, sanitize_filename
+from services.api_key_auth import ApiKeyRecord, verify_api_key
+from utils import DEFAULT_CHAT_MODE, FREE_LEVELS, SUPPORTED_CHAT_MODES, normalize_mode, sanitize_filename
 from services.inference import generate_explanation
 
 logger = structlog.get_logger(__name__)
@@ -19,19 +21,15 @@ class ExportRequest(BaseModel):
     topic: str = Field(..., min_length=1)
     explanations: dict[str, str]
     format: str = Field(default="txt", pattern="^(txt|md)$")
-    premium: bool = False
     mode: str = DEFAULT_CHAT_MODE
     visuals: Optional[dict[str, str]] = None
 
+
 @router.post("/export")
-async def export_explanations(req: ExportRequest, auth_data: dict = Depends(verify_token)) -> StreamingResponse:
-    """Export explanations in requested format."""
-    # Verify pro status
-    user = auth_data["user"]
-    is_verified_pro = await check_is_pro(user.id)
-    
-    if not is_verified_pro:
-        raise HTTPException(status_code=403, detail="Exporting is a premium feature. Please upgrade to use this functionality.")
+async def export_explanations(req: ExportRequest, api_key: ApiKeyRecord = Depends(verify_api_key)) -> StreamingResponse:
+    """Export explanations. Requires Pro or Enterprise plan."""
+    if not api_key.is_pro:
+        raise HTTPException(status_code=403, detail="Exporting requires a Pro or Enterprise plan.")
         
     req.mode = normalize_mode(req.mode)
     if req.mode not in SUPPORTED_CHAT_MODES:
@@ -45,7 +43,7 @@ async def export_explanations(req: ExportRequest, auth_data: dict = Depends(veri
 
     if missing_levels:
         tasks = {
-            lvl: generate_explanation(req.topic, lvl, mode=req.mode, is_pro=is_verified_pro)
+            lvl: generate_explanation(req.topic, lvl, mode=req.mode, is_pro=True)
             for lvl in missing_levels
         }
         results = await asyncio.gather(*tasks.values(), return_exceptions=True)
@@ -64,7 +62,8 @@ async def export_explanations(req: ExportRequest, auth_data: dict = Depends(veri
     req.explanations = ordered_explanations
 
     slug = sanitize_filename(req.topic)
-    filename_base = f"knowbear-{slug}"
+    filename_base = f"depthapi-{slug}"
+    
     if req.format == "txt":
         content = f"# {req.topic}\n\n"
         if len(req.explanations) > 1:
@@ -76,12 +75,13 @@ async def export_explanations(req: ExportRequest, auth_data: dict = Depends(veri
             content += f"{text.strip()}\n\n"
             if len(req.explanations) > 1:
                 content += "---\n\n"
+        
         return StreamingResponse(
             io.BytesIO(content.encode()),
             media_type="text/plain",
             headers={"Content-Disposition": f"attachment; filename={filename_base}.txt"},
         )
-    elif req.format == "md":
+    else: # format == "md"
         content = f"# {req.topic}\n\n"
         if len(req.explanations) > 1:
             content += "---\n\n"
@@ -92,9 +92,9 @@ async def export_explanations(req: ExportRequest, auth_data: dict = Depends(veri
             content += f"{text.strip()}\n\n"
             if len(req.explanations) > 1:
                 content += "---\n\n"
+                
         return StreamingResponse(
             io.BytesIO(content.encode()),
             media_type="text/markdown",
             headers={"Content-Disposition": f"attachment; filename={filename_base}.md"},
         )
-    raise HTTPException(400, "Requested format is currently disabled or invalid")
