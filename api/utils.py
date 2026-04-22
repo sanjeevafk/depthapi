@@ -105,7 +105,7 @@ def escape_for_prompt(value: str, max_length: int = 500) -> str:
 
 
 def _load_chat_modes():
-    path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "shared", "chat_modes.json"))
+    path = os.path.abspath(os.path.join(os.path.dirname(__file__), "resources", "chat_modes.json"))
     try:
         with open(path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
