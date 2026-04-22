@@ -167,6 +167,7 @@ def _resolve_user_id_from_email(supabase: Any, email: str) -> Optional[str]:
 
 
 def _resolve_email_from_user_id(supabase: Any, user_id: str) -> Optional[str]:
+    user_id_hash = anonymize_user_id(user_id)
     try:
         response = supabase.table("users").select("email").eq("id", user_id).single().execute()
         payload = getattr(response, "data", None)
@@ -175,11 +176,12 @@ def _resolve_email_from_user_id(supabase: Any, user_id: str) -> Optional[str]:
             if isinstance(email, str) and email:
                 return email
     except Exception as exc:
-        logger.debug("payments_email_lookup_by_user_id_failed", user_id=user_id, error=str(exc))
+        logger.debug("payments_email_lookup_by_user_id_failed", user_id_hash=user_id_hash, error=str(exc))
     return None
 
 
 def _resolve_name_from_user_id(supabase: Any, user_id: str) -> Optional[str]:
+    user_id_hash = anonymize_user_id(user_id)
     try:
         response = supabase.table("users").select("full_name").eq("id", user_id).single().execute()
         payload = getattr(response, "data", None)
@@ -188,7 +190,7 @@ def _resolve_name_from_user_id(supabase: Any, user_id: str) -> Optional[str]:
             if isinstance(name, str) and name:
                 return name
     except Exception as exc:
-        logger.debug("payments_name_lookup_by_user_id_failed", user_id=user_id, error=str(exc))
+        logger.debug("payments_name_lookup_by_user_id_failed", user_id_hash=user_id_hash, error=str(exc))
     return None
 
 
