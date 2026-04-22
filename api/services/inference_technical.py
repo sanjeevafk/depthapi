@@ -94,6 +94,7 @@ def build_technical_prompt(
 async def technical_mode_handler(
     topic: str,
     *,
+    build_technical_prompt_fn: Callable[[str, str, str, str | None], str] | None = None,
     detect_intent_and_depth_fn: Callable[[str], dict[str, str]],
     detect_diagram_type_fn: Callable[[str], str | None],
     validate_technical_response_fn: Callable[[str, str], tuple[bool, str]],
@@ -125,7 +126,8 @@ async def technical_mode_handler(
         if isinstance(prefetched_search_context, str)
         else await load_search_context_fn(topic, mode=TECHNICAL_MODE)
     )
-    prompt = build_technical_prompt(topic, intent, depth, diagram_type)
+    prompt_builder = build_technical_prompt_fn or build_technical_prompt
+    prompt = prompt_builder(topic, intent, depth, diagram_type)
     if not prompt or not prompt.strip():
         _tech_logger.warning(
             "technical_prompt_empty",

@@ -16,7 +16,7 @@ from services.inference_constants import (
     TECHNICAL_MINIMAL_PROMPT,
     TECHNICAL_TEMPERATURE,
 )
-from services.inference_routing import extract_features, _learning_model_for_level, _technical_route
+from services.inference_routing import _learning_model_for_level
 from services.inference_search import _append_search_context
 
 _tech_logger = structlog.get_logger(__name__)
@@ -36,6 +36,7 @@ async def generate_stream_explanation(
     build_messages_fn: Callable[..., list[dict[str, str]]],
     stream_chat_completion_fn: Callable[..., AsyncGenerator[str, None]],
     technical_mode_handler_fn: Callable[..., Awaitable[str]],
+    technical_route_fn: Callable[..., tuple[str, str]],
     model_router,
     response_builder,
     prompt_orchestrator,
@@ -85,7 +86,7 @@ async def generate_stream_explanation(
             mode=mode,
         )
 
-        primary_alias, _fallback_alias = _technical_route(
+        primary_alias, _fallback_alias = technical_route_fn(
             topic,
             intent=intent,
             depth=depth,
