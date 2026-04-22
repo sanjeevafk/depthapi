@@ -16,6 +16,7 @@ from services.circuit_breaker import CircuitBreaker, CircuitBreakerResult
 from config import get_settings
 from logging_config import anonymize_user_id, logger
 from services.cache import get_redis
+from services.api_key_auth import ApiKeyRecord, PLAN_MONTHLY_BUDGETS, PLAN_RPM
 from services.quota_manager import QuotaManager, QuotaResult, TokenReservation
 from services.redis_safe import safe_redis_call
 from services.token_count import count_prompt_tokens
@@ -309,73 +310,64 @@ def _quota_keys(identifier: str, mode: str) -> tuple[str, str]:
 def _resolve_limits(
     *,
     settings: Any,
-    is_authenticated: bool,
-    is_pro: bool,
-    mode: str,
+    api_key: ApiKeyRecord,
 ) -> tuple[int, int, int, int, int, int]:
+    """Resolve token quotas and rate limits based on the API key plan and overrides."""
     burst_window = max(int(getattr(settings, "rate_limit_burst_window_seconds", 10)), 1)
     sustained_window = max(int(getattr(settings, "rate_limit_sustained_window_seconds", 60)), 1)
-    if not is_authenticated:
-        daily_limit = max(int(getattr(settings, "anon_daily_token_quota", 0)), 0)
-        hourly_limit = 0
-        rpm = max(int(getattr(settings, "anon_rph", 0)), 0)
-        return daily_limit, hourly_limit, rpm, 0, 3600, burst_window
 
-    if is_pro:
-        daily_limit = max(int(getattr(settings, "pro_daily_token_quota", 0)), 0)
-        hourly_limit = max(int(getattr(settings, "pro_hourly_token_quota", 0)), 0)
-        rpm = max(int(getattr(settings, "pro_rpm", 0)), 0)
-        burst = max(int(getattr(settings, "pro_burst", 0)), 0)
-        return daily_limit, hourly_limit, rpm, burst, sustained_window, burst_window
-
-    daily_limit = max(int(getattr(settings, "free_daily_token_quota_learning", 0)), 0)
-    hourly_limit = max(int(getattr(settings, "free_hourly_token_quota_learning", 0)), 0)
-    rpm = max(int(getattr(settings, "free_rpm_learning", 0)), 0)
-    burst = max(int(getattr(settings, "free_burst_learning", 0)), 0)
+    # Monthly budget from key (or plan default) / 30 for approximate daily floor
+    # Enterprise keys with 0/Unlimited budget skip daily quota in Lua script if daily_limit=0
+    monthly_budget = api_key.monthly_token_budget
+    daily_limit = int(monthly_budget / 30) if monthly_budget > 0 else 0
+    
+    # Hourly is 1/6th of daily
+    hourly_limit = int(daily_limit / 6) if daily_limit > 0 else 0
+    
+    # RPM from key or plan default
+    rpm = api_key.requests_per_minute or PLAN_RPM.get(api_key.plan, 10)
+    
+    # Burst is 1.5x RPM by default
+    burst = int(rpm * 1.5)
+    
     return daily_limit, hourly_limit, rpm, burst, sustained_window, burst_window
 
 
 async def enforce_request_controls(
     *,
-    user_id: str | None,
+    user_id: str,  # This is the api_key.id in the new system
     client_ip: str | None,
+    api_key: ApiKeyRecord | None = None, # Added for direct limit resolution
     reserved_tokens: int | None = None,
     estimated_tokens: int | None = None,
     mode: str = "learn",
     is_pro: bool = False,
 ) -> TokenReservation:
-    """Apply auth-scoped quota, distributed rate limiting, and circuit breaker checks.
-
-    Enforcement order: auth (handled by route dependency) -> quota -> rate limit -> inference.
-    """
+    """Apply API-key scoped quota, distributed rate limiting, and circuit breaker checks."""
     settings = get_settings()
     strategy = str(getattr(settings, "rate_limit_strategy", "upstash_redis") or "upstash_redis").lower()
     if strategy != "upstash_redis":
         logger.warning("unsupported_rate_limit_strategy", strategy=strategy)
 
-    is_authenticated = bool(user_id)
-    fail_open = is_authenticated
+    # In DepthAPI, all requests MUST be authenticated with an API key.
+    # The user_id passed here is api_key.id.
+    identifier = f"key:{user_id}"
+    fail_open = True # Always fail-open for authenticated B2B keys to avoid blocking business traffic on Redis blips
 
-    if is_authenticated:
-        identifier = f"user:{user_id}"
-    elif client_ip:
-        identifier = f"ip:{client_ip}"
+    if api_key:
+        daily_limit, hourly_limit, rpm, burst_limit, sustained_window, burst_window = _resolve_limits(
+            settings=settings,
+            api_key=api_key
+        )
     else:
-        raise HTTPException(
-            status_code=400,
-            detail={"type": "missing_client_identifier"},
+        # Fallback for code paths where the record wasn't passed down (deprecated)
+        daily_limit, hourly_limit, rpm, burst_limit, sustained_window, burst_window = (
+            10000, 2000, 10, 15, 60, 10
         )
 
-    daily_limit, hourly_limit, rpm, burst_limit, sustained_window, burst_window = _resolve_limits(
-        settings=settings,
-        is_authenticated=is_authenticated,
-        is_pro=is_pro,
-        mode=mode,
-    )
-
     mode_label = (mode or "default").strip().lower()
-    burst_key = f"knowbear:ratelimit:burst:{identifier}:{mode_label}"
-    sustained_key = f"knowbear:ratelimit:sustained:{identifier}:{mode_label}"
+    burst_key = f"depthapi:ratelimit:burst:{identifier}:{mode_label}"
+    sustained_key = f"depthapi:ratelimit:sustained:{identifier}:{mode_label}"
     daily_key, hourly_key = _quota_keys(identifier, mode)
     now_minute = int(time.time() // 60)
 
@@ -401,8 +393,8 @@ async def enforce_request_controls(
             sustained_key,
             daily_key,
             hourly_key,
-            "knowbear:circuit:open",
-            f"knowbear:circuit:tokens:{now_minute}",
+            "depthapi:circuit:open",
+            f"depthapi:circuit:tokens:{now_minute}",
             burst_limit,
             rpm,
             daily_limit,
