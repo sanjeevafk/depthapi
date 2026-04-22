@@ -186,10 +186,10 @@ async def gatekeep_message_request(
     """Gate incoming message requests using idempotency and quota checks."""
     settings = get_settings()
     now_ts = int(time.time())
-    token_bucket_key = f"knowbear:rate:bucket:{identifier}"
-    quota_key = f"knowbear:quota:daily:{identifier}"
-    circuit_minute_key = f"knowbear:circuit:tokens:{int(now_ts // 60)}"
-    circuit_open_key = "knowbear:circuit:open"
+    token_bucket_key = f"depthapi:rate:bucket:{identifier}"
+    quota_key = f"depthapi:quota:daily:{identifier}"
+    circuit_minute_key = f"depthapi:circuit:tokens:{int(now_ts // 60)}"
+    circuit_open_key = "depthapi:circuit:open"
     idempotency_ttl = min(
         max(int(getattr(settings, "stream_idempotency_ttl_seconds", 90)), STREAM_IDEMPOTENCY_TTL_MIN_SECONDS),
         STREAM_IDEMPOTENCY_TTL_MAX_SECONDS,
@@ -287,8 +287,8 @@ async def append_conversation_message(
 ) -> int | None:
     settings = get_settings()
     ttl_seconds = int(getattr(settings, "message_cache_ttl_seconds", 3600))
-    seq_key = f"knowbear:conversation:{conversation_id}:seq"
-    list_key = f"knowbear:conversation:{conversation_id}:messages"
+    seq_key = f"depthapi:conversation:{conversation_id}:seq"
+    list_key = f"depthapi:conversation:{conversation_id}:messages"
     redis = await safe_redis_call(get_redis, timeout=timeout_seconds, operation="connect")
     if redis is None:
         return None
@@ -323,8 +323,8 @@ async def fetch_conversation_snapshot(
     max_messages: int,
     timeout_seconds: float = MESSAGE_GATE_DEFAULT_TIMEOUT_SECONDS,
 ) -> tuple[str | None, list[str]]:
-    meta_key = f"knowbear:conversation:{conversation_id}:meta"
-    list_key = f"knowbear:conversation:{conversation_id}:messages"
+    meta_key = f"depthapi:conversation:{conversation_id}:meta"
+    list_key = f"depthapi:conversation:{conversation_id}:messages"
     redis = await safe_redis_call(get_redis, timeout=timeout_seconds, operation="connect")
     if redis is None:
         return (None, [])

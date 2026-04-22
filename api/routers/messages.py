@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
-from auth import verify_token
+from services.api_key_auth import ApiKeyRecord, verify_api_key
 from services.inference import (
     MODE_SYSTEM_PROMPTS,
     SYSTEM_PROMPT,
@@ -36,7 +36,7 @@ logger = _core.logger
 
 async def _send_message_handler(
     request: Request,
-    auth_data: dict = Depends(verify_token),
+    api_key: ApiKeyRecord = Depends(verify_api_key),
 ) -> StreamingResponse:
     # Ensure patched functions on this module are honored by core execution/tests.
     _core.generate_explanation = generate_explanation
@@ -52,16 +52,16 @@ async def _send_message_handler(
     _core.log_sampled_success = log_sampled_success
     _core.cache_set_value = cache_set_value
     _core.logger = logger
-    return await _core._send_message_handler(request=request, auth_data=auth_data)
+    return await _core._send_message_handler(request=request, api_key=api_key)
 
 
 @router.post("/messages")
 async def send_message(
     request: Request,
-    auth_data: dict = Depends(verify_token),
+    api_key: ApiKeyRecord = Depends(verify_api_key),
 ) -> StreamingResponse:
     return await _core._message_workflow.process_message(
         request=request,
-        auth_data=auth_data,
+        api_key=api_key,
         handler=_send_message_handler,
     )
