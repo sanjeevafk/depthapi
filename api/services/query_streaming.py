@@ -12,6 +12,7 @@ import asyncio
 import time
 from typing import Any
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
+from services.api_key_auth import ApiKeyRecord
 
 from fastapi.responses import StreamingResponse
 
@@ -107,7 +108,7 @@ def build_query_stream_response(
     user_id_raw: str | None,
     user_id_hash: str | None,
     topic_hash: str,
-    auth_data,
+    api_key: ApiKeyRecord,
     cache_get,
     cache_set,
     cache_key_value: str,
@@ -207,8 +208,7 @@ def build_query_stream_response(
                     for index in range(0, len(content), chunk_size):
                         yield emit("chunk", {"chunk": content[index : index + chunk_size]})
                     yield emit("done", "[DONE]")
-                    if auth_data:
-                        await persist_history(auth_data["user"], topic, [level], mode)
+                    await persist_history(api_key.id, topic, [level], mode)
                     return
 
             stream = generate_stream_explanation(
@@ -319,8 +319,7 @@ def build_query_stream_response(
                 yield emit("done", "[DONE]")
                 if full_content.strip():
                     await cache_set(cache_key_value, {"text": full_content})
-                if auth_data:
-                    await persist_history(auth_data["user"], topic, [level], mode)
+                await persist_history(api_key.id, topic, [level], mode)
                 return
             if timed_out:
                 cutoff_message = "\n\n[Response truncated to stay within serverless limits. Retry to continue.]"
@@ -328,8 +327,7 @@ def build_query_stream_response(
 
             if full_content.strip():
                 await cache_set(cache_key_value, {"text": full_content})
-            if auth_data:
-                await persist_history(auth_data["user"], topic, [level], mode)
+            await persist_history(api_key.id, topic, [level], mode)
 
             yield emit("done", "[DONE]")
         except Exception as exc:
@@ -380,8 +378,7 @@ def build_query_stream_response(
                     yield emit("done", "[DONE]")
                     if full_content.strip():
                         await cache_set(cache_key_value, {"text": full_content})
-                    if auth_data:
-                        await persist_history(auth_data["user"], topic, [level], mode)
+                    await persist_history(api_key.id, topic, [level], mode)
                     return
                 except Exception as fallback_exc:
                     logger.error(
@@ -401,8 +398,7 @@ def build_query_stream_response(
                 yield emit("done", "[DONE]")
                 if full_content.strip():
                     await cache_set(cache_key_value, {"text": full_content})
-                if auth_data:
-                    await persist_history(auth_data["user"], topic, [level], mode)
+                await persist_history(api_key.id, topic, [level], mode)
                 return
             yield emit("error", {"error": "An error occurred while streaming. Please try again."})
             yield emit("done", "[DONE]")

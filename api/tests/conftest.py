@@ -28,6 +28,7 @@ import services.message_gate as message_gate_module
 import services.conversation_cache as conversation_cache_module
 import services.user_cache as user_cache_module
 import services.redis_safe as redis_safe_module
+from services.api_key_auth import ApiKeyRecord, verify_api_key
 
 
 class AppClientWrapper:
@@ -187,7 +188,15 @@ class DummyRedis:
                 payload = json.dumps({"status": "in_progress", "started_at": now_ts})
                 self.store[idempotency_key] = payload
             return [0, ""]
-        if "meta_key" in script_text and "list_key" in script_text and "RPUSH" in script_text:
+        if "depthapi:rate:bucket" in script_text or "depthapi:quota:daily" in script_text:
+            keys = list(args[:_num_keys])
+            argv = list(args[_num_keys:])
+            token_bucket_key = str(keys[0])
+            quota_key = str(keys[1])
+            circuit_minute_key = str(keys[2])
+            circuit_open_key = str(keys[3])
+            idempotency_key = str(keys[4])
+            # Simulating LUA logic for the new prefixes
             meta_key = str(args[0])
             list_key = str(args[1])
             meta_json = args[2]
@@ -728,5 +737,25 @@ def fake_user():
 
 
 @pytest.fixture
-def fake_supabase():
-    return FakeSupabase()
+def fake_api_key_record():
+    return ApiKeyRecord(
+        id="test-key-uuid-1234",
+        prefix="sk-depth-test",
+        project_name="Test Project",
+        owner_email="test@example.com",
+        plan="pro",
+        monthly_token_budget=10000000,
+        requests_per_minute=100,
+        is_active=True
+    )
+
+
+@pytest.fixture(autouse=True)
+def mock_auth_dependencies(monkeypatch, fake_api_key_record):
+    """Override auth dependencies globally for tests."""
+    async def _mock_verify_api_key():
+        return fake_api_key_record
+
+    main_app.app.dependency_overrides[verify_api_key] = _mock_verify_api_key
+    yield
+    main_app.app.dependency_overrides = {}

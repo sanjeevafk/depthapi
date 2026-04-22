@@ -5,7 +5,23 @@ from typing import List, Dict, Any
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
 
-from auth import verify_token, get_supabase_admin
+from services.api_key_auth import ApiKeyRecord, verify_api_key
+from auth import get_supabase_admin
+from logging_config import anonymize_user_id
+from pydantic import BaseModel
+from utils import DEFAULT_CHAT_MODE, SUPPORTED_CHAT_MODES, normalize_mode
+
+logger = structlog.get_logger(__name__)
+
+router = APIRouter(tags=["history"])
+
+class HistoryItem(BaseModel):
+    id: str
+    topic: str
+    levels: List[str]
+    mode: str = DEFAULT_CHAT_MODE
+    created_at: datetime
+from auth import get_supabase_admin
 from logging_config import anonymize_user_id
 from pydantic import BaseModel
 from utils import DEFAULT_CHAT_MODE, SUPPORTED_CHAT_MODES, normalize_mode
@@ -27,9 +43,8 @@ class HistoryCreate(BaseModel):
     mode: str = DEFAULT_CHAT_MODE
 
 @router.get("/history", response_model=List[HistoryItem])
-async def get_history(auth_data: dict = Depends(verify_token)):
-    user = auth_data["user"]
-    user_id = user.id
+async def get_history(api_key: ApiKeyRecord = Depends(verify_api_key)):
+    user_id = api_key.id
     
     supabase = get_supabase_admin()
     if not supabase:
@@ -55,9 +70,8 @@ async def get_history(auth_data: dict = Depends(verify_token)):
         raise HTTPException(status_code=500, detail="Failed to fetch history")
 
 @router.post("/history", response_model=HistoryItem)
-async def add_history_item(data: HistoryCreate, auth_data: dict = Depends(verify_token)):
-    user = auth_data["user"]
-    user_id = user.id
+async def add_history_item(data: HistoryCreate, api_key: ApiKeyRecord = Depends(verify_api_key)):
+    user_id = api_key.id
     
     supabase = get_supabase_admin()
     if not supabase:
@@ -85,9 +99,8 @@ async def add_history_item(data: HistoryCreate, auth_data: dict = Depends(verify
         raise HTTPException(status_code=500, detail="Failed to save history")
 
 @router.delete("/history/{item_id}")
-async def delete_history_item(item_id: str, auth_data: dict = Depends(verify_token)):
-    user = auth_data["user"]
-    user_id = user.id
+async def delete_history_item(item_id: str, api_key: ApiKeyRecord = Depends(verify_api_key)):
+    user_id = api_key.id
     
     supabase = get_supabase_admin()
     if not supabase:
@@ -113,9 +126,8 @@ async def delete_history_item(item_id: str, auth_data: dict = Depends(verify_tok
         )
         raise HTTPException(status_code=500, detail="Failed to delete history item")
 @router.delete("/history")
-async def clear_history(auth_data: dict = Depends(verify_token)):
-    user = auth_data["user"]
-    user_id = user.id
+async def clear_history(api_key: ApiKeyRecord = Depends(verify_api_key)):
+    user_id = api_key.id
     
     supabase = get_supabase_admin()
     if not supabase:
