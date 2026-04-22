@@ -10,7 +10,8 @@ MessageMode = Literal["learn", "chat", "summary"]
 MESSAGE_MODES: set[str] = {"learn", "chat", "summary"}
 
 
-def normalizeMode(mode: str | None) -> MessageMode:
+def normalize_mode(mode: str | None) -> MessageMode:
+    """Normalize and validate incoming message mode."""
     if not mode:
         return "chat"
     normalized = str(mode).strip().lower()
@@ -19,7 +20,8 @@ def normalizeMode(mode: str | None) -> MessageMode:
     raise ValueError("invalid mode")
 
 
-def safeNumber(value: Any, *, default: float | int | None = None) -> float | int | None:
+def safe_number(value: Any, *, default: float | int | None = None) -> float | int | None:
+    """Safely coerce a numeric input, returning a default on invalid values."""
     if value is None:
         return default
     try:
@@ -33,12 +35,19 @@ def safeNumber(value: Any, *, default: float | int | None = None) -> float | int
     return num
 
 
-def safeJsonParse(raw: str | bytes | bytearray) -> Any | None:
+def safe_json_parse(raw: str | bytes | bytearray) -> Any | None:
+    """Safely parse a JSON payload from bytes/string-like values."""
     try:
         if isinstance(raw, (bytes, bytearray)):
             payload = bytes(raw)
         else:
             payload = str(raw).encode("utf-8")
         return orjson.loads(payload)
-    except Exception:
+    except (orjson.JSONDecodeError, TypeError, ValueError, UnicodeEncodeError):
         return None
+
+
+# Backward-compatible aliases (Phase 1 quick win migration safety).
+normalizeMode = normalize_mode
+safeNumber = safe_number
+safeJsonParse = safe_json_parse

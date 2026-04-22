@@ -186,8 +186,8 @@ async def with_timeout(
     except asyncio.CancelledError:
         _logger.debug("timeout_wrapper_cancelled", extra={"context": context_label})
         raise
-    except Exception:
-        _logger.exception("timeout_wrapper_exception context=%s", context_label)
+    except Exception as exc:
+        _logger.exception("timeout_wrapper_exception context=%s error=%s", context_label, exc)
         if swallow_exceptions:
             return default
         raise

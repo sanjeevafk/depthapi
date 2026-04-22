@@ -1,22 +1,24 @@
-"""Native provider-backed OpenAI-compatible client adapter."""
+"""Provider-backed OpenAI-compatible client and fallback runtime.
+
+Responsibilities:
+- Resolve provider/model candidate chains from registry aliases.
+- Apply per-provider authentication and runtime health checks.
+- Execute chat completion and streaming requests with failover.
+- Expose provider configuration state for health and degraded-mode routing.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, AsyncGenerator, Literal, cast
+from typing import Any, AsyncGenerator, cast
 import asyncio
 import json
 import time
 
 import sentry_sdk
 
-from pydantic import SecretStr
 from openai import (
     AsyncOpenAI,
-    APIConnectionError,
     APIStatusError,
-    AuthenticationError,
-    PermissionDeniedError,
 )
 from openai.types.chat import ChatCompletionMessageParam
 
@@ -24,118 +26,27 @@ from config import get_settings
 from logging_config import logger
 from services.cache import get_redis
 from services.llm_errors import LLMBadRequest, LLMInvalidAPIKey, LLMUnavailable
+from services.provider_authenticator import ProviderAuthenticator
+from services.provider_registry import (
+    PROVIDER_BASE_URLS,
+    PROVIDER_PRIORITY,
+    ProviderName,
+    ProviderRegistry,
+    ProviderTarget,
+)
+from services.provider_usage_tracker import ProviderUsageTracker
+from services.fallback_orchestrator import FallbackOrchestrator
 from services.redis_safe import safe_redis_call
+from services.utils_shared import (
+    extract_estimated_cost as extract_shared_estimated_cost,
+    extract_usage_dict as extract_shared_usage_dict,
+)
 
 
-ProviderName = Literal["groq", "cerebras", "gemini", "openrouter"]
-
-PROVIDER_PRIORITY: tuple[ProviderName, ...] = ("groq", "cerebras", "gemini")
-PROVIDER_BASE_URLS: dict[ProviderName, str] = {
-    "groq": "https://api.groq.com/openai/v1",
-    "cerebras": "https://api.cerebras.ai/v1",
-    "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
-    "openrouter": "https://openrouter.ai/api/v1",
-}
-RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
-OPENROUTER_DAILY_REQUEST_LIMIT = 45
-CEREBRAS_MIN_TOKENS_REMAINING = 10000
-CEREBRAS_DAILY_TOKEN_BUDGET_DEFAULT = 100000
-
-# Semantic alias -> provider-specific model IDs in fallback order.
-MODEL_FALLBACK_MAP: dict[str, dict[ProviderName, str]] = {
-    "default-fast": {
-        "groq": "llama-3.1-8b-instant",
-        "gemini": "gemini-2.5-flash",
-        "openrouter": "openrouter/free",
-        "cerebras": "zai-glm-4.7",
-    },
-    "learning-detailed": {
-        "gemini": "gemini-2.5-pro",
-        "groq": "llama-3.3-70b-versatile",
-        "openrouter": "openrouter/free",
-    },
-    "technical-primary": {
-        "gemini": "gemini-2.5-pro",
-        "cerebras": "zai-glm-4.7",
-        "groq": "llama-3.3-70b-versatile",
-        "openrouter": "openrouter/free",
-    },
-    "technical-fallback": {
-        "groq": "llama-3.1-8b-instant",
-        "gemini": "gemini-2.5-flash",
-        "openrouter": "openrouter/free",
-    },
-    "learn-gemini-flash": {
-        "gemini": "gemini-2.5-flash",
-        "groq": "llama-3.1-8b-instant",
-        "openrouter": "openrouter/free",
-    },
-    "learn-groq-llama8b": {
-        "groq": "llama-3.1-8b-instant",
-        "gemini": "gemini-2.5-flash",
-        "openrouter": "openrouter/free",
-    },
-    "learn-openrouter-free": {
-        "gemini": "gemini-2.5-flash",
-        "groq": "llama-3.1-8b-instant",
-        "openrouter": "openrouter/free",
-    },
-    "technical-gemini-flash": {
-        "gemini": "gemini-2.5-flash",
-        "groq": "llama-3.1-8b-instant",
-        "openrouter": "openrouter/free",
-    },
-    "technical-openrouter-free": {
-        "gemini": "gemini-2.5-pro",
-        "groq": "llama-3.1-8b-instant",
-        "openrouter": "openrouter/free",
-    },
-    "technical-groq-llama8b": {
-        "groq": "llama-3.1-8b-instant",
-        "gemini": "gemini-2.5-pro",
-        "openrouter": "openrouter/free",
-    },
-    "technical-gemini-pro": {
-        "gemini": "gemini-2.5-pro",
-        "groq": "llama-3.1-8b-instant",
-        "openrouter": "openrouter/free",
-    },
-    "technical-cerebras-glm": {
-        "cerebras": "zai-glm-4.7",
-        "gemini": "gemini-2.5-pro",
-        "groq": "llama-3.1-8b-instant",
-    },
-    "socratic-openrouter-free": {
-        "openrouter": "cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
-    },
-    "socratic-groq-llama8b": {
-        "groq": "llama-3.1-8b-instant",
-        "gemini": "gemini-2.5-pro",
-        "openrouter": "openrouter/free",
-    },
-    "socratic-cerebras-glm": {
-        "cerebras": "zai-glm-4.7",
-        "gemini": "gemini-2.5-pro",
-        "groq": "llama-3.1-8b-instant",
-        "openrouter": "openrouter/free",
-    },
-    "socratic-gemini-pro": {
-        "gemini": "gemini-2.5-pro",
-        "groq": "llama-3.1-8b-instant",
-        "openrouter": "openrouter/free",
-    },
-    "socratic": {
-        "gemini": "gemini-2.5-pro",
-        "groq": "llama-3.1-8b-instant",
-        "openrouter": "openrouter/free",
-    },
-}
-
-
-@dataclass(frozen=True)
-class ProviderTarget:
-    provider: ProviderName
-    model: str
+_provider_registry = ProviderRegistry()
+_provider_authenticator = ProviderAuthenticator(_provider_registry)
+_provider_usage_tracker = ProviderUsageTracker()
+_fallback_orchestrator = FallbackOrchestrator(_provider_registry)
 
 
 class ProviderStateManager:
@@ -187,8 +98,9 @@ class ProviderStateManager:
                         "blocked_until": int(loaded.get("blocked_until", 0) or 0),
                     }
                     self._memory_state[provider] = dict(state)
-        except Exception:
+        except Exception as exc:
             # Redis may be unavailable; keep local memory state.
+            logger.debug("provider_state_read_failed", provider=provider, error=str(exc))
             pass
 
         return state
@@ -219,7 +131,8 @@ class ProviderStateManager:
                     json.dumps(normalized),
                     operation="setex",
                 )
-        except Exception:
+        except Exception as exc:
+            logger.debug("provider_state_write_failed", provider=provider, error=str(exc))
             pass
 
     async def _write_state(self, provider: ProviderName, state: dict[str, int | str]) -> None:
@@ -227,6 +140,7 @@ class ProviderStateManager:
             await self._write_state_unlocked(provider, state)
 
     async def should_attempt(self, provider: ProviderName) -> bool:
+        """Check provider health state and recover after cooldown."""
         now = int(time.time())
         async with self._lock:
             state = await self._read_state_unlocked(provider)
@@ -248,6 +162,7 @@ class ProviderStateManager:
             return True
 
     async def mark_success(self, provider: ProviderName) -> None:
+        """Reset provider failure state after a successful call."""
         async with self._lock:
             await self._write_state_unlocked(
                 provider,
@@ -255,6 +170,7 @@ class ProviderStateManager:
             )
 
     async def mark_failure(self, provider: ProviderName) -> None:
+        """Increment failure state and open cooldown when threshold is reached."""
         async with self._lock:
             now = int(time.time())
             state = await self._read_state_unlocked(provider)
@@ -317,26 +233,11 @@ def _get_timeout_seconds(provider: ProviderName | None = None) -> float:
 
 
 def _provider_api_key(provider: ProviderName) -> str:
-    settings = get_settings()
-    lookup = {
-        "groq": "groq_api_key",
-        "cerebras": "cerebras_api_key",
-        "gemini": "gemini_api_key",
-        "openrouter": "openrouter_api_key",
-    }
-    value = getattr(settings, lookup[provider], "")
-    if isinstance(value, SecretStr):
-        return value.get_secret_value().strip()
-    if not isinstance(value, str):
-        return ""
-    return value.strip()
+    return _provider_authenticator.get_api_key(provider)
 
 
 def _openrouter_headers() -> dict[str, str]:
-    return {
-        "HTTP-Referer": "https://knowbear.vercel.app",
-        "X-Title": "KnowBear",
-    }
+    return _provider_authenticator.openrouter_headers()
 
 
 async def _get_provider_client(provider: ProviderName) -> AsyncOpenAI:
@@ -370,70 +271,23 @@ async def _get_provider_client(provider: ProviderName) -> AsyncOpenAI:
 
 
 def _build_candidate_chain(model_alias: str | None) -> list[ProviderTarget]:
-    alias = (model_alias or "default-fast").strip().lower()
-
-    # Direct provider/model route support: e.g. "groq/llama-3.1-8b-instant".
-    if "/" in alias:
-        provider_name, raw_model = alias.split("/", 1)
-        if provider_name in PROVIDER_BASE_URLS and raw_model:
-            return [ProviderTarget(provider=provider_name, model=raw_model)]
-
-    model_map = MODEL_FALLBACK_MAP.get(alias) or MODEL_FALLBACK_MAP["default-fast"]
-    return [
-        ProviderTarget(provider=provider, model=model_name)
-        for provider, model_name in model_map.items()
-        if provider in PROVIDER_BASE_URLS
-    ]
+    return _fallback_orchestrator.build_candidate_chain(model_alias)
 
 
 def _is_retryable_error(exc: Exception) -> bool:
-    if isinstance(exc, APIConnectionError):
-        return True
-    if isinstance(exc, APIStatusError):
-        return int(getattr(exc, "status_code", 0) or 0) in RETRYABLE_STATUS_CODES
-    return False
+    return _fallback_orchestrator.is_retryable_error(exc)
 
 
 def _is_auth_error(exc: Exception) -> bool:
-    if isinstance(exc, (AuthenticationError, PermissionDeniedError)):
-        return True
-    if isinstance(exc, APIStatusError):
-        return int(getattr(exc, "status_code", 0) or 0) in {401, 403}
-    return False
+    return _fallback_orchestrator.is_auth_error(exc)
 
 
 def _extract_usage_dict(usage_obj: object) -> dict[str, int] | None:
-    if usage_obj is None:
-        return None
-    if hasattr(usage_obj, "model_dump"):
-        usage_obj = cast(Any, usage_obj).model_dump()
-    elif hasattr(usage_obj, "dict"):
-        usage_obj = cast(Any, usage_obj).dict()
-    if not isinstance(usage_obj, dict):
-        return None
-
-    try:
-        return {
-            "prompt_tokens": int(usage_obj.get("prompt_tokens") or 0),
-            "completion_tokens": int(usage_obj.get("completion_tokens") or 0),
-            "total_tokens": int(usage_obj.get("total_tokens") or 0),
-        }
-    except (TypeError, ValueError):
-        return None
+    return extract_shared_usage_dict(usage_obj)
 
 
 def _extract_estimated_cost(obj: object) -> float | None:
-    direct_cost = getattr(obj, "response_cost", None)
-    if isinstance(direct_cost, (int, float)):
-        return float(direct_cost)
-
-    hidden_params = getattr(obj, "_hidden_params", None)
-    if isinstance(hidden_params, dict):
-        hidden_cost = hidden_params.get("response_cost")
-        if isinstance(hidden_cost, (int, float)):
-            return float(hidden_cost)
-
-    return None
+    return extract_shared_estimated_cost(obj, None)
 
 
 def _day_bucket() -> str:
@@ -449,70 +303,17 @@ def _provider_tokens_key(provider: ProviderName) -> str:
 
 
 async def _increment_provider_usage(provider: ProviderName, usage: dict[str, int] | None) -> None:
-    try:
-        redis = await safe_redis_call(get_redis, operation="connect")
-        if redis is None:
-            return
-        request_key = _provider_requests_key(provider)
-        raw_requests_total = await safe_redis_call(redis.incrby, request_key, 1, operation="incrby")
-        requests_total = int(raw_requests_total or 0)
-        if requests_total <= 1:
-            await safe_redis_call(redis.expire, request_key, 86400, operation="expire")
-
-        total_tokens = int((usage or {}).get("total_tokens") or 0)
-        if total_tokens > 0:
-            token_key = _provider_tokens_key(provider)
-            raw_token_total = await safe_redis_call(redis.incrby, token_key, total_tokens, operation="incrby")
-            token_total = int(raw_token_total or 0)
-            if token_total <= total_tokens:
-                await safe_redis_call(redis.expire, token_key, 86400, operation="expire")
-    except Exception:
-        # Never block inference on usage accounting.
-        return
+    await _provider_usage_tracker.record_usage(provider, usage)
 
 
 async def _provider_within_runtime_limits(provider: ProviderName) -> bool:
-    try:
-        redis = await safe_redis_call(get_redis, operation="connect")
-        if redis is None:
-            return True
-        if provider == "openrouter":
-            req_count_raw = await safe_redis_call(redis.get, _provider_requests_key("openrouter"), operation="get")
-            req_count = int(req_count_raw or 0)
-            if req_count >= OPENROUTER_DAILY_REQUEST_LIMIT:
-                logger.warning(
-                    "provider_runtime_limit_reached",
-                    provider=provider,
-                    limit_type="daily_requests",
-                    request_count=req_count,
-                    limit=OPENROUTER_DAILY_REQUEST_LIMIT,
-                )
-                return False
-
-        if provider == "cerebras":
-            settings = get_settings()
-            budget = max(int(getattr(settings, "cerebras_daily_token_budget", CEREBRAS_DAILY_TOKEN_BUDGET_DEFAULT)), 0)
-            used_tokens_raw = await safe_redis_call(redis.get, _provider_tokens_key("cerebras"), operation="get")
-            used_tokens = int(used_tokens_raw or 0)
-            remaining = max(budget - used_tokens, 0)
-            if remaining < CEREBRAS_MIN_TOKENS_REMAINING:
-                logger.warning(
-                    "provider_runtime_limit_reached",
-                    provider=provider,
-                    limit_type="remaining_tokens",
-                    remaining_tokens=remaining,
-                    min_required=CEREBRAS_MIN_TOKENS_REMAINING,
-                )
-                return False
-    except Exception:
-        # Fail open when runtime limits cannot be read.
-        return True
-    return True
+    return await _provider_usage_tracker.within_runtime_limits(provider)
 
 
 def get_provider_config_state() -> dict[str, object]:
     """Return provider config validation state without exposing secrets."""
-    configured = {provider: bool(_provider_api_key(provider)) for provider in PROVIDER_BASE_URLS}
+    _provider_registry.reload_from_env()
+    configured = _provider_registry.configured_providers()
     primary_configured = any(configured[p] for p in PROVIDER_PRIORITY)
     any_configured = primary_configured or configured["openrouter"]
 
@@ -557,7 +358,11 @@ def get_provider_config_state() -> dict[str, object]:
 
 
 
-async def create_chat_completion(model: str, messages: list[ChatCompletionMessageParam], **kwargs):
+async def create_chat_completion(
+    model: str,
+    messages: list[ChatCompletionMessageParam],
+    **kwargs,
+) -> Any:
     """Create a chat completion with manual provider fallback."""
     request_id = kwargs.pop("request_id", None)
     trace_headers = kwargs.pop("trace_headers", None)

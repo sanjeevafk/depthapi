@@ -18,8 +18,8 @@ async def close_stream(stream) -> None:
                 await asyncio.wait_for(close_task, timeout=0.25)
             except asyncio.TimeoutError:
                 close_task.cancel()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("stream_close_failed", error=str(exc))
 
 
 def compute_fallback_timeout(

@@ -13,6 +13,7 @@ def _validate_no_null_bytes(field_name: str, value: str) -> None:
 
 
 def query_stream_idempotency_key(scope: str, message_id: str) -> str:
+    """Create a stable idempotency key for query stream requests."""
     _validate_no_null_bytes("scope", scope)
     _validate_no_null_bytes("message_id", message_id)
     digest = hashlib.sha256(f"{scope}\x00{message_id}".encode("utf-8")).hexdigest()
@@ -20,6 +21,7 @@ def query_stream_idempotency_key(scope: str, message_id: str) -> str:
 
 
 def message_idempotency_key(user_id: str, message_id: str) -> str:
+    """Create a user-scoped idempotency key for message requests."""
     _validate_no_null_bytes("user_id", user_id)
     _validate_no_null_bytes("message_id", message_id)
     digest = hashlib.sha256(f"{user_id}\x00{message_id}".encode("utf-8")).hexdigest()
@@ -27,6 +29,7 @@ def message_idempotency_key(user_id: str, message_id: str) -> str:
 
 
 def resolve_started_ts(payload: dict[str, Any] | None, *, now_ts: int | None = None) -> int:
+    """Resolve the request start timestamp from idempotency payload data."""
     if now_ts is None:
         now_ts = int(time.time())
     if not payload:
@@ -38,6 +41,7 @@ def resolve_started_ts(payload: dict[str, Any] | None, *, now_ts: int | None = N
 
 
 def compute_age_seconds(payload: dict[str, Any] | None, *, now_ts: int | None = None) -> int:
+    """Compute staleness age in seconds for idempotency records."""
     if now_ts is None:
         now_ts = int(time.time())
     if payload:
@@ -49,4 +53,5 @@ def compute_age_seconds(payload: dict[str, Any] | None, *, now_ts: int | None = 
 
 
 def compute_retry_after_ms(stale_seconds: int, age_seconds: int) -> int:
+    """Compute client retry delay in milliseconds."""
     return max(250, int(max(stale_seconds - age_seconds, 0) * 1000))
