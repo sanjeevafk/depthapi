@@ -6,12 +6,15 @@ import httpx
 import orjson
 
 from config import get_settings
+from constants import (
+    REDIS_REST_CALL_TIMEOUT_SECONDS,
+    UPSTASH_HTTP_CONNECT_TIMEOUT_SECONDS,
+    UPSTASH_HTTP_TIMEOUT_SECONDS,
+)
 from logging_config import logger
-from services.message_utils import safeJsonParse
+from services.message_utils import safe_json_parse
 from services.redis_safe import safe_redis_call
 from utils import with_timeout
-
-REDIS_REST_CALL_TIMEOUT_SECONDS = 0.8
 
 UNIFIED_IDEMPOTENCY_CACHE_LUA = """
 -- unified_idempotency_cache
@@ -65,7 +68,7 @@ class UpstashRedisCompat:
         self._client = httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
             headers={"Authorization": f"Bearer {token}"},
-            timeout=httpx.Timeout(1.5, connect=0.75),
+            timeout=httpx.Timeout(UPSTASH_HTTP_TIMEOUT_SECONDS, connect=UPSTASH_HTTP_CONNECT_TIMEOUT_SECONDS),
         )
 
     async def _execute(self, *command: Any) -> Any:
@@ -275,13 +278,13 @@ async def check_idempotency_and_cache(
         if status_code == 3:
             if payload is None:
                 return {"status": "new"}
-            loaded = safeJsonParse(payload)
+            loaded = safe_json_parse(payload)
             if isinstance(loaded, dict):
                 return {"status": "cache_hit", "cached": loaded}
             try:
                 await safe_redis_call(redis.delete, cache_key, operation="delete")
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("cache_cleanup_failed", key=cache_key, error=str(exc))
         return {"status": "new"}
     except Exception as exc:
         logger.warning(
@@ -301,13 +304,13 @@ async def cache_get(key: str) -> dict[str, Any] | None:
         val = await safe_redis_call(r.get, key, operation="get")
         if val is None:
             return None
-        loaded = safeJsonParse(val)
+        loaded = safe_json_parse(val)
         if isinstance(loaded, dict):
             return loaded
         try:
             await safe_redis_call(r.delete, key, operation="delete")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("cache_cleanup_failed", key=key, error=str(exc))
         logger.warning("cache_json_parse_failed", key=key)
         return None
     except Exception as e:

@@ -10,48 +10,10 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 
 from logging_config import logger, anonymize_user_id, log_sampled_success
 from services.llm_client import create_chat_completion
-
-
-def _extract_usage_dict(usage_obj) -> dict[str, int] | None:
-    if usage_obj is None:
-        return None
-    if hasattr(usage_obj, "model_dump"):
-        usage_obj = usage_obj.model_dump()
-    elif hasattr(usage_obj, "dict"):
-        usage_obj = usage_obj.dict()
-    if not isinstance(usage_obj, dict):
-        return None
-
-    prompt_tokens = usage_obj.get("prompt_tokens")
-    completion_tokens = usage_obj.get("completion_tokens")
-    total_tokens = usage_obj.get("total_tokens")
-    try:
-        return {
-            "prompt_tokens": int(prompt_tokens or 0),
-            "completion_tokens": int(completion_tokens or 0),
-            "total_tokens": int(total_tokens or 0),
-        }
-    except (TypeError, ValueError):
-        return None
-
-
-def _extract_estimated_cost(result, usage: dict[str, int] | None) -> float | None:
-    direct_cost = getattr(result, "response_cost", None)
-    if isinstance(direct_cost, (int, float)):
-        return float(direct_cost)
-
-    hidden_params = getattr(result, "_hidden_params", None)
-    if isinstance(hidden_params, dict):
-        hidden_cost = hidden_params.get("response_cost")
-        if isinstance(hidden_cost, (int, float)):
-            return float(hidden_cost)
-
-    if isinstance(usage, dict):
-        usage_cost = usage.get("cost")
-        if isinstance(usage_cost, (int, float)):
-            return float(usage_cost)
-
-    return None
+from services.utils_shared import (
+    extract_estimated_cost as _extract_estimated_cost,
+    extract_usage_dict as _extract_usage_dict,
+)
 
 
 @retry(

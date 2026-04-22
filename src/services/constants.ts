@@ -1,0 +1,2 @@
+export const CHAT_STREAM_READ_TIMEOUT_MS = 20_000;
+export const QUERY_STREAM_MAX_WAIT_RETRIES = 4;
