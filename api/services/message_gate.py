@@ -2,6 +2,12 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from constants import (
+    MESSAGE_GATE_DEFAULT_TIMEOUT_SECONDS,
+    STREAM_IDEMPOTENCY_STALE_MIN_SECONDS,
+    STREAM_IDEMPOTENCY_TTL_MAX_SECONDS,
+    STREAM_IDEMPOTENCY_TTL_MIN_SECONDS,
+)
 from config import get_settings
 from logging_config import logger
 from services.cache import get_redis
@@ -175,8 +181,9 @@ async def gatekeep_message_request(
     circuit_threshold: int,
     circuit_open_seconds: int,
     idempotency_key: str,
-    timeout_seconds: float = 0.8,
+    timeout_seconds: float = MESSAGE_GATE_DEFAULT_TIMEOUT_SECONDS,
 ) -> GatekeeperResult:
+    """Gate incoming message requests using idempotency and quota checks."""
     settings = get_settings()
     now_ts = int(time.time())
     token_bucket_key = f"knowbear:rate:bucket:{identifier}"
@@ -184,11 +191,11 @@ async def gatekeep_message_request(
     circuit_minute_key = f"knowbear:circuit:tokens:{int(now_ts // 60)}"
     circuit_open_key = "knowbear:circuit:open"
     idempotency_ttl = min(
-        max(int(getattr(settings, "stream_idempotency_ttl_seconds", 90)), 60),
-        120,
+        max(int(getattr(settings, "stream_idempotency_ttl_seconds", 90)), STREAM_IDEMPOTENCY_TTL_MIN_SECONDS),
+        STREAM_IDEMPOTENCY_TTL_MAX_SECONDS,
     )
     idempotency_stale = max(
-        5,
+        STREAM_IDEMPOTENCY_STALE_MIN_SECONDS,
         min(int(getattr(settings, "stream_idempotency_stale_seconds", 20)), idempotency_ttl),
     )
 
@@ -276,7 +283,7 @@ async def append_conversation_message(
     conversation_id: str,
     message_json: str,
     max_messages: int,
-    timeout_seconds: float = 0.8,
+    timeout_seconds: float = MESSAGE_GATE_DEFAULT_TIMEOUT_SECONDS,
 ) -> int | None:
     settings = get_settings()
     ttl_seconds = int(getattr(settings, "message_cache_ttl_seconds", 3600))
@@ -314,7 +321,7 @@ async def fetch_conversation_snapshot(
     *,
     conversation_id: str,
     max_messages: int,
-    timeout_seconds: float = 0.8,
+    timeout_seconds: float = MESSAGE_GATE_DEFAULT_TIMEOUT_SECONDS,
 ) -> tuple[str | None, list[str]]:
     meta_key = f"knowbear:conversation:{conversation_id}:meta"
     list_key = f"knowbear:conversation:{conversation_id}:messages"
@@ -348,7 +355,11 @@ async def fetch_conversation_snapshot(
         return (None, [])
 
 
-async def cache_get_value(key: str, *, timeout_seconds: float = 0.8) -> str | None:
+async def cache_get_value(
+    key: str,
+    *,
+    timeout_seconds: float = MESSAGE_GATE_DEFAULT_TIMEOUT_SECONDS,
+) -> str | None:
     redis = await safe_redis_call(get_redis, timeout=timeout_seconds, operation="connect")
     if redis is None:
         return None
@@ -369,7 +380,13 @@ async def cache_get_value(key: str, *, timeout_seconds: float = 0.8) -> str | No
         return None
 
 
-async def cache_set_value(key: str, value: str, ttl_seconds: int, *, timeout_seconds: float = 0.8) -> bool:
+async def cache_set_value(
+    key: str,
+    value: str,
+    ttl_seconds: int,
+    *,
+    timeout_seconds: float = MESSAGE_GATE_DEFAULT_TIMEOUT_SECONDS,
+) -> bool:
     redis = await safe_redis_call(get_redis, timeout=timeout_seconds, operation="connect")
     if redis is None:
         return False

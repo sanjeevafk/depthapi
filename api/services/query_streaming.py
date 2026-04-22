@@ -1,4 +1,10 @@
-"""Query streaming orchestration."""
+"""SSE streaming orchestration for `/query/stream`.
+
+Responsibilities:
+- Emit replay/wait/live stream variants with consistent SSE framing.
+- Handle stream start timeout, heartbeat cadence, and fallback generation.
+- Persist idempotency state and emit request-level telemetry.
+"""
 
 from __future__ import annotations
 
@@ -16,11 +22,7 @@ from services.streaming_orchestrator import (
     compute_fallback_timeout,
     update_idempotency_progress,
 )
-
-
-def _error_text(exc: Exception) -> str:
-    text = str(exc).strip()
-    return text or type(exc).__name__
+from services.utils_shared import error_text as _error_text
 
 
 def build_query_stream_replay_response(
@@ -148,8 +150,11 @@ def build_query_stream_response(
             pending_chunk_task.cancel()
             try:
                 await asyncio.wait_for(pending_chunk_task, timeout=0.25)
-            except BaseException:
+            except asyncio.CancelledError:
+                # Expected while force-canceling pending stream chunks.
                 pass
+            except Exception as exc:
+                logger.debug("query_pending_chunk_cancel_failed", error=str(exc))
             pending_chunk_task = None
 
         async def update_progress() -> None:
