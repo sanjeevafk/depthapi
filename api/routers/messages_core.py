@@ -13,7 +13,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 import orjson
 
-from auth import check_is_pro, get_supabase_admin, verify_token
+from auth import get_supabase_admin
+from services.api_key_auth import ApiKeyRecord, verify_api_key
 from config import CONTEXT_LOAD_TIMEOUTS, get_settings
 from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from monitoring import capture_telemetry_event
@@ -54,7 +55,6 @@ from services.redis_safe import safe_redis_call
 from services.rate_limit import _resolve_limits, enforce_request_controls
 from services.streaming import SseEventBuilder, SSE_RESPONSE_HEADERS
 from services.token_count import count_prompt_tokens
-from services.user_cache import refresh_is_pro_cache
 from utils import (
     PROMPT_MODE_ALIASES,
     SUPPORTED_PROMPT_MODES,
@@ -265,7 +265,7 @@ def _final_fallback_message(mode: str) -> str:
 
 async def _send_message_handler(
     request: Request,
-    auth_data: dict = Depends(verify_token),
+    api_key: ApiKeyRecord = Depends(verify_api_key),
 ) -> StreamingResponse:
     """Handle authenticated chat requests and stream SSE responses."""
     request_received = time.perf_counter()
@@ -291,30 +291,14 @@ async def _send_message_handler(
         )
         raise _bad_request("Invalid request payload")
 
-    user = auth_data.get("user") if isinstance(auth_data, dict) else None
-    if not user:
-        raise _auth_required("Authentication required")
+    user_id = api_key.id
+    is_pro = api_key.is_pro
 
     config_state = get_provider_config_state()
     if not bool(config_state.get("chat_enabled", False)):
         raise LLMUnavailable(
             "Model service is temporarily unavailable. Please try again shortly."
         )
-
-    user_id = str(getattr(user, "id", "") or "").strip()
-    if not user_id:
-        raise _auth_required("Authenticated user id is missing")
-    is_pro = bool(auth_data.get("is_pro"))
-    exp = auth_data.get("exp")
-    exp_delta = None
-    if isinstance(exp, (int, float)):
-        exp_delta = float(exp) - time.time()
-        if exp_delta < 900:
-            asyncio.create_task(refresh_is_pro_cache(user_id))
-    # Align with query router: verify pro status server-side when token claim is missing
-    # or the token is nearing expiry, so active Pro users are not blocked.
-    if not is_pro or (exp_delta is not None and exp_delta < 120):
-        is_pro = await check_is_pro(user_id)
 
     content = content.strip()
     user_id_hash = anonymize_user_id(user_id)
@@ -631,12 +615,10 @@ async def _send_message_handler(
         prompt_tokens = count_prompt_tokens(effective_content)
         reserved_tokens = max(prompt_tokens + max_output_tokens, 1)
         client_ip = _resolve_client_ip(request, trusted_proxies=trusted_proxies)
-        identifier = f"user:{user_id}" if user_id else f"ip:{client_ip}"
+        identifier = f"key:{user_id}"
         daily_limit, _hourly_limit, rpm, burst_limit, sustained_window, burst_window = _resolve_limits(
             settings=config_settings,
-            is_authenticated=True,
-            is_pro=is_pro,
-            mode=selected_mode,
+            api_key=api_key,
         )
         if burst_limit <= 0 and rpm <= 0:
             bucket_capacity = 0
@@ -706,7 +688,7 @@ async def _send_message_handler(
             intent_type=intent.type,
             intent_payload=intent_payload,
             conversation_id=req.conversation_id,
-            user_id=user_id,
+            user_id=api_key.id,
         )
         cached_response = None
         if not req.regenerate:
@@ -1662,10 +1644,10 @@ async def _send_message_handler(
 @router.post("/messages")
 async def send_message(
     request: Request,
-    auth_data: dict = Depends(verify_token),
+    api_key: ApiKeyRecord = Depends(verify_api_key),
 ) -> StreamingResponse:
     return await _message_workflow.process_message(
         request=request,
-        auth_data=auth_data,
+        api_key=api_key,
         handler=_send_message_handler,
     )

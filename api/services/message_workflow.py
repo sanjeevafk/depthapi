@@ -9,7 +9,7 @@ from typing import TypeVar
 from fastapi import Request
 from fastapi.responses import StreamingResponse
 
-from logging_config import logger
+from services.api_key_auth import ApiKeyRecord
 
 T = TypeVar("T")
 
@@ -35,10 +35,10 @@ class MessageWorkflow:
         self,
         *,
         request: Request,
-        auth_data: dict,
-        handler: Callable[[Request, dict], Awaitable[StreamingResponse]],
+        api_key: ApiKeyRecord,
+        handler: Callable[[Request, ApiKeyRecord], Awaitable[StreamingResponse]],
     ) -> StreamingResponse:
         async def _execute() -> StreamingResponse:
-            return await handler(request, auth_data)
+            return await handler(request, api_key)
 
         return await self.run_stage("process_message", _execute)
