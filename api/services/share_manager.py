@@ -1,4 +1,5 @@
 import base64
+import binascii
 import hashlib
 import hmac
 import secrets
@@ -62,7 +63,7 @@ def _decode_b64(value: str) -> Optional[bytes]:
     try:
         padding = "=" * (-len(value) % 4)
         return base64.urlsafe_b64decode(value + padding)
-    except Exception:
+    except (ValueError, binascii.Error):
         return None
 
 
