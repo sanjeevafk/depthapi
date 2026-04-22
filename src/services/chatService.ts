@@ -6,6 +6,10 @@ import { toQueryLevel } from "../lib/chatModes";
 import type { ChatMode, PromptMode } from "../types/chat";
 import { API_URL, createUuid, supabaseConfigured } from "../lib/chatStoreUtils";
 import { buildApiError } from "../lib/httpErrors";
+import {
+  CHAT_STREAM_READ_TIMEOUT_MS,
+  QUERY_STREAM_MAX_WAIT_RETRIES,
+} from "./constants";
 
 interface SendChatParams {
   conversationId: string;
@@ -134,7 +138,6 @@ async function streamSSE(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  const READ_TIMEOUT_MS = 20_000;
   let doneReceived = false;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
@@ -155,7 +158,7 @@ async function streamSSE(
           new Promise<ReadableStreamReadResult<Uint8Array>>((_, reject) => {
             timeoutId = setTimeout(
               () => reject(new Error("Stream read timed out")),
-              READ_TIMEOUT_MS,
+              CHAT_STREAM_READ_TIMEOUT_MS,
             );
           }),
         ]);
@@ -211,7 +214,7 @@ export async function sendChat(params: SendChatParams): Promise<void> {
 
     const fallbackToQueryStream = async () => {
       const fallbackLevel = toQueryLevel(params.promptMode);
-      const maxWaitRetries = 4;
+      const maxWaitRetries = QUERY_STREAM_MAX_WAIT_RETRIES;
 
       for (let attempt = 0; attempt <= maxWaitRetries; attempt++) {
         const fallbackResponse = await fetch(`${API_URL}/api/query/stream`, {

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import TypedDict
 
+from logging_config import logger
 from services.intent import detect_intent_and_depth
 from utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE
 from services.inference_constants import (
@@ -65,7 +66,8 @@ def extract_features(
             classification = detect_intent_and_depth(query)
             resolved_intent = resolved_intent or classification.get("intent", "explain")
             resolved_depth = resolved_depth or classification.get("depth", "medium")
-        except Exception:
+        except Exception as exc:
+            logger.debug("intent_depth_classification_failed", error=str(exc))
             resolved_intent = resolved_intent or "explain"
             resolved_depth = resolved_depth or "medium"
 
@@ -215,6 +217,7 @@ def route_model_aliases(
     is_pro: bool = False,
     search_api_used: bool = False,
 ) -> list[str]:
+    """Route a query to an ordered alias chain based on mode, intent, and depth."""
     features = extract_features(
         query,
         mode=mode,
