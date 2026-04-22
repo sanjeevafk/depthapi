@@ -67,16 +67,19 @@ def invalidate_pro_cache(user_id: str) -> None:
         return
     with _PRO_STATE_CACHE_LOCK:
         _PRO_STATE_CACHE.pop(user_id, None)
+    async def _clear() -> None:
+        redis = await safe_redis_call(get_redis, operation="connect")
+        if redis is None:
+            return
+        await safe_redis_call(redis.delete, f"knowbear:user:is_pro:{user_id}", operation="delete")
+
     try:
-        async def _clear() -> None:
-            redis = await safe_redis_call(get_redis, operation="connect")
-            if redis is None:
-                return
-            await safe_redis_call(redis.delete, f"knowbear:user:is_pro:{user_id}", operation="delete")
-        asyncio.create_task(_clear())
-    except Exception:
+        task_coro = _clear()
+        asyncio.create_task(task_coro)
+    except Exception as exc:
+        task_coro.close()
         # Best-effort cache invalidation only.
-        pass
+        logger.debug("auth_invalidate_pro_cache_failed", user_id_hash=anonymize_user_id(user_id), error=str(exc))
 
 @lru_cache(maxsize=1)
 def get_supabase() -> Client | None:
@@ -287,8 +290,12 @@ async def check_is_pro(user_id: str, force_refresh: bool = False) -> bool:
                     _PRO_STATE_CACHE.move_to_end(user_id)
                     _prune_pro_cache_locked(now)
                 return is_pro
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(
+                "auth_pro_cache_redis_read_failed",
+                user_id_hash=anonymize_user_id(user_id),
+                error=str(exc),
+            )
 
     supabase = get_supabase_admin()
     if not supabase:
@@ -312,8 +319,12 @@ async def check_is_pro(user_id: str, force_refresh: bool = False) -> bool:
                     "1" if is_pro else "0",
                     operation="setex",
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(
+                "auth_pro_cache_redis_write_failed",
+                user_id_hash=anonymize_user_id(user_id),
+                error=str(exc),
+            )
         with _PRO_STATE_CACHE_LOCK:
             _prune_pro_cache_locked(now)
             _PRO_STATE_CACHE[user_id] = (is_pro, now + _pro_cache_ttl_seconds())

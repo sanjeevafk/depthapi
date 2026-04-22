@@ -1,4 +1,10 @@
-"""Messages streaming orchestration."""
+"""SSE streaming flow for `/messages` responses.
+
+Responsibilities:
+- Build replay/cached/live stream response envelopes.
+- Coordinate chunk heartbeats, timeout fallback, and idempotency progress.
+- Persist final assistant output and emit observability telemetry.
+"""
 
 from __future__ import annotations
 
@@ -12,19 +18,17 @@ from fastapi.responses import StreamingResponse
 
 from logging_config import logger, log_sampled_success
 from monitoring import capture_telemetry_event
-from services.streaming import SseEventBuilder, SSE_RESPONSE_HEADERS
+from services.response_orchestrator import ResponseOrchestrator
+from services.streaming import SSE_RESPONSE_HEADERS
 from services.streaming_orchestrator import (
     close_stream,
     compute_fallback_timeout,
     update_idempotency_progress,
 )
-from api.repositories.chat_repository import ChatRepository
+from services.utils_shared import error_text as _error_text
 from utils import TECHNICAL_MODE, SOCRATIC_MODE
 
-
-def _error_text(exc: Exception) -> str:
-    text = str(exc).strip()
-    return text or type(exc).__name__
+_response_orchestrator = ResponseOrchestrator()
 
 
 def build_message_replay_response(
@@ -36,7 +40,6 @@ def build_message_replay_response(
     prompt_mode: str,
 ) -> StreamingResponse:
     async def replay_generator():
-        builder = SseEventBuilder()
         meta_payload = {
             "assistant_message_id": assistant_message_id,
             "mode": mode,
@@ -44,13 +47,13 @@ def build_message_replay_response(
             "message_id": message_id,
             "replay": True,
         }
-        yield builder.emit_json("meta", meta_payload)
+        yield _response_orchestrator.format_sse_event("meta", meta_payload)
         for index in range(0, len(content), 400):
             payload = {"delta": content[index : index + 400]}
             if assistant_message_id:
                 payload["assistant_message_id"] = assistant_message_id
-            yield builder.emit_json("delta", payload)
-        yield builder.emit("done", "[DONE]")
+            yield _response_orchestrator.format_sse_event("delta", payload)
+        yield _response_orchestrator.format_sse_event("done", "[DONE]")
 
     return StreamingResponse(
         replay_generator(),
@@ -100,7 +103,6 @@ def build_message_stream_response(
     async def event_generator():
         start_time = time.perf_counter()
         full_content = ""
-        builder = SseEventBuilder()
         first_event_ms = None
         first_token_ms = None
         last_chunk_time = None
@@ -163,9 +165,7 @@ def build_message_stream_response(
             nonlocal first_event_ms
             if first_event_ms is None:
                 first_event_ms = (time.perf_counter() - start_time) * 1000
-            if isinstance(payload, dict):
-                return builder.emit_json(event, payload)
-            return builder.emit(event, payload)
+            return _response_orchestrator.format_sse_event(event, payload)
 
         try:
             meta_payload = {
@@ -574,22 +574,15 @@ def build_message_stream_response(
                 sampled=True,
             )
             if assistant_message_id:
-                current_assistant_message_id = assistant_message_id
-
-                def _update_db():
-                    try:
-                        ChatRepository.update_assistant_message(current_assistant_message_id, full_content)
-                    except Exception as exc:
-                        logger.error(
-                            "messages_assistant_update_failed",
-                            error=str(exc),
-                            request_id=request_id,
-                            user_id_hash=user_id_hash,
-                            message_id=current_assistant_message_id,
-                            retry=bool(req.regenerate),
-                            sampled=False,
-                        )
-                asyncio.create_task(asyncio.to_thread(_update_db))
+                asyncio.create_task(
+                    _response_orchestrator.persist_message_stream(
+                        full_content,
+                        assistant_message_id,
+                        request_id=request_id,
+                        user_id_hash=user_id_hash,
+                        retry=bool(req.regenerate),
+                    )
+                )
 
             status = "success"
             if aborted:

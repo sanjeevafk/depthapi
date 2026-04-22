@@ -416,8 +416,8 @@ class SearchManager:
                 author = self._safe_text(data.get("author"), "Unknown")
                 if content:
                     return f"«{content}» — {author}"
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("quote_fetch_failed", error=str(exc))
 
         fallbacks = [
             "The mind is not a vessel to be filled, but a fire to be kindled. — Plutarch",
@@ -505,7 +505,8 @@ class SearchManager:
                         continue
                     quote_data = {"author": author, "content": content}
                     break
-            except Exception:
+            except Exception as exc:
+                logger.debug("quote_api_attempt_failed", attempt=attempts, error=str(exc))
                 break
 
         if not quote_data:

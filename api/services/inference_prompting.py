@@ -6,6 +6,7 @@ import re
 from typing import Tuple
 
 from config import get_settings
+from logging_config import logger
 from services.token_count import count_prompt_tokens
 from utils import requests_depth
 
@@ -117,7 +118,8 @@ def _is_large_input(text: str) -> bool:
         return True
     try:
         return count_prompt_tokens(text) > token_threshold
-    except Exception:
+    except Exception as exc:
+        logger.debug("large_input_token_check_failed", error=str(exc))
         return False
 
 
@@ -170,4 +172,3 @@ def _apply_length_constraint(prompt: str, constraint: tuple[str, int] | None) ->
         "If this conflicts with earlier length guidance, follow this limit "
         "and still complete the final sentence."
     )
-
