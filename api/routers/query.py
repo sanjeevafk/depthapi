@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from auth import check_is_pro, ensure_user_exists, get_supabase_admin, verify_token_optional
+from services.api_key_auth import ApiKeyRecord, verify_api_key
 from services.query_helpers import normalize_levels, cache_key
 from config import get_settings
 from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
@@ -55,50 +55,29 @@ class QueryResponse(BaseModel):
     cached: bool = False
 
 
-async def save_to_history(user, topic: str, levels: list[str], mode: str) -> None:
-    """Persist query history without surfacing storage errors to callers."""
-    normalized_mode = normalize_mode(mode)
-    user_id_hash = anonymize_user_id(str(getattr(user, "id", "") or "") or None)
-    topic_hash = anonymize_text(topic)
+async def save_to_history(api_key_id: str, topic: str, levels: list[str], mode: str) -> None:
+    """Persist query history scoped to the API key project. Best-effort; never raises."""
+    from auth import get_supabase_admin
+    import asyncio
 
-    try:
-        await ensure_user_exists(user)
-    except Exception as exc:
-        logger.error(
-            "save_to_history_ensure_user_failed",
-            error=str(exc),
-            error_type=type(exc).__name__,
-            user_id_hash=user_id_hash,
-            sampled=False,
-        )
-        return
+    normalized_mode = normalize_mode(mode)
+    topic_hash = anonymize_text(topic)
+    key_hash = anonymize_user_id(api_key_id)
 
     supabase = get_supabase_admin()
     if not supabase:
-        logger.error("save_to_history_no_supabase_admin", user_id_hash=user_id_hash, sampled=False)
+        logger.error("save_to_history_no_supabase_admin", key_hash=key_hash, sampled=False)
         return
 
     try:
         existing = await asyncio.to_thread(
             lambda: supabase.table("history")
             .select("id, levels")
-            .eq("user_id", user.id)
+            .eq("user_id", api_key_id)
             .eq("topic", topic)
             .eq("mode", normalized_mode)
             .execute()
         )
-    except Exception as exc:
-        logger.error(
-            "save_to_history_fetch_failed",
-            error=str(exc),
-            error_type=type(exc).__name__,
-            user_id_hash=user_id_hash,
-            topic_hash=topic_hash,
-            sampled=False,
-        )
-        return
-
-    try:
         data = getattr(existing, "data", None)
         if isinstance(data, list) and data and isinstance(data[0], dict):
             item_id = data[0].get("id")
@@ -113,14 +92,7 @@ async def save_to_history(user, topic: str, levels: list[str], mode: str) -> Non
         else:
             await asyncio.to_thread(
                 lambda: supabase.table("history")
-                .insert(
-                    {
-                        "user_id": user.id,
-                        "topic": topic,
-                        "levels": levels,
-                        "mode": normalized_mode,
-                    }
-                )
+                .insert({"user_id": api_key_id, "topic": topic, "levels": levels, "mode": normalized_mode})
                 .execute()
             )
     except Exception as exc:
@@ -128,21 +100,17 @@ async def save_to_history(user, topic: str, levels: list[str], mode: str) -> Non
             "save_to_history_write_failed",
             error=str(exc),
             error_type=type(exc).__name__,
-            user_id_hash=user_id_hash,
+            key_hash=key_hash,
             topic_hash=topic_hash,
             mode=normalized_mode,
             sampled=False,
         )
 
-
-
-
-
 @router.post("/query", response_model=QueryResponse)
 async def query_topic(
     req: QueryRequest,
     request: Request,
-    auth_data: dict = Depends(verify_token_optional),
+    api_key: ApiKeyRecord = Depends(verify_api_key),
 ) -> QueryResponse:
     request_started = time.perf_counter()
     request_id = str(getattr(request.state, "request_id", "") or "")
@@ -159,31 +127,25 @@ async def query_topic(
     if not bool(config_state.get("chat_enabled", False)):
         raise LLMUnavailable("Chat is disabled because no LLM providers are configured correctly.")
 
-    is_verified_pro = bool(auth_data.get("is_pro")) if auth_data and "is_pro" in auth_data else bool(
-        auth_data and await check_is_pro(auth_data["user"].id)
-    )
-    req.premium = is_verified_pro
-    if mode == TECHNICAL_MODE:
-        if not auth_data:
-            raise HTTPException(status_code=401, detail="Authentication required for technical mode")
-        if not is_verified_pro:
-            raise HTTPException(status_code=403, detail="Technical mode is a Pro feature")
+    is_pro = api_key.is_pro
+    req.premium = is_pro
+    if mode == TECHNICAL_MODE and not is_pro:
+        raise HTTPException(status_code=403, detail="Technical mode requires a Pro or Enterprise plan.")
 
     allowed_levels = FREE_LEVELS
     levels = [level for level in normalize_levels(req.levels) if level in allowed_levels]
     if not levels:
         levels = ["eli15"]
 
-    effective_user_id = auth_data["user"].id if auth_data else None
-    user_id_raw = str(effective_user_id) if effective_user_id else None
-    user_id_hash = anonymize_user_id(user_id_raw)
+    user_id_hash = anonymize_user_id(api_key.id)
     estimated_tokens = estimate_tokens_for_text(topic, output_buffer=900 * max(len(levels), 1))
     await enforce_request_controls(
-        user_id=str(effective_user_id) if effective_user_id else None,
+        user_id=api_key.id,
         client_ip=request.client.host if request.client else "unknown",
+        api_key=api_key,
         estimated_tokens=estimated_tokens,
         mode=mode,
-        is_pro=is_verified_pro,
+        is_pro=is_pro,
     )
 
     explanations: dict[str, str] = {}
@@ -210,8 +172,7 @@ async def query_topic(
         missing_levels = levels
 
     if not missing_levels and not req.bypass_cache:
-        if auth_data:
-            await save_to_history(auth_data["user"], topic, levels, mode)
+        await save_to_history(api_key.id, topic, levels, mode)
         return QueryResponse(topic=topic, explanations=explanations, cached=True)
 
     level_telemetry = {level: {} for level in missing_levels}
@@ -223,7 +184,7 @@ async def query_topic(
             temperature=req.temperature,
             regenerate=req.regenerate,
             request_id=request_id,
-            user_id=user_id_raw,
+            user_id=api_key.id,
             telemetry_sink=level_telemetry[level],
         )
         for level in missing_levels
@@ -254,8 +215,7 @@ async def query_topic(
     if cache_updates:
         await cache_set_many(cache_updates)
 
-    if auth_data:
-        await save_to_history(auth_data["user"], topic, levels, mode)
+    await save_to_history(api_key.id, topic, levels, mode)
 
     token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     estimated_cost_usd = 0.0
@@ -302,7 +262,7 @@ async def query_topic(
 async def query_topic_stream(
     req: QueryRequest,
     request: Request,
-    auth_data: dict = Depends(verify_token_optional),
+    api_key: ApiKeyRecord = Depends(verify_api_key),
 ):
     """Stream the final judged response in chunks."""
     request_received = time.perf_counter()
@@ -320,30 +280,23 @@ async def query_topic_stream(
     if not bool(config_state.get("chat_enabled", False)):
         raise LLMUnavailable("Chat is disabled because no LLM providers are configured correctly.")
 
-    is_verified_pro = bool(auth_data.get("is_pro")) if auth_data and "is_pro" in auth_data else bool(
-        auth_data and await check_is_pro(auth_data["user"].id)
-    )
-    req.premium = is_verified_pro
-    if mode == TECHNICAL_MODE:
-        if not auth_data:
-            raise HTTPException(status_code=401, detail="Authentication required for technical mode")
-        if not is_verified_pro:
-            raise HTTPException(status_code=403, detail="Technical mode is a Pro feature")
+    is_pro = api_key.is_pro
+    req.premium = is_pro
+    if mode == TECHNICAL_MODE and not is_pro:
+        raise HTTPException(status_code=403, detail="Technical mode requires a Pro or Enterprise plan.")
 
     allowed_levels = FREE_LEVELS
     normalized_levels = [level for level in normalize_levels(req.levels) if level in allowed_levels]
     level = normalized_levels[0] if normalized_levels else "eli15"
 
-    effective_user_id = auth_data["user"].id if auth_data else None
-    user_id_raw = str(effective_user_id) if effective_user_id else None
-    user_id_hash = anonymize_user_id(user_id_raw)
+    user_id_hash = anonymize_user_id(api_key.id)
     estimated_tokens = estimate_tokens_for_text(topic)
     await enforce_request_controls(
-        user_id=str(effective_user_id) if effective_user_id else None,
+        user_id=api_key.id,
         client_ip=request.client.host if request.client else "unknown",
         estimated_tokens=estimated_tokens,
         mode=mode,
-        is_pro=is_verified_pro,
+        is_pro=is_pro,
     )
 
     message_id = None
@@ -391,8 +344,8 @@ async def query_topic_stream(
     idempotency_key: str | None = None
     idempotency_started_at: int | None = None
     if message_id:
-        scope = user_id_raw or (request.client.host if request.client else "anonymous")
-        idempotency_key = query_stream_idempotency_key(str(scope), message_id)
+        scope = api_key.id
+        idempotency_key = query_stream_idempotency_key(scope, message_id)
         now_ts = int(time.time())
         idem_check = await check_idempotency_and_cache(
             idempotency_key=idempotency_key,
@@ -451,16 +404,16 @@ async def query_topic_stream(
         level=level,
         mode=mode,
         message_id=message_id,
-        user_id_raw=user_id_raw,
+        user_id_raw=api_key.id,
         user_id_hash=user_id_hash,
         topic_hash=topic_hash,
-        auth_data=auth_data,
+        api_key=api_key,
         cache_get=cache_get,
         cache_set=cache_set,
-            cache_key_value=cache_key(topic, level, mode),
+        cache_key_value=cache_key(topic, level, mode),
         generate_stream_explanation=generate_stream_explanation,
         generate_explanation=generate_explanation,
-        persist_history=save_to_history,
+        persist_history=lambda _user, t, l, m: save_to_history(api_key.id, t, l, m),
         stream_max_seconds=stream_max_seconds,
         stream_start_timeout_seconds=stream_start_timeout_seconds,
         heartbeat_seconds=heartbeat_seconds,

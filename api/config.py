@@ -178,8 +178,6 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_publishable_key: str = ""
     supabase_secret_key: SecretStr = SecretStr("")
-    supabase_jwt_secret: SecretStr = SecretStr("")
-    supabase_auth_webhook_secret: SecretStr = SecretStr("")    
     tavily_api_key: str = ""
     serper_api_key: str = ""
     exa_api_key: str = ""
