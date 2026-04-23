@@ -35,8 +35,12 @@ class EmbeddingService:
             return []
             
         try:
-            # Strip and clean texts to prevent API errors on empty/whitespace-only chunks
             cleaned_texts = [t.replace("\n", " ").strip() for t in texts]
+            
+            # Validate that no cleaned texts are empty, as OpenAI rejects empty inputs
+            empty_indices = [i for i, t in enumerate(cleaned_texts) if not t]
+            if empty_indices:
+                raise ValueError(f"Embedding input contains empty or whitespace-only strings at indices: {empty_indices}")
             
             response = await self.client.embeddings.create(
                 input=cleaned_texts,

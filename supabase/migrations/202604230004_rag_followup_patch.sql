@@ -35,7 +35,7 @@ BEGIN
     SELECT
       kc.id,
       (1 - (kc.embedding <=> query_embedding))::FLOAT AS similarity,
-      ROW_NUMBER() OVER (ORDER BY kc.embedding <=> query_embedding) AS rank
+      ROW_NUMBER() OVER (ORDER BY kc.embedding <=> query_embedding, kc.id) AS rank
     FROM knowledge_chunks kc
     JOIN knowledge_documents kd ON kc.document_id = kd.id
     JOIN knowledge_collections coll ON kd.collection_id = coll.id
@@ -45,6 +45,7 @@ BEGIN
       AND kc.deleted_at IS NULL
       AND kd.deleted_at IS NULL
       AND coll.deleted_at IS NULL
+    ORDER BY kc.embedding <=> query_embedding, kc.id
     LIMIT candidate_pool_size
   ),
   fts_ranks AS (
@@ -54,7 +55,7 @@ BEGIN
         ORDER BY ts_rank_cd(
           kc.fts_tokens,
           websearch_to_tsquery(kd.language_config::regconfig, query_text)
-        ) DESC
+        ) DESC, kc.id
       ) AS rank
     FROM knowledge_chunks kc
     JOIN knowledge_documents kd ON kc.document_id = kd.id
@@ -64,6 +65,7 @@ BEGIN
       AND kc.deleted_at IS NULL
       AND kd.deleted_at IS NULL
       AND coll.deleted_at IS NULL
+    ORDER BY ts_rank_cd(kc.fts_tokens, websearch_to_tsquery(kd.language_config::regconfig, query_text)) DESC, kc.id
     LIMIT candidate_pool_size
   )
   SELECT

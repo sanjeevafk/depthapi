@@ -21,6 +21,7 @@ class SupabaseHTTPClient:
         self.url = url.rstrip("/")
         self.rest_url = f"{self.url}/rest/v1"
         self.key = key
+        self.is_admin = is_admin
         self.headers = {
             "apikey": key,
             "Authorization": f"Bearer {key}",
@@ -84,11 +85,16 @@ class SupabaseHTTPTable:
 
     async def execute(self) -> SupabaseHTTPResponse:
         url = f"{self.client.rest_url}/{self.name}"
-        merged_params: Dict[str, Any] = dict(self.params)
-        for key, value in self.filters:
-            merged_params[key] = value
-        query_params = urlencode(merged_params, doseq=True)
+        merged_params_list = []
+        for k, v in self.params.items():
+            if isinstance(v, (list, tuple)):
+                for item in v:
+                    merged_params_list.append((k, item))
+            else:
+                merged_params_list.append((k, v))
+        merged_params_list.extend(self.filters)
         
+        query_params = urlencode(merged_params_list, doseq=True)
         full_url = f"{url}?{query_params}" if query_params else url
         
         async with httpx.AsyncClient(timeout=self.client.timeout) as http:
@@ -127,8 +133,10 @@ class SupabaseHTTPTableUpdate:
         return self
 
     async def execute(self) -> SupabaseHTTPResponse:
+        if not self.table.filters and not self.table.client.is_admin:
+            raise ValueError("Update requires at least one filter to prevent accidental bulk updates")
         url = f"{self.table.client.rest_url}/{self.table.name}"
-        query_params = urlencode({k: v for k, v in self.table.filters})
+        query_params = urlencode(self.table.filters, doseq=True)
         full_url = f"{url}?{query_params}"
         
         async with httpx.AsyncClient(timeout=self.table.client.timeout) as http:
@@ -180,8 +188,10 @@ class SupabaseHTTPTableDelete:
         return self
 
     async def execute(self) -> SupabaseHTTPResponse:
+        if not self.table.filters and not self.table.client.is_admin:
+            raise ValueError("Delete requires at least one filter to prevent accidental bulk deletes")
         url = f"{self.table.client.rest_url}/{self.table.name}"
-        query_params = urlencode({k: v for k, v in self.table.filters})
+        query_params = urlencode(self.table.filters)
         full_url = f"{url}?{query_params}" if query_params else url
         async with httpx.AsyncClient(timeout=self.table.client.timeout) as http:
             response = await http.delete(full_url, headers=self.table.client.headers)
