@@ -39,8 +39,8 @@ class QuotaManager:
     def quota_keys(self, identifier: str, mode: str) -> tuple[str, str]:
         mode_label = (mode or "default").strip().lower()
         return (
-            f"knowbear:quota:{identifier}:{mode_label}",
-            f"knowbear:quota_hour:{identifier}:{mode_label}",
+            f"depthapi:quota:{identifier}:{mode_label}",
+            f"depthapi:quota_hour:{identifier}:{mode_label}",
         )
 
     async def check_daily_quota(

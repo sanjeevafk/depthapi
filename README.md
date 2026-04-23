@@ -2,7 +2,7 @@
 
 DepthAPI is a high-performance B2B AI orchestration engine designed to deliver explanations at the precise depth required for any professional context—from simplified executive summaries to deep technical audits.
 
-Originally built as KnowBear, DepthAPI has evolved into a fully headless service layer optimized for multi-tenant integration and programmatic scaling.
+Originally built as KnowBear, an AI-powered layered learning engine web-app, DepthAPI has evolved into a fully headless service layer optimized for multi-tenant integration and programmatic scaling.
 
 ## Core Capabilities
 

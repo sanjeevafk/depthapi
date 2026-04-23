@@ -25,9 +25,9 @@ async def test_wildcard_origin_is_sanitized_with_warning(monkeypatch):
 
     monkeypatch.setattr(api_main.logger, "warning", fake_warning)
 
-    origins = api_main.resolve_allowed_origins("*, https://knowbear.vercel.app")
+    origins = api_main.resolve_allowed_origins("*, https://depthapi.vercel.app")
 
-    assert origins == ["https://knowbear.vercel.app"]
+    assert origins == ["https://depthapi.vercel.app"]
     assert warnings
     assert warnings[0][0] == "cors_wildcard_origin_sanitized"
 

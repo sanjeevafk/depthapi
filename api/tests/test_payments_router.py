@@ -12,7 +12,7 @@ import api.services.cache as cache_module
 from api.logging_config import anonymize_user_id
 
 
-def _test_whsec_secret(label: str = "knowbear-test-webhook-secret") -> str:
+def _test_whsec_secret(label: str = "depthapi-test-webhook-secret") -> str:
     return "whsec_" + base64.b64encode(label.encode()).decode("ascii")
 
 

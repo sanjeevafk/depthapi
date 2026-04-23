@@ -12,7 +12,7 @@ async def test_gatekeeper_replay_from_completed(dummy_redis, monkeypatch):
         return dummy_redis
 
     monkeypatch.setattr(gate_module, "get_redis", fake_get_redis)
-    idempotency_key = "knowbear:idempotency:test"
+    idempotency_key = "depthapi:idempotency:test"
     await dummy_redis.hset(idempotency_key, "status", "COMPLETED")
     await dummy_redis.hset(idempotency_key, "response", "cached-response")
 
@@ -42,7 +42,7 @@ async def test_append_and_snapshot_roundtrip(dummy_redis, monkeypatch):
 
     monkeypatch.setattr(gate_module, "get_redis", fake_get_redis)
     conversation_id = "conv-snapshot"
-    meta_key = f"knowbear:conversation:{conversation_id}:meta"
+    meta_key = f"depthapi:conversation:{conversation_id}:meta"
     meta = {"conversation_id": conversation_id, "user_id": "user-1"}
     await dummy_redis.setex(meta_key, 3600, orjson.dumps(meta).decode("utf-8"))
 
@@ -76,7 +76,7 @@ async def test_cache_get_set_roundtrip(dummy_redis, monkeypatch):
         return dummy_redis
 
     monkeypatch.setattr(gate_module, "get_redis", fake_get_redis)
-    key = "knowbear:cache:test"
+    key = "depthapi:cache:test"
     assert await gate_module.cache_set_value(key, "value", 60)
     cached = await gate_module.cache_get_value(key)
     assert cached == "value"

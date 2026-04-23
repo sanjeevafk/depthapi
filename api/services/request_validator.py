@@ -64,7 +64,7 @@ class RequestValidator:
 
     def generate_dedup_key(self, message_id: str) -> str:
         digest = hashlib.sha256(str(message_id).encode("utf-8")).hexdigest()
-        return f"knowbear:messages:ingress_dedup:{digest}"
+        return f"depthapi:messages:ingress_dedup:{digest}"
 
     async def check_deduplication(self, message_id: str, ttl_seconds: float | None = None) -> bool:
         ttl = max(int(ttl_seconds or self._dedup_ttl_seconds), 1)

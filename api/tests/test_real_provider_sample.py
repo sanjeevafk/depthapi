@@ -24,7 +24,7 @@ async def test_real_provider_client_sampled_smoke():
         messages=[
             {
                 "role": "user",
-                "content": "Reply with exactly: KNOWBEAR_PROVIDER_OK",
+                "content": "Reply with exactly: DEPTHAPI_PROVIDER_OK",
             }
         ],
         max_tokens=300,
@@ -33,6 +33,6 @@ async def test_real_provider_client_sampled_smoke():
 
     text = str(getattr(response.choices[0].message, "content", "") or "").strip().upper()
     try:
-        assert "KNOWBEAR_PROVIDER_OK" in text
+        assert "DEPTHAPI_PROVIDER_OK" in text
     finally:
         await close_llm_client()

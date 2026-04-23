@@ -66,7 +66,7 @@ class ProviderStateManager:
         self._memory_state: dict[str, dict[str, int | str]] = {}
 
     def _redis_key(self, provider: ProviderName) -> str:
-        return f"knowbear:provider_state:{provider}"
+        return f"depthapi:provider_state:{provider}"
 
     async def _read_state_unlocked(self, provider: ProviderName) -> dict[str, int | str]:
         state = dict(
@@ -295,11 +295,11 @@ def _day_bucket() -> str:
 
 
 def _provider_requests_key(provider: ProviderName) -> str:
-    return f"knowbear:provider_usage:{provider}:requests:{_day_bucket()}"
+    return f"depthapi:provider_usage:{provider}:requests:{_day_bucket()}"
 
 
 def _provider_tokens_key(provider: ProviderName) -> str:
-    return f"knowbear:provider_usage:{provider}:tokens:{_day_bucket()}"
+    return f"depthapi:provider_usage:{provider}:tokens:{_day_bucket()}"
 
 
 async def _increment_provider_usage(provider: ProviderName, usage: dict[str, int] | None) -> None:

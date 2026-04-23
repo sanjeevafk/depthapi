@@ -199,7 +199,7 @@ async def check_rate_limit(
 ) -> RateLimitResult:
     """Apply a fixed-window distributed rate limit using INCR + EXPIRE."""
     mode_label = (mode or "default").strip().lower()
-    key = f"knowbear:ratelimit:{namespace}:{identifier}:{mode_label}"
+    key = f"depthapi:ratelimit:{namespace}:{identifier}:{mode_label}"
 
     try:
         redis = await safe_redis_call(get_redis, operation="connect")

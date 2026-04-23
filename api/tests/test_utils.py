@@ -24,7 +24,7 @@ def test_sanitize_topic_missing():
 
 def test_topic_cache_key_format():
     key = topic_cache_key("Hello World!", "eli5")
-    assert key == "knowbear:hello_world:eli5"
+    assert key == "depthapi:hello_world:eli5"
 
 
 @pytest.mark.asyncio

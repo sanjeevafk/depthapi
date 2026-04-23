@@ -13,8 +13,8 @@ class ProviderAuthenticator:
 
     def openrouter_headers(self) -> dict[str, str]:
         return {
-            "HTTP-Referer": "https://knowbear.vercel.app",
-            "X-Title": "KnowBear",
+            "HTTP-Referer": "https://depthapi.vercel.app",
+            "X-Title": "DepthAPI",
         }
 
     def get_api_key(self, provider: ProviderName) -> str:

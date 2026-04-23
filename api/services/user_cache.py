@@ -20,7 +20,7 @@ async def refresh_is_pro_cache(user_id: str, *, ttl_seconds: int = 900) -> None:
         if redis is not None:
             await safe_redis_call(
                 redis.setex,
-                f"knowbear:user:is_pro:{user_id}",
+                f"depthapi:user:is_pro:{user_id}",
                 ttl_seconds,
                 "1" if is_pro else "0",
                 operation="setex",

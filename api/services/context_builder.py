@@ -52,7 +52,7 @@ class ContextBuilder:
             if redis is not None:
                 await safe_redis_call(
                     redis.delete,
-                    f"knowbear:conversation:{conversation_id}:meta",
+                    f"depthapi:conversation:{conversation_id}:meta",
                     operation="delete",
                 )
         except Exception as exc:
@@ -86,7 +86,7 @@ class ContextBuilder:
                 if redis is not None:
                     await safe_redis_call(
                         redis.delete,
-                        f"knowbear:conversation:{conversation_id}:messages",
+                        f"depthapi:conversation:{conversation_id}:messages",
                         operation="delete",
                     )
             except Exception as exc:

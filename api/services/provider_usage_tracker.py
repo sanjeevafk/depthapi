@@ -21,10 +21,10 @@ class ProviderUsageTracker:
         return time.strftime("%Y%m%d", time.gmtime())
 
     def _provider_requests_key(self, provider: ProviderName) -> str:
-        return f"knowbear:provider_usage:{provider}:requests:{self._day_bucket()}"
+        return f"depthapi:provider_usage:{provider}:requests:{self._day_bucket()}"
 
     def _provider_tokens_key(self, provider: ProviderName) -> str:
-        return f"knowbear:provider_usage:{provider}:tokens:{self._day_bucket()}"
+        return f"depthapi:provider_usage:{provider}:tokens:{self._day_bucket()}"
 
     async def record_usage(self, provider: ProviderName, usage: dict[str, int] | None) -> None:
         try:
