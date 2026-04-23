@@ -21,9 +21,9 @@ from dataclasses import dataclass
 from fastapi import HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from logging_config import logger
-from services.cache import get_redis
-from services.redis_safe import safe_redis_call
+from api.logging_config import logger
+from api.services.cache import get_redis
+from api.services.redis_safe import safe_redis_call
 
 import json
 
@@ -141,8 +141,7 @@ async def _cache_invalidate(key_hash: str) -> None:
 
 async def _lookup_in_db(key_hash: str) -> ApiKeyRecord | None:
     """Look up the hashed key in Supabase. Returns None on miss or error."""
-    from auth import get_supabase_admin  # local import to avoid circular deps
-    import asyncio
+    from api.auth import get_supabase_admin  # local import to avoid circular deps
 
     supabase = get_supabase_admin()
     if not supabase:
@@ -150,23 +149,22 @@ async def _lookup_in_db(key_hash: str) -> ApiKeyRecord | None:
         return None
 
     try:
-        response = await asyncio.to_thread(
-            lambda: supabase.table("api_keys")
+        response = await supabase.table("api_keys") \
             .select(
                 "id, prefix, project_name, owner_email, plan, "
                 "monthly_token_budget, requests_per_minute, is_active, revoked_at"
-            )
-            .eq("key_hash", key_hash)
-            .eq("is_active", True)
-            .is_("revoked_at", "null")
-            .single()
+            ) \
+            .eq("key_hash", key_hash) \
+            .eq("is_active", "true") \
+            .single() \
             .execute()
-        )
     except Exception as exc:
         logger.error("api_key_db_lookup_failed", error=str(exc), error_type=type(exc).__name__)
         return None
 
     data = getattr(response, "data", None)
+    if isinstance(data, list):
+        data = data[0] if data else None
     if not isinstance(data, dict) or not data.get("id"):
         return None
 
