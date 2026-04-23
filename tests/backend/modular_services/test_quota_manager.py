@@ -55,14 +55,14 @@ async def test_quota_manager_daily_quota_reject_preserves_total() -> None:
         return redis
 
     rejected = await manager.check_daily_quota(
-        key="knowbear:quota:user-1:learn",
+        key="depthapi:quota:user-1:learn",
         limit=10,
         requested=15,
         window_seconds=100,
         get_redis_fn=_get_redis,
     )
     allowed = await manager.check_daily_quota(
-        key="knowbear:quota:user-1:learn",
+        key="depthapi:quota:user-1:learn",
         limit=10,
         requested=5,
         window_seconds=100,
@@ -84,21 +84,21 @@ async def test_quota_manager_hourly_quota_accumulates_buckets() -> None:
         return redis
 
     first = await manager.check_hourly_quota(
-        key="knowbear:quota_hour:user-1:learn",
+        key="depthapi:quota_hour:user-1:learn",
         limit=20,
         requested=6,
         now_minute=100,
         get_redis_fn=_get_redis,
     )
     second = await manager.check_hourly_quota(
-        key="knowbear:quota_hour:user-1:learn",
+        key="depthapi:quota_hour:user-1:learn",
         limit=20,
         requested=7,
         now_minute=101,
         get_redis_fn=_get_redis,
     )
     third = await manager.check_hourly_quota(
-        key="knowbear:quota_hour:user-1:learn",
+        key="depthapi:quota_hour:user-1:learn",
         limit=20,
         requested=9,
         now_minute=101,
