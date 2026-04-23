@@ -6,7 +6,7 @@ from collections.abc import Callable
 from functools import wraps
 from typing import TypeVar, ParamSpec
 
-from logging_config import logger
+from api.logging_config import logger
 
 P = ParamSpec("P")
 R = TypeVar("R")
