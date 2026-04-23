@@ -7,7 +7,7 @@ import pytest
 
 import auth as auth_module
 import routers.query as query_module
-import services.rate_limit as rate_limit_module
+import api.services.rate_limit as rate_limit_module
 
 
 @pytest.mark.asyncio

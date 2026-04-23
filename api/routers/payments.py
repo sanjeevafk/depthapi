@@ -14,11 +14,11 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request,
 from pydantic import BaseModel
 from standardwebhooks import Webhook, WebhookVerificationError
 
-from services.api_key_auth import ApiKeyRecord, verify_api_key, PLAN_MONTHLY_BUDGETS
+from api.services.api_key_auth import ApiKeyRecord, verify_api_key, PLAN_MONTHLY_BUDGETS
 from api.auth import get_supabase_admin
 from api.config import get_settings
-from services.rate_limit import check_rate_limit
-from services.redis_safe import safe_redis_command
+from api.services.rate_limit import check_rate_limit
+from api.services.redis_safe import safe_redis_command
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["payments"])

@@ -5,7 +5,7 @@ from typing import Any, AsyncGenerator, AsyncIterable, Iterable
 
 from api.logging_config import logger
 from api.repositories.chat_repository import ChatRepository
-from services.streaming import SseEventBuilder
+from api.services.streaming import SseEventBuilder
 
 SsePayload = dict[str, Any] | str
 SseEvent = tuple[str, SsePayload]

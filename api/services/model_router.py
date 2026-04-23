@@ -8,7 +8,7 @@ Responsibilities:
 
 from __future__ import annotations
 
-from services.inference_routing import (
+from api.services.inference_routing import (
     _effective_alias_chain,
     extract_features,
     route_model_aliases,

@@ -2,8 +2,8 @@ import time
 
 from api.auth import get_supabase_admin
 from api.logging_config import anonymize_user_id, logger
-from services.cache import get_redis
-from services.redis_safe import safe_redis_call
+from api.services.cache import get_redis
+from api.services.redis_safe import safe_redis_call
 
 
 async def refresh_is_pro_cache(user_id: str, *, ttl_seconds: int = 900) -> None:

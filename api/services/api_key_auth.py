@@ -155,7 +155,7 @@ async def _lookup_in_db(key_hash: str) -> ApiKeyRecord | None:
                 "monthly_token_budget, requests_per_minute, is_active, revoked_at"
             ) \
             .eq("key_hash", key_hash) \
-            .eq("is_active", "true") \
+            .eq("is_active", True) \
             .single() \
             .execute()
     except Exception as exc:

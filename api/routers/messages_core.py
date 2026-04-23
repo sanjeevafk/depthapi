@@ -14,47 +14,47 @@ from pydantic import BaseModel, Field, ValidationError
 import orjson
 
 from api.auth import get_supabase_admin
-from services.api_key_auth import ApiKeyRecord, verify_api_key
+from api.services.api_key_auth import ApiKeyRecord, verify_api_key
 from api.config import CONTEXT_LOAD_TIMEOUTS, get_settings
 from api.logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from monitoring import capture_telemetry_event
-from services.analytics import build_llm_request_payload, record_llm_request
-import services.cache as cache_module
-from services.cache import cache_get, cache_set, cache_set_if_absent
-from services.conversation_cache import warm_conversation_snapshot
-from services.inference import (
+from api.services.analytics import build_llm_request_payload, record_llm_request
+import api.services.cache as cache_module
+from api.services.cache import cache_get, cache_set, cache_set_if_absent
+from api.services.conversation_cache import warm_conversation_snapshot
+from api.services.inference import (
     TECHNICAL_MAX_TOKENS,
     SYSTEM_PROMPT,
     MODE_SYSTEM_PROMPTS,
     generate_explanation,
     generate_stream_explanation,
 )
-from services.conversation_context import (
+from api.services.conversation_context import (
     ConversationMessage,
 )
-from services.conversation_intent import (
+from api.services.conversation_intent import (
     ConversationIntent,
     classify_conversation_intent,
     build_intent_system_prompt,
 )
-from services.context_builder import ContextBuilder
-from services.llm_client import get_provider_config_state
-from services.llm_errors import LLMUnavailable
-from services.message_gate import (
+from api.services.context_builder import ContextBuilder
+from api.services.llm_client import get_provider_config_state
+from api.services.llm_errors import LLMUnavailable
+from api.services.message_gate import (
     append_conversation_message,
     cache_get_value,
     cache_set_value,
     fetch_conversation_snapshot,
     gatekeep_message_request,
 )
-from services.message_dispatcher import MessageDispatcher
-from services.message_utils import normalize_mode, safe_number
-from services.message_workflow import MessageWorkflow
-from services.request_validator import RequestValidator
-from services.redis_safe import safe_redis_call
-from services.rate_limit import _resolve_limits, enforce_request_controls
-from services.streaming import SseEventBuilder, SSE_RESPONSE_HEADERS
-from services.token_count import count_prompt_tokens
+from api.services.message_dispatcher import MessageDispatcher
+from api.services.message_utils import normalize_mode, safe_number
+from api.services.message_workflow import MessageWorkflow
+from api.services.request_validator import RequestValidator
+from api.services.redis_safe import safe_redis_call
+from api.services.rate_limit import _resolve_limits, enforce_request_controls
+from api.services.streaming import SseEventBuilder, SSE_RESPONSE_HEADERS
+from api.services.token_count import count_prompt_tokens
 from api.utils import (
     PROMPT_MODE_ALIASES,
     SUPPORTED_PROMPT_MODES,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from services.provider_registry import ProviderName, ProviderRegistry
+from api.services.provider_registry import ProviderName, ProviderRegistry
 
 
 class ProviderAuthenticator:

@@ -12,8 +12,8 @@ from api.constants import (
     UPSTASH_HTTP_TIMEOUT_SECONDS,
 )
 from api.logging_config import logger
-from services.message_utils import safe_json_parse
-from services.redis_safe import safe_redis_call
+from api.services.message_utils import safe_json_parse
+from api.services.redis_safe import safe_redis_call
 from api.utils import with_timeout
 
 UNIFIED_IDEMPOTENCY_CACHE_LUA = """

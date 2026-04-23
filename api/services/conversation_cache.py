@@ -7,8 +7,8 @@ import orjson
 from api.auth import get_supabase_admin
 from api.config import get_settings
 from api.logging_config import logger
-from services.cache import get_redis
-from services.redis_safe import safe_redis_call
+from api.services.cache import get_redis
+from api.services.redis_safe import safe_redis_call
 
 
 def _meta_key(conversation_id: str) -> str:

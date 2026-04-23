@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from api.prompts import build_prompt
-from services.inference_prompting import (
+from api.services.inference_prompting import (
     _apply_length_constraint,
     _drain_complete_sentences,
     _enforce_length_constraint,

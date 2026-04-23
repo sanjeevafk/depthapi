@@ -9,7 +9,7 @@ from typing import TypeVar
 from fastapi import Request
 from fastapi.responses import StreamingResponse
 
-from services.api_key_auth import ApiKeyRecord
+from api.services.api_key_auth import ApiKeyRecord
 
 T = TypeVar("T")
 

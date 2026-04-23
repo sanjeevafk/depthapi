@@ -14,9 +14,9 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-import services.cache as cache_module
-from services.redis_safe import safe_redis_call
-from services.message_utils import normalize_mode
+import api.services.cache as cache_module
+from api.services.redis_safe import safe_redis_call
+from api.services.message_utils import normalize_mode
 
 
 @dataclass(frozen=True)

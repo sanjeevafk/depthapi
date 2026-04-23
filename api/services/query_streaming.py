@@ -12,18 +12,18 @@ import asyncio
 import time
 from typing import Any
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
-from services.api_key_auth import ApiKeyRecord
+from api.services.api_key_auth import ApiKeyRecord
 
 from fastapi.responses import StreamingResponse
 
 from api.logging_config import logger, log_sampled_success
-from services.streaming import SseEventBuilder, SSE_RESPONSE_HEADERS
-from services.streaming_orchestrator import (
+from api.services.streaming import SseEventBuilder, SSE_RESPONSE_HEADERS
+from api.services.streaming_orchestrator import (
     close_stream,
     compute_fallback_timeout,
     update_idempotency_progress,
 )
-from services.utils_shared import error_text as _error_text
+from api.services.utils_shared import error_text as _error_text
 
 
 def build_query_stream_replay_response(

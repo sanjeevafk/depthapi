@@ -1,6 +1,6 @@
 import pytest
 
-import services.rate_limit as rate_limit_module
+import api.services.rate_limit as rate_limit_module
 
 
 class FakeRedis:

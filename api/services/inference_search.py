@@ -6,8 +6,8 @@ import hashlib
 import asyncio
 import time
 
-from services.search import search_service
-from services.inference_constants import SEARCH_CONTEXT_MAX_CHARS, SEARCH_CONTEXT_TIMEOUT_SECONDS
+from api.services.search import search_service
+from api.services.inference_constants import SEARCH_CONTEXT_MAX_CHARS, SEARCH_CONTEXT_TIMEOUT_SECONDS
 from api.logging_config import logger
 
 

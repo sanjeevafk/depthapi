@@ -12,14 +12,14 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from services.circuit_breaker import CircuitBreaker, CircuitBreakerResult
+from api.services.circuit_breaker import CircuitBreaker, CircuitBreakerResult
 from api.config import get_settings
 from api.logging_config import anonymize_user_id, logger
-from services.cache import get_redis
-from services.api_key_auth import ApiKeyRecord, PLAN_MONTHLY_BUDGETS, PLAN_RPM
-from services.quota_manager import QuotaManager, QuotaResult, TokenReservation
-from services.redis_safe import safe_redis_call
-from services.token_count import count_prompt_tokens
+from api.services.cache import get_redis
+from api.services.api_key_auth import ApiKeyRecord, PLAN_MONTHLY_BUDGETS, PLAN_RPM
+from api.services.quota_manager import QuotaManager, QuotaResult, TokenReservation
+from api.services.redis_safe import safe_redis_call
+from api.services.token_count import count_prompt_tokens
 
 UNIFIED_CONTROLS_SCRIPT = """
 -- unified_controls

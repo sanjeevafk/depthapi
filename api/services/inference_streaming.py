@@ -11,13 +11,13 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from api.config import get_settings
 from api.logging_config import anonymize_user_id, log_sampled_success
-from services.inference_constants import (
+from api.services.inference_constants import (
     TECHNICAL_MAX_TOKENS,
     TECHNICAL_MINIMAL_PROMPT,
     TECHNICAL_TEMPERATURE,
 )
-from services.inference_routing import _learning_model_for_level
-from services.inference_search import _append_search_context
+from api.services.inference_routing import _learning_model_for_level
+from api.services.inference_search import _append_search_context
 
 _tech_logger = structlog.get_logger(__name__)
 

@@ -14,54 +14,54 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 from api.config import get_settings
 from api.logging_config import anonymize_user_id, logger, log_sampled_success
 from api.prompts import SYSTEM_PROMPT, build_prompt
-from services.inference_constants import (
+from api.services.inference_constants import (
     TECHNICAL_MAX_TOKENS,
     TECHNICAL_MINIMAL_PROMPT,
     TECHNICAL_TEMPERATURE,
 )
-from services.inference_classifier import IntentClassifier
-from services.inference_message_builder import (
+from api.services.inference_classifier import IntentClassifier
+from api.services.inference_message_builder import (
     COMPARISON_SYSTEM_PROMPT,
     MODE_SYSTEM_PROMPTS,
     build_messages,
     is_comparison_query,
     trim_history_for_cost,
 )
-from services.inference_routing import (
+from api.services.inference_routing import (
     _effective_alias_chain,
     _technical_route,
     extract_features,
     route_model_aliases,
 )
-from services.inference_search import _append_search_context, _load_search_context, _truncate_search_context
-from services.inference_socratic import (
+from api.services.inference_search import _append_search_context, _load_search_context, _truncate_search_context
+from api.services.inference_socratic import (
     _enforce_socratic_response_constraints,
     _normalize_question_signature,
     _wants_direct_answer,
 )
-from services.inference_prompting import (
+from api.services.inference_prompting import (
     _append_cue_if_fits,
     _compress_sentence,
     _normalize_whitespace,
     _word_count,
 )
-from services.inference_streaming import generate_stream_explanation as generate_stream_explanation_impl
-from services.inference_technical import (
+from api.services.inference_streaming import generate_stream_explanation as generate_stream_explanation_impl
+from api.services.inference_technical import (
     build_technical_prompt as build_technical_prompt_impl,
     call_with_quality_escalation,
     is_low_quality as is_low_quality_impl,
     technical_mode_handler as technical_mode_handler_impl,
 )
-from services.intent import (
+from api.services.intent import (
     detect_diagram_type as detect_diagram_type_base,
     detect_intent_and_depth as detect_intent_and_depth_base,
     validate_technical_response,
 )
-from services.llm_client import close_llm_client, create_chat_completion, stream_chat_completion
-from services.model_router import ModelRouter
-from services.prompt_orchestrator import PromptOrchestrator
-from services.response_builder import ResponseBuilder
-from services.utils_shared import (
+from api.services.llm_client import close_llm_client, create_chat_completion, stream_chat_completion
+from api.services.model_router import ModelRouter
+from api.services.prompt_orchestrator import PromptOrchestrator
+from api.services.response_builder import ResponseBuilder
+from api.services.utils_shared import (
     extract_estimated_cost as extract_shared_estimated_cost,
     extract_usage_dict as extract_shared_usage_dict,
 )

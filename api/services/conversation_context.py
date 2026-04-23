@@ -4,8 +4,8 @@ import hashlib
 import re
 from typing import Iterable, TypedDict
 
-from services.token_count import count_prompt_tokens
-from services.conversation_intent import is_low_signal_turn
+from api.services.token_count import count_prompt_tokens
+from api.services.conversation_intent import is_low_signal_turn
 
 
 class ConversationMessage(TypedDict):

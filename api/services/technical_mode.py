@@ -8,7 +8,7 @@ from typing import Callable, Any, AsyncGenerator
 
 from api.logging_config import log_sampled_success
 from api.prompts import SYSTEM_PROMPT, DiagramType, build_prompt
-from services.intent import (
+from api.services.intent import (
     detect_intent_and_depth,
     detect_diagram_type,
     validate_technical_response,

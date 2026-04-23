@@ -7,7 +7,7 @@ from typing import Tuple
 
 from api.config import get_settings
 from api.logging_config import logger
-from services.token_count import count_prompt_tokens
+from api.services.token_count import count_prompt_tokens
 from api.utils import requests_depth
 
 

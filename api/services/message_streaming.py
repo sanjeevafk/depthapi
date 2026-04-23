@@ -18,14 +18,14 @@ from fastapi.responses import StreamingResponse
 
 from api.logging_config import logger, log_sampled_success
 from monitoring import capture_telemetry_event
-from services.response_orchestrator import ResponseOrchestrator
-from services.streaming import SSE_RESPONSE_HEADERS
-from services.streaming_orchestrator import (
+from api.services.response_orchestrator import ResponseOrchestrator
+from api.services.streaming import SSE_RESPONSE_HEADERS
+from api.services.streaming_orchestrator import (
     close_stream,
     compute_fallback_timeout,
     update_idempotency_progress,
 )
-from services.utils_shared import error_text as _error_text
+from api.services.utils_shared import error_text as _error_text
 from api.utils import TECHNICAL_MODE, SOCRATIC_MODE
 
 _response_orchestrator = ResponseOrchestrator()

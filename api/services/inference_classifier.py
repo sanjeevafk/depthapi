@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from services.intent import detect_diagram_type, detect_intent_and_depth
+from api.services.intent import detect_diagram_type, detect_intent_and_depth
 
 
 class IntentClassifier:

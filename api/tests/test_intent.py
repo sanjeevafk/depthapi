@@ -1,5 +1,5 @@
 import pytest
-from services.intent import (
+from api.services.intent import (
     detect_intent_and_depth,
     detect_diagram_type,
     validate_technical_response,

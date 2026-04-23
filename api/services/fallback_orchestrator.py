@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from openai import APIConnectionError, APIStatusError, AuthenticationError, PermissionDeniedError
 
-from services.provider_registry import ProviderRegistry, ProviderTarget
+from api.services.provider_registry import ProviderRegistry, ProviderTarget
 
 RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
 

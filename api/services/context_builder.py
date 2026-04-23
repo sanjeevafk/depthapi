@@ -15,15 +15,15 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from api.logging_config import anonymize_user_id, logger
-from services.cache import get_redis
-from services.conversation_context import (
+from api.services.cache import get_redis
+from api.services.conversation_context import (
     ConversationMessage,
     build_context_messages,
     build_socratic_context,
     extract_last_turns,
 )
-from services.message_utils import safe_json_parse
-from services.redis_safe import safe_redis_call
+from api.services.message_utils import safe_json_parse
+from api.services.redis_safe import safe_redis_call
 
 
 FetchSnapshotFn = Callable[..., Awaitable[tuple[str | None, list[str]]]]
