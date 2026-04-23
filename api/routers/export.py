@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from services.api_key_auth import ApiKeyRecord, verify_api_key
-from utils import DEFAULT_CHAT_MODE, FREE_LEVELS, SUPPORTED_CHAT_MODES, normalize_mode, sanitize_filename
+from api.utils import DEFAULT_CHAT_MODE, FREE_LEVELS, SUPPORTED_CHAT_MODES, normalize_mode, sanitize_filename
 from services.inference import generate_explanation
 
 logger = structlog.get_logger(__name__)

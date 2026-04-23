@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from config import get_settings
+from api.config import get_settings
 from services.llm_client import close_llm_client, create_chat_completion
 
 

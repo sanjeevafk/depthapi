@@ -6,8 +6,8 @@ from typing import Any, Awaitable, Callable
 
 import structlog
 
-from prompts import DiagramType, build_prompt
-from logging_config import logger
+from api.prompts import DiagramType, build_prompt
+from api.logging_config import logger
 from services.inference_constants import (
     TECHNICAL_LAST_RESORT_RESPONSE,
     TECHNICAL_MAX_TOKENS,
@@ -18,7 +18,7 @@ from services.inference_constants import (
 )
 from services.inference_routing import extract_features
 from services.inference_search import _append_search_context, _truncate_search_context
-from utils import TECHNICAL_MODE
+from api.utils import TECHNICAL_MODE
 
 _tech_logger = structlog.get_logger(__name__)
 

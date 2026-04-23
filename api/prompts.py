@@ -30,7 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
-from utils import requests_depth
+from api.utils import requests_depth
 
 
 # ===========================================================================

@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-from constants import RATE_LIMIT_HOURLY_WINDOW_MINUTES, RATE_LIMIT_HOURLY_WINDOW_SECONDS
+from api.constants import RATE_LIMIT_HOURLY_WINDOW_MINUTES, RATE_LIMIT_HOURLY_WINDOW_SECONDS
 from services.redis_safe import safe_redis_call
 
 

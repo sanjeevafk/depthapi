@@ -5,10 +5,10 @@ from __future__ import annotations
 import re
 from typing import Tuple
 
-from config import get_settings
-from logging_config import logger
+from api.config import get_settings
+from api.logging_config import logger
 from services.token_count import count_prompt_tokens
-from utils import requests_depth
+from api.utils import requests_depth
 
 
 def _normalize_whitespace(text: str) -> str:

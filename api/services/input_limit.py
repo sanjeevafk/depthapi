@@ -2,9 +2,9 @@
 
 from typing import Any
 
-from config import get_settings
+from api.config import get_settings
 from services.token_count import count_prompt_tokens
-from utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE
+from api.utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE
 
 
 def get_max_input_tokens_for_alias(alias: str, mode: str) -> int:

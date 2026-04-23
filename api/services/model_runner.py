@@ -8,7 +8,7 @@ from typing import Any, AsyncGenerator
 
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-from logging_config import logger, anonymize_user_id, log_sampled_success
+from api.logging_config import logger, anonymize_user_id, log_sampled_success
 from services.llm_client import create_chat_completion
 from services.utils_shared import (
     extract_estimated_cost as _extract_estimated_cost,

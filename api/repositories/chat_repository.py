@@ -1,11 +1,10 @@
 """Chat repository for wrapping Supabase database operations."""
 
-import asyncio
 from typing import Any, Dict, List, Optional, cast
-from logging_config import logger, anonymize_user_id, anonymize_text
-from auth import ensure_user_exists, get_supabase_admin
+from api.logging_config import logger, anonymize_user_id, anonymize_text
+from api.auth import ensure_user_exists, get_supabase_admin
 from api.repositories.history_repository import HistoryRepository
-from utils import normalize_mode
+from api.utils import normalize_mode
 
 
 class ChatRepository:
@@ -40,8 +39,8 @@ class ChatRepository:
             return
 
         try:
-            existing = await asyncio.to_thread(
-                lambda: supabase.table("history")
+            existing = await (
+                supabase.table("history")
                 .select("id, levels")
                 .eq("user_id", user.id)
                 .eq("topic", topic)
@@ -65,8 +64,8 @@ class ChatRepository:
                 item_id = data[0].get("id")
                 existing_levels = set(data[0].get("levels") or [])
                 new_levels = list(existing_levels.union(set(levels)))
-                await asyncio.to_thread(
-                    lambda: supabase.table("history")
+                await (
+                    supabase.table("history")
                     .update({"levels": new_levels, "mode": normalized_mode})
                     .eq("id", item_id)
                     .execute()
@@ -78,8 +77,8 @@ class ChatRepository:
                     mode=normalized_mode,
                 )
             else:
-                await asyncio.to_thread(
-                    lambda: supabase.table("history")
+                await (
+                    supabase.table("history")
                     .insert({
                         "user_id": user.id,
                         "topic": topic,
@@ -111,8 +110,8 @@ class ChatRepository:
         supabase = get_supabase_admin()
         if not supabase:
             raise RuntimeError("Database connection error")
-        resp = await asyncio.to_thread(
-            lambda: supabase.table("conversations")
+        resp = await (
+            supabase.table("conversations")
             .select("id, user_id, mode, settings")
             .eq("id", conversation_id)
             .eq("user_id", user_id)
@@ -176,7 +175,7 @@ class ChatRepository:
             "p_update_payload": update_payload,
         }
         try:
-            response = await asyncio.to_thread(lambda: supabase.rpc("insert_message_bundle", payload).execute())
+            response = await supabase.rpc("insert_message_bundle", payload).execute()
             data = getattr(response, "data", None)
             if isinstance(data, list) and data:
                 data = data[0]

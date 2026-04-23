@@ -9,8 +9,8 @@ from typing import Any, AsyncGenerator, Callable, Awaitable, cast
 import structlog
 from openai.types.chat import ChatCompletionMessageParam
 
-from config import get_settings
-from logging_config import anonymize_user_id, log_sampled_success
+from api.config import get_settings
+from api.logging_config import anonymize_user_id, log_sampled_success
 from services.inference_constants import (
     TECHNICAL_MAX_TOKENS,
     TECHNICAL_MINIMAL_PROMPT,

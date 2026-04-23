@@ -22,8 +22,8 @@ from openai import (
 )
 from openai.types.chat import ChatCompletionMessageParam
 
-from config import get_settings
-from logging_config import logger
+from api.config import get_settings
+from api.logging_config import logger
 from services.cache import get_redis
 from services.llm_errors import LLMBadRequest, LLMInvalidAPIKey, LLMUnavailable
 from services.provider_authenticator import ProviderAuthenticator

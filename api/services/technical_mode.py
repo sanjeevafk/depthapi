@@ -6,8 +6,8 @@ import time
 import structlog
 from typing import Callable, Any, AsyncGenerator
 
-from logging_config import log_sampled_success
-from prompts import SYSTEM_PROMPT, DiagramType, build_prompt
+from api.logging_config import log_sampled_success
+from api.prompts import SYSTEM_PROMPT, DiagramType, build_prompt
 from services.intent import (
     detect_intent_and_depth,
     detect_diagram_type,
