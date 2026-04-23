@@ -303,6 +303,142 @@ class _MessageSetupResult:
     prompt_mode: str
 
 
+async def _run_fallback_generation(
+    *,
+    effective_content: str,
+    prompt_mode: str,
+    llm_mode: str,
+    request_temperature: float,
+    regenerate: bool,
+    request_id: str,
+    user_id: str,
+    is_pro: bool,
+    telemetry_sink: dict[str, Any],
+    conversation_messages: list[ConversationMessage],
+    conversation_context: str,
+    intent_system_prompt: str,
+    fallback_timeout_seconds: float,
+) -> str:
+    result = await asyncio.wait_for(
+        generate_explanation(
+            effective_content,
+            prompt_mode,
+            mode=llm_mode,
+            temperature=request_temperature,
+            regenerate=regenerate,
+            request_id=request_id,
+            user_id=user_id,
+            is_pro=is_pro,
+            telemetry_sink=telemetry_sink,
+            conversation_messages=conversation_messages,
+            conversation_context=conversation_context,
+            intent_system_prompt=intent_system_prompt,
+        ),
+        timeout=fallback_timeout_seconds,
+    )
+    return str(result)
+
+
+async def _drain_stream_chunks(
+    *,
+    request: Request,
+    stream_iter: Any,
+    stream: Any,
+    start_time: float,
+    start_deadline: float,
+    stream_max_seconds: int,
+    heartbeat_seconds: float,
+    assistant_message_id: str,
+    emit: Any,
+    record_chunk: Any,
+    close_stream: Any,
+    close_timeout_seconds: float,
+    request_id: str,
+    user_id_hash: str,
+    conversation_id: str,
+    mode: str,
+    chunk_count: int,
+) -> AsyncGenerator[tuple[str, str | None, bool, bool, bool, str | None, bool], None]:
+    pending_chunk_task: asyncio.Task[str] | None = None
+    timed_out = False
+    start_timeout = False
+    aborted = False
+    abort_reason: str | None = None
+    stream_completed = False
+
+    async def cancel_pending_chunk_task() -> None:
+        nonlocal pending_chunk_task
+        if pending_chunk_task is None:
+            return
+        pending_chunk_task.cancel()
+        try:
+            await asyncio.wait_for(pending_chunk_task, timeout=close_timeout_seconds)
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.debug(
+                "messages_pending_chunk_cancel_failed",
+                request_id=request_id,
+                conversation_id=conversation_id,
+                error=str(exc),
+            )
+        pending_chunk_task = None
+
+    seen_chunks = chunk_count
+    try:
+        while True:
+            if await request.is_disconnected():
+                aborted = True
+                abort_reason = "client_disconnect"
+                await cancel_pending_chunk_task()
+                await close_stream(stream)
+                break
+
+            elapsed = time.perf_counter() - start_time
+            if elapsed >= stream_max_seconds:
+                timed_out = True
+                await cancel_pending_chunk_task()
+                await close_stream(stream)
+                break
+
+            timeout = heartbeat_seconds
+            if seen_chunks == 0:
+                timeout = min(timeout, max(0.0, start_deadline - time.perf_counter()))
+                if timeout <= 0:
+                    start_timeout = True
+                    await cancel_pending_chunk_task()
+                    await close_stream(stream)
+                    break
+
+            try:
+                if pending_chunk_task is None:
+                    async def get_next_chunk() -> str:
+                        return await anext(stream_iter)
+                    pending_chunk_task = asyncio.create_task(get_next_chunk())
+                chunk = await asyncio.wait_for(asyncio.shield(pending_chunk_task), timeout=timeout)
+                pending_chunk_task = None
+            except asyncio.TimeoutError:
+                yield emit("heartbeat", {"ts": datetime.now(timezone.utc).isoformat()}), None, timed_out, start_timeout, aborted, abort_reason, stream_completed
+                if seen_chunks == 0 and time.perf_counter() >= start_deadline:
+                    start_timeout = True
+                    await cancel_pending_chunk_task()
+                    await close_stream(stream)
+                    break
+                continue
+            except StopAsyncIteration:
+                pending_chunk_task = None
+                stream_completed = True
+                break
+
+            record_chunk()
+            seen_chunks += 1
+            yield emit("delta", {"delta": chunk, "assistant_message_id": assistant_message_id}), chunk, timed_out, start_timeout, aborted, abort_reason, stream_completed
+    finally:
+        await cancel_pending_chunk_task()
+
+    yield "", None, timed_out, start_timeout, aborted, abort_reason, stream_completed
+
+
 async def _run_message_preflight(
     request: Request,
     api_key: ApiKeyRecord,
@@ -978,7 +1114,6 @@ async def _send_message_handler(
             start_timeout = False
             telemetry_sink: dict[str, Any] = {}
             stream_failed = False
-            pending_chunk_task: asyncio.Task[str] | None = None
             user_sequence_id: int | None = None
             assistant_sequence_id: int | None = None
             redis_append_failed = False
@@ -1043,25 +1178,6 @@ async def _send_message_handler(
                             conversation_id=req.conversation_id,
                             error=str(exc),
                         )
-    
-            async def cancel_pending_chunk_task() -> None:
-                nonlocal pending_chunk_task
-                if pending_chunk_task is None:
-                    return
-                pending_chunk_task.cancel()
-                try:
-                    await asyncio.wait_for(pending_chunk_task, timeout=close_timeout_seconds)
-                except asyncio.CancelledError:
-                    # Expected while force-canceling pending stream chunks.
-                    pass
-                except Exception as exc:
-                    logger.debug(
-                        "messages_pending_chunk_cancel_failed",
-                        request_id=request_id,
-                        conversation_id=req.conversation_id,
-                        error=str(exc),
-                    )
-                pending_chunk_task = None
     
             async def finalize_assistant_message(
                 content_value: str,
@@ -1266,11 +1382,11 @@ async def _send_message_handler(
                 if force_non_stream:
                     await ensure_context_for_stream()
                     try:
-                        fallback_content = await generate_explanation(
-                            effective_content,
-                            prompt_mode,
-                            mode=llm_mode,
-                            temperature=request_temperature,
+                        fallback_content = await _run_fallback_generation(
+                            effective_content=effective_content,
+                            prompt_mode=prompt_mode,
+                            llm_mode=llm_mode,
+                            request_temperature=request_temperature,
                             regenerate=req.regenerate,
                             request_id=request_id,
                             user_id=user_id,
@@ -1279,6 +1395,7 @@ async def _send_message_handler(
                             conversation_messages=context_messages,
                             conversation_context=socratic_context,
                             intent_system_prompt=intent_system_prompt,
+                            fallback_timeout_seconds=fallback_timeout_seconds,
                         )
                     except Exception as exc:
                         logger.error(
@@ -1355,56 +1472,29 @@ async def _send_message_handler(
                 )
                 stream_iter = stream.__aiter__()
                 start_deadline = start_time + stream_start_timeout_seconds
-    
-                while True:
-                    if await request.is_disconnected():
-                        aborted = True
-                        abort_reason = "client_disconnect"
-                        await cancel_pending_chunk_task()
-                        await close_stream(stream)
-                        break
-    
-                    elapsed = time.perf_counter() - start_time
-                    if elapsed >= stream_max_seconds:
-                        timed_out = True
-                        await cancel_pending_chunk_task()
-                        await close_stream(stream)
-                        break
-    
-                    timeout = heartbeat_seconds
-                    if chunk_count == 0:
-                        timeout = min(timeout, max(0.0, start_deadline - time.perf_counter()))
-                        if timeout <= 0:
-                            start_timeout = True
-                            await cancel_pending_chunk_task()
-                            await close_stream(stream)
-                            break
-    
-                    try:
-                        if pending_chunk_task is None:
-                            async def get_next_chunk() -> str:
-                                return await anext(stream_iter)
-                            pending_chunk_task = asyncio.create_task(get_next_chunk())
-                        chunk = await asyncio.wait_for(asyncio.shield(pending_chunk_task), timeout=timeout)
-                        pending_chunk_task = None
-                    except asyncio.TimeoutError:
-                        yield emit("heartbeat", {"ts": datetime.now(timezone.utc).isoformat()})
-                        if chunk_count == 0 and time.perf_counter() >= start_deadline:
-                            start_timeout = True
-                            await cancel_pending_chunk_task()
-                            await close_stream(stream)
-                            break
-                        continue
-                    except StopAsyncIteration:
-                        pending_chunk_task = None
-                        stream_completed = True
-                        break
-    
-    
-    
-                    full_content += chunk
-                    record_chunk()
-                    yield emit("delta", {"delta": chunk, "assistant_message_id": assistant_message_id})
+                async for event, chunk_text, timed_out, start_timeout, aborted, abort_reason, stream_completed in _drain_stream_chunks(
+                    request=request,
+                    stream_iter=stream_iter,
+                    stream=stream,
+                    start_time=start_time,
+                    start_deadline=start_deadline,
+                    stream_max_seconds=stream_max_seconds,
+                    heartbeat_seconds=heartbeat_seconds,
+                    assistant_message_id=assistant_message_id,
+                    emit=emit,
+                    record_chunk=record_chunk,
+                    close_stream=close_stream,
+                    close_timeout_seconds=close_timeout_seconds,
+                    request_id=request_id,
+                    user_id_hash=user_id_hash,
+                    conversation_id=req.conversation_id,
+                    mode=selected_mode,
+                    chunk_count=chunk_count,
+                ):
+                    if event:
+                        if chunk_text is not None:
+                            full_content += chunk_text
+                        yield event
     
                 generation_ms = (time.perf_counter() - generation_start) * 1000
     
@@ -1428,22 +1518,20 @@ async def _send_message_handler(
                         sampled=False,
                     )
                     try:
-                        fallback_content = await asyncio.wait_for(
-                            generate_explanation(
-                                effective_content,
-                                prompt_mode,
-                                mode=llm_mode,
-                                temperature=request_temperature,
-                                regenerate=req.regenerate,
-                                request_id=request_id,
-                                user_id=user_id,
-                                is_pro=is_pro,
-                                telemetry_sink=telemetry_sink,
-                                conversation_messages=context_messages,
-                                conversation_context=socratic_context,
-                                intent_system_prompt=intent_system_prompt,
-                            ),
-                            timeout=fallback_timeout_seconds,
+                        fallback_content = await _run_fallback_generation(
+                            effective_content=effective_content,
+                            prompt_mode=prompt_mode,
+                            llm_mode=llm_mode,
+                            request_temperature=request_temperature,
+                            regenerate=req.regenerate,
+                            request_id=request_id,
+                            user_id=user_id,
+                            is_pro=is_pro,
+                            telemetry_sink=telemetry_sink,
+                            conversation_messages=context_messages,
+                            conversation_context=socratic_context,
+                            intent_system_prompt=intent_system_prompt,
+                            fallback_timeout_seconds=fallback_timeout_seconds,
                         )
                     except Exception as exc:
                         logger.error(
@@ -1512,22 +1600,20 @@ async def _send_message_handler(
                 if not aborted and not full_content.strip():
                     fallback_used = True
                     try:
-                        fallback_content = await asyncio.wait_for(
-                            generate_explanation(
-                                effective_content,
-                                prompt_mode,
-                                mode=llm_mode,
-                                temperature=request_temperature,
-                                regenerate=req.regenerate,
-                                request_id=request_id,
-                                user_id=user_id,
-                                is_pro=is_pro,
-                                telemetry_sink=telemetry_sink,
-                                conversation_messages=context_messages,
-                                conversation_context=socratic_context,
-                                intent_system_prompt=intent_system_prompt,
-                            ),
-                            timeout=fallback_timeout_seconds,
+                        fallback_content = await _run_fallback_generation(
+                            effective_content=effective_content,
+                            prompt_mode=prompt_mode,
+                            llm_mode=llm_mode,
+                            request_temperature=request_temperature,
+                            regenerate=req.regenerate,
+                            request_id=request_id,
+                            user_id=user_id,
+                            is_pro=is_pro,
+                            telemetry_sink=telemetry_sink,
+                            conversation_messages=context_messages,
+                            conversation_context=socratic_context,
+                            intent_system_prompt=intent_system_prompt,
+                            fallback_timeout_seconds=fallback_timeout_seconds,
                         )
                         full_content = str(fallback_content)
                         for index in range(0, len(full_content), chunk_size):
@@ -1589,7 +1675,6 @@ async def _send_message_handler(
                 yield emit("error", {"error": "Streaming failed"})
                 yield emit("done", "[DONE]")
             finally:
-                await cancel_pending_chunk_task()
                 if stream is not None:
                     await close_stream(stream)
                 await _ingress_dedupe_clear(client_message_id)
