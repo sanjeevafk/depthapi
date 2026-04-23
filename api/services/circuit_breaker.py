@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from api.logging_config import logger
-from services.redis_safe import safe_redis_call
+from api.services.redis_safe import safe_redis_call
 
 
 @dataclass

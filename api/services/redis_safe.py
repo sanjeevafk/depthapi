@@ -104,7 +104,7 @@ async def safe_redis_command(
     *args: Any,
     timeout: float = REDIS_CALL_TIMEOUT_SECONDS,
 ) -> Any | None:
-    from services.cache import get_redis
+    from api.services.cache import get_redis
 
     redis = await safe_redis_call(get_redis, timeout=timeout, operation="connect")
     if redis is None:

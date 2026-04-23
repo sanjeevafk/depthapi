@@ -3,7 +3,7 @@
 from typing import Any
 
 from api.config import get_settings
-from services.token_count import count_prompt_tokens
+from api.services.token_count import count_prompt_tokens
 from api.utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE
 
 

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import services.search as search_module
+import api.services.search as search_module
 
 
 @pytest.mark.asyncio

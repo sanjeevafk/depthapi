@@ -3,8 +3,8 @@ import pytest
 from openai import APIStatusError
 from types import SimpleNamespace
 
-import services.inference as inference_module
-import services.llm_client as llm_client
+import api.services.inference as inference_module
+import api.services.llm_client as llm_client
 
 
 def _sentence_with_words(word_count: int) -> str:

@@ -6,10 +6,10 @@ from typing import Any
 
 import pytest
 
-import services.inference as inference_module
-import services.llm_client as llm_client_module
+import api.services.inference as inference_module
+import api.services.llm_client as llm_client_module
 from api.logging_config import anonymize_text, anonymize_user_id, redact_sensitive_processor
-import logging_config as logging_config_module
+import api.logging_config as logging_config_module
 
 
 @pytest.mark.asyncio
