@@ -10,7 +10,7 @@ import pytest
 
 import main as main_app
 import routers.messages as messages_module
-import services.message_gate as message_gate
+import api.services.message_gate as message_gate
 
 
 def _allow_gatekeeper(monkeypatch: pytest.MonkeyPatch) -> None:

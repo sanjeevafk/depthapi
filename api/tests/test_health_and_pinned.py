@@ -3,7 +3,7 @@ import pytest
 import main as main_app
 import routers.pinned as pinned_module
 import routers.query as query_module
-from services.llm_errors import LLMInvalidAPIKey
+from api.services.llm_errors import LLMInvalidAPIKey
 
 
 @pytest.mark.asyncio

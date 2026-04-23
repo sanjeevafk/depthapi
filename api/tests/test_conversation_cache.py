@@ -1,7 +1,7 @@
 import pytest
 from types import SimpleNamespace
 
-import services.conversation_cache as conversation_cache
+import api.services.conversation_cache as conversation_cache
 
 
 class CaptureQuery:

@@ -24,20 +24,20 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from api.config import get_settings
 from api.logging_config import logger
-from services.cache import get_redis
-from services.llm_errors import LLMBadRequest, LLMInvalidAPIKey, LLMUnavailable
-from services.provider_authenticator import ProviderAuthenticator
-from services.provider_registry import (
+from api.services.cache import get_redis
+from api.services.llm_errors import LLMBadRequest, LLMInvalidAPIKey, LLMUnavailable
+from api.services.provider_authenticator import ProviderAuthenticator
+from api.services.provider_registry import (
     PROVIDER_BASE_URLS,
     PROVIDER_PRIORITY,
     ProviderName,
     ProviderRegistry,
     ProviderTarget,
 )
-from services.provider_usage_tracker import ProviderUsageTracker
-from services.fallback_orchestrator import FallbackOrchestrator
-from services.redis_safe import safe_redis_call
-from services.utils_shared import (
+from api.services.provider_usage_tracker import ProviderUsageTracker
+from api.services.fallback_orchestrator import FallbackOrchestrator
+from api.services.redis_safe import safe_redis_call
+from api.services.utils_shared import (
     extract_estimated_cost as extract_shared_estimated_cost,
     extract_usage_dict as extract_shared_usage_dict,
 )

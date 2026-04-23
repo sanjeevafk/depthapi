@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi.responses import StreamingResponse
 
-from services.streaming import SseEventBuilder, SSE_RESPONSE_HEADERS
+from api.services.streaming import SseEventBuilder, SSE_RESPONSE_HEADERS
 
 
 class MessageDispatcher:

@@ -12,8 +12,8 @@ from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
 
 from monitoring import capture_telemetry_event
-from services.message_dispatcher import MessageDispatcher
-from services.request_validator import RequestValidator
+from api.services.message_dispatcher import MessageDispatcher
+from api.services.request_validator import RequestValidator
 from api.utils import SOCRATIC_MODE, TECHNICAL_MODE
 
 _request_validator = RequestValidator()

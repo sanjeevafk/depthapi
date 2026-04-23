@@ -8,7 +8,7 @@ from pydantic import SecretStr
 
 import config as config_module
 from api.logging_config import logger
-from services.cache import cache_get, cache_set
+from api.services.cache import cache_get, cache_set
 
 ProviderName = Literal["tavily", "serper", "exa"]
 

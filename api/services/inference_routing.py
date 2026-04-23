@@ -6,9 +6,9 @@ import re
 from typing import TypedDict
 
 from api.logging_config import logger
-from services.intent import detect_intent_and_depth
+from api.services.intent import detect_intent_and_depth
 from api.utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE
-from services.inference_constants import (
+from api.services.inference_constants import (
     MODEL_PROFILES,
     COST_PENALTY,
     LEARNING_MODEL_SIMPLE,

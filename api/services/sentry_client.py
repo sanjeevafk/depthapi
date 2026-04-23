@@ -7,7 +7,7 @@ import httpx
 
 from api.config import get_settings
 from api.logging_config import logger
-from services.cache import cache_get, cache_set
+from api.services.cache import cache_get, cache_set
 
 
 def _resolve_sentry_config() -> tuple[str, str, str]:

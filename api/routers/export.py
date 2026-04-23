@@ -9,9 +9,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from services.api_key_auth import ApiKeyRecord, verify_api_key
+from api.services.api_key_auth import ApiKeyRecord, verify_api_key
 from api.utils import DEFAULT_CHAT_MODE, FREE_LEVELS, SUPPORTED_CHAT_MODES, normalize_mode, sanitize_filename
-from services.inference import generate_explanation
+from api.services.inference import generate_explanation
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["export"])
