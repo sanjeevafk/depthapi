@@ -1,4 +1,4 @@
-"""Capture Phase 0 baseline metrics for god-object modules.
+"""Capture baseline metrics for modularized backend services.
 
 This script avoids external coverage dependencies by using stdlib `trace`.
 """
@@ -13,7 +13,7 @@ from trace import Trace
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-REPORT_PATH = REPO_ROOT / "local-docs" / "GOD_OBJECTS_PHASE0_BASELINE.json"
+REPORT_PATH = REPO_ROOT / "local-docs" / "MODULAR_SERVICES_BASELINE.json"
 
 TARGET_MODULES = {
     "inference.py": REPO_ROOT / "api" / "services" / "inference.py",
