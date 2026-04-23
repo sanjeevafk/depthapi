@@ -27,7 +27,7 @@ def get_trusted_corpus_admin() -> SupabaseHTTPClient | None:
     if not secret_key:
         logger.warning("trusted_corpus_secret_missing")
         return None
-    return SupabaseHTTPClient(settings.local_pgvector_url, str(secret_key))
+    return SupabaseHTTPClient(settings.local_pgvector_url, str(secret_key), is_admin=True)
 
 
 class RetrievalService:
@@ -146,7 +146,16 @@ class RetrievalService:
                 return candidate["content"]
                 
             # Neighbors are returned ordered by chunk_order
-            return "\n".join([n["content"] for n in neighbors])
+            neighbor_texts = [n.get("content") for n in neighbors if n.get("content") is not None]
+            if len(neighbor_texts) < len(neighbors):
+                logger.warning("retrieval_neighbor_content_none", 
+                               chunk_id=candidate["chunk_id"], 
+                               missing_count=len(neighbors) - len(neighbor_texts))
+            
+            if not neighbor_texts:
+                return candidate["content"]
+                
+            return "\n".join(neighbor_texts)
             
         except Exception as exc:
             logger.warning("context_expansion_failed", chunk_id=candidate["chunk_id"], error=str(exc))

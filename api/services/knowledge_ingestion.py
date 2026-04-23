@@ -3,8 +3,11 @@ Processes documents from the queue, chunks them, and generates embeddings.
 """
 
 import hashlib
+import ipaddress
+import socket
 from datetime import datetime, timezone
 from typing import Any, Dict, List
+from urllib.parse import urlparse
 
 import httpx
 import structlog
@@ -14,6 +17,28 @@ from api.adapters.supabase_adapter import SupabaseHTTPClient
 from api.services.embeddings import get_embedding_service
 
 logger = structlog.get_logger(__name__)
+
+MAX_CONTENT_SIZE = 10 * 1024 * 1024  # 10MB
+
+def _is_safe_url(url: str) -> bool:
+    """Check if a URL is safe to fetch (prevents basic SSRF)."""
+    try:
+        parsed = urlparse(url)
+        if not parsed.hostname:
+            return False
+        if parsed.scheme not in ("http", "https"):
+            return False
+            
+        # Basic blacklist for internal hostnames
+        if parsed.hostname.lower() in ("localhost", "127.0.0.1", "metadata.google.internal"):
+            return False
+            
+        # Resolve and check IP ranges
+        ip_addr = socket.gethostbyname(parsed.hostname)
+        ip = ipaddress.ip_address(ip_addr)
+        return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved)
+    except Exception:
+        return False
 
 class IngestionWorker:
     def __init__(self, worker_id: str = "default-worker"):
@@ -66,9 +91,15 @@ class IngestionWorker:
                 
             except Exception as inner_exc:
                 logger.error("ingestion_processing_failed", job_id=job_id, error=str(inner_exc))
-                await supabase.table("knowledge_ingestion_queue")\
-                    .update({"status": "failed", "last_error": str(inner_exc)})\
-                    .eq("id", job_id).execute()
+                try:
+                    await supabase.table("knowledge_ingestion_queue")\
+                        .update({"status": "failed", "last_error": str(inner_exc)})\
+                        .eq("id", job_id).execute()
+                except Exception as update_exc:
+                    logger.error("ingestion_status_update_failed", 
+                                 job_id=job_id, 
+                                 update_error=str(update_exc), 
+                                 original_error=str(inner_exc))
 
         except Exception as exc:
             logger.error("ingestion_worker_cycle_failed", error=str(exc))
@@ -97,6 +128,7 @@ class IngestionWorker:
         # Prepare for DB insert
         chunk_rows = []
         seen_hashes: set[str] = set()
+        chunk_order = 0
         for i, (text, vector) in enumerate(zip(chunks_text, embeddings)):
             content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
             if content_hash in seen_hashes:
@@ -109,9 +141,10 @@ class IngestionWorker:
                 "content_hash": content_hash,
                 "embedding": vector,
                 "token_count": len(self.tokenizer.encode(text)),
-                "chunk_order": i,
+                "chunk_order": chunk_order,
                 "metadata": doc.get("metadata", {})
             })
+            chunk_order += 1
 
         # Atomic Insert (Batch)
         # Conflict target uses stable order for idempotent retries/reprocessing.
@@ -126,16 +159,19 @@ class IngestionWorker:
         metadata = doc.get("metadata", {})
         if "raw_text" in metadata:
             return metadata["raw_text"]
-            
-        # Placeholder for URL/Storage fetching
         source_url = doc.get("source_url")
         if source_url and str(source_url).startswith(("http://", "https://")):
-            logger.debug("fetching_external_content", url=source_url)
+            if not _is_safe_url(str(source_url)):
+                raise ValueError("URL targets a blocked host or network")
+            logger.debug("fetching_external_content", url_host=urlparse(str(source_url)).hostname)
             timeout = httpx.Timeout(15.0, connect=5.0)
             async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
                 response = await client.get(str(source_url))
                 response.raise_for_status()
+                if len(response.content) > MAX_CONTENT_SIZE:
+                    raise ValueError(f"Response exceeds max size of {MAX_CONTENT_SIZE} bytes")
                 return response.text.strip()
+
             
         return ""
 

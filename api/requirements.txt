@@ -6,7 +6,6 @@ httpx>=0.26.0
 PyJWT>=2.8.0
 redis>=5.0.1
 python-dotenv>=1.0.1
-supabase>=2.3.4
 tenacity>=8.2.3
 orjson>=3.9.13
 structlog>=24.1.0
