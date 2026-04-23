@@ -653,6 +653,202 @@ async def _resolve_message_setup(
     )
 
 
+async def _finalize_stream_side_effects(
+    *,
+    stream: Any,
+    close_stream: Any,
+    client_message_id: str,
+    start_time: float,
+    request_received: float,
+    chunk_count: int,
+    total_chunk_interval_ms: float,
+    aborted: bool,
+    abort_reason: str | None,
+    request_id: str,
+    user_id_hash: str,
+    conversation_id: str,
+    telemetry_sink: dict[str, Any],
+    full_content: str,
+    gatekeeper: MessageGatekeeper,
+    idempotency_key: str,
+    idempotency_ttl_seconds: int,
+    assistant_message_id: str,
+    selected_mode: str,
+    prompt_mode: str,
+    regenerate: bool,
+    is_pro: bool,
+    first_event_ms: float | None,
+    first_token_ms: float | None,
+    chunk_size: int,
+    generation_ms: float | None,
+    timed_out: bool,
+    start_timeout: bool,
+    fallback_used: bool,
+    stream_max_seconds: int,
+    redis_eval_ms: float,
+    prompt_build_ms: float,
+    redis_degraded: bool,
+    redis_append_failed: bool,
+    snapshot_degraded: bool,
+    stream_failed: bool,
+    user_id: str,
+    lock_released: bool,
+) -> bool:
+    if stream is not None:
+        await close_stream(stream)
+    await _ingress_dedupe_clear(client_message_id)
+
+    total_ms = (time.perf_counter() - start_time) * 1000
+    avg_chunk_interval_ms = None
+    if chunk_count > 1:
+        avg_chunk_interval_ms = total_chunk_interval_ms / (chunk_count - 1)
+    if aborted:
+        logger.info(
+            "messages_abort_confirmed",
+            request_id=request_id,
+            user_id_hash=user_id_hash,
+            conversation_id=conversation_id,
+            message_id=client_message_id,
+            abort_confirmed=True,
+            reason=abort_reason,
+            tokens_after_abort=0,
+        )
+    queue_time_ms = round((start_time - request_received) * 1000, 2)
+    model_inference_ms = telemetry_sink.get("model_inference_ms")
+    stream_duration_ms = telemetry_sink.get("stream_duration_ms")
+    token_usage = telemetry_sink.get("token_usage")
+    estimated_cost_usd = telemetry_sink.get("estimated_cost_usd")
+    if not gatekeeper.degraded:
+        try:
+            redis = await safe_redis_call(cache_module.get_redis, operation="connect")
+            if full_content.strip():
+                response_hash = hashlib.sha256(full_content.encode("utf-8")).hexdigest()
+                if redis is not None:
+                    await safe_redis_call(redis.hset, idempotency_key, "status", "COMPLETED", operation="hset")
+                    await safe_redis_call(redis.hset, idempotency_key, "response", full_content, operation="hset")
+                    await safe_redis_call(redis.hset, idempotency_key, "response_hash", response_hash, operation="hset")
+                    await safe_redis_call(
+                        redis.hset,
+                        idempotency_key,
+                        "assistant_message_id",
+                        assistant_message_id,
+                        operation="hset",
+                    )
+                    await safe_redis_call(
+                        redis.hset,
+                        idempotency_key,
+                        "completed_at",
+                        int(time.time()),
+                        operation="hset",
+                    )
+            else:
+                if redis is not None:
+                    await safe_redis_call(redis.hset, idempotency_key, "status", "EXPIRED", operation="hset")
+                    await safe_redis_call(
+                        redis.hset,
+                        idempotency_key,
+                        "expired_at",
+                        int(time.time()),
+                        operation="hset",
+                    )
+            if redis is not None:
+                await safe_redis_call(redis.expire, idempotency_key, idempotency_ttl_seconds, operation="expire")
+        except Exception as exc:
+            logger.warning(
+                "messages_idempotency_update_failed",
+                request_id=request_id,
+                error=str(exc),
+            )
+    log_sampled_success(
+        "messages_stream_observed",
+        request_id=request_id,
+        user_id_hash=user_id_hash,
+        model_alias=str(telemetry_sink.get("model_alias") or selected_mode),
+        mode=selected_mode,
+        prompt_mode=prompt_mode,
+        latency_ms=round(total_ms, 2),
+        queue_time_ms=queue_time_ms,
+        model_inference_ms=model_inference_ms,
+        stream_duration_ms=stream_duration_ms,
+        token_usage=token_usage,
+        estimated_cost_usd=estimated_cost_usd,
+        retry=bool(regenerate),
+        first_event_ms=round(first_event_ms, 2) if first_event_ms is not None else None,
+        first_token_ms=round(first_token_ms, 2) if first_token_ms is not None else None,
+        avg_chunk_interval_ms=round(avg_chunk_interval_ms, 2) if avg_chunk_interval_ms is not None else None,
+        chunk_count=chunk_count,
+        chunk_size=chunk_size,
+        content_chars=len(full_content),
+        is_pro=is_pro,
+        generation_ms=round(generation_ms, 2) if generation_ms is not None else None,
+        streaming=True,
+        timed_out=timed_out,
+        fallback_used=fallback_used,
+        stream_max_seconds=stream_max_seconds,
+        redis_eval_ms=redis_eval_ms,
+        prompt_build_ms=round(prompt_build_ms, 2),
+        time_to_first_token=round(first_token_ms, 2) if first_token_ms is not None else None,
+        redis_degraded=redis_degraded,
+        redis_append_failed=redis_append_failed,
+        snapshot_degraded=snapshot_degraded,
+        sampled=True,
+    )
+    status = "success"
+    if aborted:
+        status = "aborted"
+    elif timed_out or start_timeout:
+        status = "timed_out"
+    elif stream_failed:
+        status = "error"
+    asyncio.create_task(
+        _capture_telemetry_async(
+            "stream_end",
+            request_id=request_id,
+            user_id_hash=user_id_hash,
+            mode=selected_mode,
+            prompt_mode=prompt_mode,
+            regenerate=bool(regenerate),
+            status=status,
+            duration_ms=round(total_ms, 2),
+            fallback_used=fallback_used,
+        )
+    )
+    error_type = None
+    error_message = None
+    if status == "error":
+        error_type = "stream_failed"
+        error_message = "Streaming failed"
+    elif status == "timed_out":
+        error_type = "timed_out"
+        error_message = "Streaming timed out"
+    elif status == "aborted":
+        error_type = "aborted"
+        error_message = "User aborted stream"
+    safe_user_id = user_id or None
+    payload = build_llm_request_payload(
+        request_id=request_id,
+        user_id=safe_user_id,
+        conversation_id=str(conversation_id or "") or None,
+        model_alias=str(telemetry_sink.get("model_alias") or selected_mode),
+        model_name=telemetry_sink.get("model"),
+        provider=telemetry_sink.get("provider"),
+        mode=selected_mode,
+        status=status,
+        token_usage=token_usage if isinstance(token_usage, dict) else None,
+        estimated_cost_usd=estimated_cost_usd,
+        latency_ms=round(total_ms, 2),
+        model_inference_ms=model_inference_ms,
+        stream_duration_ms=stream_duration_ms,
+        error_type=error_type,
+        error_message=error_message,
+    )
+    asyncio.create_task(record_llm_request(payload))
+    if not lock_released:
+        _release_conversation_lock(conversation_id)
+        return True
+    return lock_released
+
+
 async def _send_message_handler(
     request: Request,
     api_key: ApiKeyRecord = Depends(verify_api_key),
@@ -1675,157 +1871,46 @@ async def _send_message_handler(
                 yield emit("error", {"error": "Streaming failed"})
                 yield emit("done", "[DONE]")
             finally:
-                if stream is not None:
-                    await close_stream(stream)
-                await _ingress_dedupe_clear(client_message_id)
-                total_ms = (time.perf_counter() - start_time) * 1000
-                avg_chunk_interval_ms = None
-                if chunk_count > 1:
-                    avg_chunk_interval_ms = total_chunk_interval_ms / (chunk_count - 1)
-                if aborted:
-                    logger.info(
-                        "messages_abort_confirmed",
-                        request_id=request_id,
-                        user_id_hash=user_id_hash,
-                        conversation_id=req.conversation_id,
-                        message_id=client_message_id,
-                        abort_confirmed=True,
-                        reason=abort_reason,
-                        tokens_after_abort=0,
-                    )
-                queue_time_ms = round((start_time - request_received) * 1000, 2)
-                model_inference_ms = telemetry_sink.get("model_inference_ms")
-                stream_duration_ms = telemetry_sink.get("stream_duration_ms")
-                token_usage = telemetry_sink.get("token_usage")
-                estimated_cost_usd = telemetry_sink.get("estimated_cost_usd")
-                if not gatekeeper.degraded:
-                    try:
-                        redis = await safe_redis_call(cache_module.get_redis, operation="connect")
-                        if full_content.strip():
-                            response_hash = hashlib.sha256(full_content.encode("utf-8")).hexdigest()
-                            if redis is not None:
-                                await safe_redis_call(redis.hset, idempotency_key, "status", "COMPLETED", operation="hset")
-                                await safe_redis_call(redis.hset, idempotency_key, "response", full_content, operation="hset")
-                                await safe_redis_call(redis.hset, idempotency_key, "response_hash", response_hash, operation="hset")
-                                await safe_redis_call(
-                                    redis.hset,
-                                    idempotency_key,
-                                    "assistant_message_id",
-                                    assistant_message_id,
-                                    operation="hset",
-                                )
-                                await safe_redis_call(
-                                    redis.hset,
-                                    idempotency_key,
-                                    "completed_at",
-                                    int(time.time()),
-                                    operation="hset",
-                                )
-                        else:
-                            if redis is not None:
-                                await safe_redis_call(redis.hset, idempotency_key, "status", "EXPIRED", operation="hset")
-                                await safe_redis_call(
-                                    redis.hset,
-                                    idempotency_key,
-                                    "expired_at",
-                                    int(time.time()),
-                                    operation="hset",
-                                )
-                        if redis is not None:
-                            await safe_redis_call(redis.expire, idempotency_key, idempotency_ttl_seconds, operation="expire")
-                    except Exception as exc:
-                        logger.warning(
-                            "messages_idempotency_update_failed",
-                            request_id=request_id,
-                            error=str(exc),
-                        )
-                log_sampled_success(
-                    "messages_stream_observed",
+                lock_released = await _finalize_stream_side_effects(
+                    stream=stream,
+                    close_stream=close_stream,
+                    client_message_id=client_message_id,
+                    start_time=start_time,
+                    request_received=request_received,
+                    chunk_count=chunk_count,
+                    total_chunk_interval_ms=total_chunk_interval_ms,
+                    aborted=aborted,
+                    abort_reason=abort_reason,
                     request_id=request_id,
                     user_id_hash=user_id_hash,
-                    model_alias=str(telemetry_sink.get("model_alias") or selected_mode),
-                    mode=selected_mode,
+                    conversation_id=req.conversation_id,
+                    telemetry_sink=telemetry_sink,
+                    full_content=full_content,
+                    gatekeeper=gatekeeper,
+                    idempotency_key=idempotency_key,
+                    idempotency_ttl_seconds=idempotency_ttl_seconds,
+                    assistant_message_id=assistant_message_id,
+                    selected_mode=selected_mode,
                     prompt_mode=prompt_mode,
-                    latency_ms=round(total_ms, 2),
-                    queue_time_ms=queue_time_ms,
-                    model_inference_ms=model_inference_ms,
-                    stream_duration_ms=stream_duration_ms,
-                    token_usage=token_usage,
-                    estimated_cost_usd=estimated_cost_usd,
-                    retry=bool(req.regenerate),
-                    first_event_ms=round(first_event_ms, 2) if first_event_ms is not None else None,
-                    first_token_ms=round(first_token_ms, 2) if first_token_ms is not None else None,
-                    avg_chunk_interval_ms=round(avg_chunk_interval_ms, 2) if avg_chunk_interval_ms is not None else None,
-                    chunk_count=chunk_count,
-                    chunk_size=chunk_size,
-                    content_chars=len(full_content),
+                    regenerate=bool(req.regenerate),
                     is_pro=is_pro,
-                    generation_ms=round(generation_ms, 2) if generation_ms is not None else None,
-                    streaming=True,
+                    first_event_ms=first_event_ms,
+                    first_token_ms=first_token_ms,
+                    chunk_size=chunk_size,
+                    generation_ms=generation_ms,
                     timed_out=timed_out,
+                    start_timeout=start_timeout,
                     fallback_used=fallback_used,
                     stream_max_seconds=stream_max_seconds,
                     redis_eval_ms=redis_eval_ms,
-                    prompt_build_ms=round(prompt_build_ms, 2),
-                    time_to_first_token=round(first_token_ms, 2) if first_token_ms is not None else None,
+                    prompt_build_ms=prompt_build_ms,
                     redis_degraded=redis_degraded,
                     redis_append_failed=redis_append_failed,
                     snapshot_degraded=snapshot_degraded,
-                    sampled=True,
+                    stream_failed=stream_failed,
+                    user_id=user_id,
+                    lock_released=lock_released,
                 )
-                status = "success"
-                if aborted:
-                    status = "aborted"
-                elif timed_out or start_timeout:
-                    status = "timed_out"
-                elif stream_failed:
-                    status = "error"
-                asyncio.create_task(
-                    _capture_telemetry_async(
-                        "stream_end",
-                        request_id=request_id,
-                        user_id_hash=user_id_hash,
-                        mode=selected_mode,
-                        prompt_mode=prompt_mode,
-                        regenerate=bool(req.regenerate),
-                        status=status,
-                        duration_ms=round(total_ms, 2),
-                        fallback_used=fallback_used,
-                    )
-                )
-                error_type = None
-                error_message = None
-                if status == "error":
-                    error_type = "stream_failed"
-                    error_message = "Streaming failed"
-                elif status == "timed_out":
-                    error_type = "timed_out"
-                    error_message = "Streaming timed out"
-                elif status == "aborted":
-                    error_type = "aborted"
-                    error_message = "User aborted stream"
-                safe_user_id = user_id or None
-                payload = build_llm_request_payload(
-                    request_id=request_id,
-                    user_id=safe_user_id,
-                    conversation_id=str(req.conversation_id or "") or None,
-                    model_alias=str(telemetry_sink.get("model_alias") or selected_mode),
-                    model_name=telemetry_sink.get("model"),
-                    provider=telemetry_sink.get("provider"),
-                    mode=selected_mode,
-                    status=status,
-                    token_usage=token_usage if isinstance(token_usage, dict) else None,
-                    estimated_cost_usd=estimated_cost_usd,
-                    latency_ms=round(total_ms, 2),
-                    model_inference_ms=model_inference_ms,
-                    stream_duration_ms=stream_duration_ms,
-                    error_type=error_type,
-                    error_message=error_message,
-                )
-                asyncio.create_task(record_llm_request(payload))
-                if not lock_released:
-                    _release_conversation_lock(req.conversation_id)
-                    lock_released = True
     
         response = _message_dispatcher.dispatch_streaming_message(event_generator)
         preliminary_ms = (time.perf_counter() - request_received) * 1000
