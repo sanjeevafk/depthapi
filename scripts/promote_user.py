@@ -73,7 +73,7 @@ def promote_user(email: str):
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("\nUsage: python scripts/promote_user.py <your-email@example.com>")
-        print("Example: python scripts/promote_user.py admin@knowbear.app\n")
+        print("Example: python scripts/promote_user.py admin@depthapi.app\n")
         sys.exit(1)
         
     target_email = sys.argv[1]

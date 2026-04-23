@@ -137,7 +137,7 @@ def message_cache_key(
             "utf-8"
         )
     ).hexdigest()
-    return f"knowbear:cache:{digest}"
+    return f"depthapi:cache:{digest}"
 
 
 def ack_response(mode: str) -> str:
@@ -150,7 +150,7 @@ def ack_response(mode: str) -> str:
 
 def idempotency_key(user_id: str, message_id: str) -> str:
     digest = hashlib.sha256(f"{user_id}\x00{message_id}".encode("utf-8")).hexdigest()
-    return f"knowbear:idempotency:{digest}"
+    return f"depthapi:idempotency:{digest}"
 
 
 def bad_request(detail: str) -> HTTPException:

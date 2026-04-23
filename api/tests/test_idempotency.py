@@ -6,7 +6,7 @@ from api.services.idempotency import message_idempotency_key, query_stream_idemp
 def test_query_stream_idempotency_key_is_stable_for_valid_inputs() -> None:
     key = query_stream_idempotency_key("scope-a", "msg-1")
 
-    assert key.startswith("knowbear:query_stream:idempotency:")
+    assert key.startswith("depthapi:query_stream:idempotency:")
     assert len(key.split(":")[-1]) == 64
 
 

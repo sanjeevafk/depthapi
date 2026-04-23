@@ -53,7 +53,7 @@ def topic_cache_key(topic: str, level: str, mode: str | None = None) -> str:
     safe = re.sub(r"\W+", "_", topic.lower().strip()).strip("_")[:50]
     if mode:
         mode = mode.strip().lower()
-    return f"knowbear:{safe}:{mode}:{level}" if mode else f"knowbear:{safe}:{level}"
+    return f"depthapi:{safe}:{mode}:{level}" if mode else f"depthapi:{safe}:{level}"
 
 
 def normalize_mode(mode: str | None) -> str:

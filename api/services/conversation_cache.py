@@ -12,11 +12,11 @@ from api.services.redis_safe import safe_redis_call
 
 
 def _meta_key(conversation_id: str) -> str:
-    return f"knowbear:conversation:{conversation_id}:meta"
+    return f"depthapi:conversation:{conversation_id}:meta"
 
 
 def _messages_key(conversation_id: str) -> str:
-    return f"knowbear:conversation:{conversation_id}:messages"
+    return f"depthapi:conversation:{conversation_id}:messages"
 
 
 WARM_SNAPSHOT_LUA = """

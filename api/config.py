@@ -198,9 +198,9 @@ class Settings(BaseSettings):
     # Email / Resend
     resend_api_key: SecretStr = SecretStr("")
     resend_from: str = ""
-    support_email: str = "support@knowbear.app"
-    site_name: str = "KnowBear"
-    public_base_url: str = "https://knowbear.app"
+    support_email: str = "support@depthapi.app"
+    site_name: str = "DepthAPI"
+    public_base_url: str = "https://depthapi.app"
     allowed_origins: str = ""
     
     # Dodo Payments Configuration
