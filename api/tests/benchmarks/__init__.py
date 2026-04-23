@@ -1,1 +1,1 @@
-"""Benchmark suites for god-object baseline tracking."""
+"""Benchmark suites for modular-services baseline tracking."""
