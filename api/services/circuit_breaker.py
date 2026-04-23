@@ -31,11 +31,11 @@ class CircuitBreaker:
 
     @staticmethod
     def usage_key(now_minute: int) -> str:
-        return f"knowbear:circuit:tokens:{now_minute}"
+        return f"depthapi:circuit:tokens:{now_minute}"
 
     @staticmethod
     def open_key() -> str:
-        return "knowbear:circuit:open"
+        return "depthapi:circuit:open"
 
     async def should_allow_request(
         self,
