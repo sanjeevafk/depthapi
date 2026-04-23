@@ -2,7 +2,7 @@ import pytest
 
 import auth as auth_module
 import routers.history as history_module
-from logging_config import anonymize_user_id
+from api.logging_config import anonymize_user_id
 
 
 @pytest.mark.asyncio

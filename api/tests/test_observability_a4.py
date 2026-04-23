@@ -8,7 +8,7 @@ import pytest
 
 import services.inference as inference_module
 import services.llm_client as llm_client_module
-from logging_config import anonymize_text, anonymize_user_id, redact_sensitive_processor
+from api.logging_config import anonymize_text, anonymize_user_id, redact_sensitive_processor
 import logging_config as logging_config_module
 
 

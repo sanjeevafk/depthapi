@@ -8,7 +8,7 @@ import time
 
 from services.search import search_service
 from services.inference_constants import SEARCH_CONTEXT_MAX_CHARS, SEARCH_CONTEXT_TIMEOUT_SECONDS
-from logging_config import logger
+from api.logging_config import logger
 
 
 def _hash_topic(topic: str) -> str:

@@ -6,7 +6,7 @@ import asyncio
 from typing import Any, Dict, cast
 
 from api.repositories.chat_repository import ChatRepository
-from logging_config import logger
+from api.logging_config import logger
 
 
 async def insert_message_bundle(
@@ -40,9 +40,9 @@ async def insert_message_bundle(
     )
 
     user_res, conv_res, assistant_resp = await asyncio.gather(
-        asyncio.to_thread(_insert_user),
-        asyncio.to_thread(_update_conv),
-        asyncio.to_thread(_insert_assistant),
+        _insert_user(),
+        _update_conv(),
+        _insert_assistant(),
         return_exceptions=True,
     )
 

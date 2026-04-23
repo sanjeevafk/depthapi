@@ -3,7 +3,7 @@
 import pytest
 from services.input_limit import truncate_input_if_needed, get_max_input_tokens_for_alias
 from services.token_count import count_prompt_tokens
-from utils import LEARNING_MODE, TECHNICAL_MODE, SOCRATIC_MODE
+from api.utils import LEARNING_MODE, TECHNICAL_MODE, SOCRATIC_MODE
 
 
 @pytest.mark.asyncio

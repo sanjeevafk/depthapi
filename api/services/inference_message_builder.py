@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from prompts import SYSTEM_PROMPT
-from utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE
+from api.prompts import SYSTEM_PROMPT
+from api.utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE
 
 MODE_SYSTEM_PROMPTS = {
     LEARNING_MODE: (

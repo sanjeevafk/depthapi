@@ -15,7 +15,7 @@ from typing import Any, Mapping
 import structlog
 from structlog.typing import EventDict
 
-from config import get_settings
+from api.config import get_settings
 
 
 @dataclass

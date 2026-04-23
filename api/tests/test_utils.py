@@ -1,6 +1,6 @@
 import pytest
 
-from utils import sanitize_topic, topic_cache_key, with_timeout
+from api.utils import sanitize_topic, topic_cache_key, with_timeout
 
 
 def test_sanitize_topic_valid():

@@ -110,8 +110,11 @@ class Settings(BaseSettings):
     cerebras_api_key: SecretStr = SecretStr("")
     gemini_api_key: SecretStr = SecretStr("")
     openrouter_api_key: SecretStr = SecretStr("")
+    openai_api_key: SecretStr = SecretStr("")
     openrouter_timeout_seconds: int = 90
     llm_timeout_seconds: int = 60
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimension: int = 1536
 
     stream_max_seconds: int = 30  # Increased from 20 to 30 for large input handling
     technical_stream_max_seconds: int = 32  # Increased from 22 to 32
@@ -178,6 +181,8 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_publishable_key: str = ""
     supabase_secret_key: SecretStr = SecretStr("")
+    local_pgvector_url: str = ""
+    local_pgvector_secret_key: SecretStr = SecretStr("")
     tavily_api_key: str = ""
     serper_api_key: str = ""
     exa_api_key: str = ""

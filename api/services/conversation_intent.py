@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from utils import escape_for_prompt
+from api.utils import escape_for_prompt
 
 
 ConversationIntentType = Literal[

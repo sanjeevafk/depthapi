@@ -3,7 +3,7 @@ from typing import Optional
 
 import tiktoken
 
-from logging_config import logger
+from api.logging_config import logger
 
 
 @lru_cache
