@@ -5,6 +5,7 @@ import hashlib
 import time
 import uuid
 from asyncio import Semaphore
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Optional, cast
 
@@ -263,17 +264,51 @@ def _final_fallback_message(mode: str) -> str:
     )
 
 
-async def _send_message_handler(
+@dataclass
+class _MessagePreflightResult:
+    request_received: float
+    request_id: str
+    req: MessageRequest
+    normalized_mode: str | None
+    content: str
+    user_id: str
+    is_pro: bool
+    user_id_hash: str
+    content_hash: str
+    client_message_id: str
+    assistant_client_id: str
+    idempotency_key: str
+    idempotency_key_hash: str
+
+
+@dataclass
+class _MessageSetupResult:
+    config_settings: Any
+    is_prod: bool
+    cache_ttl_seconds: int
+    stream_max_seconds: int
+    fallback_budget_seconds: float
+    fallback_timeout_seconds: float
+    close_timeout_seconds: float
+    heartbeat_seconds: float
+    stream_start_timeout_seconds: float
+    idempotency_ttl_seconds: int
+    snapshot_meta_raw: dict[str, Any]
+    snapshot_raw_messages: list[dict[str, Any]]
+    snapshot_meta: dict[str, Any]
+    snapshot_ms: float
+    snapshot_degraded: bool
+    selected_mode: str
+    llm_mode: str
+    prompt_mode: str
+
+
+async def _run_message_preflight(
     request: Request,
-    api_key: ApiKeyRecord = Depends(verify_api_key),
-) -> StreamingResponse:
-    """Handle authenticated chat requests and stream SSE responses."""
+    api_key: ApiKeyRecord,
+) -> _MessagePreflightResult:
     request_received = time.perf_counter()
     request_id = str(getattr(request.state, "request_id", "") or "")
-    snapshot_ms = 0.0
-    db_ms = 0.0
-    snapshot_degraded = False
-
     try:
         raw_payload = await request.json()
     except Exception as exc:
@@ -303,8 +338,6 @@ async def _send_message_handler(
     content = content.strip()
     user_id_hash = anonymize_user_id(user_id)
     content_hash = anonymize_text(content)
-
-
     if not content:
         raise _bad_request("Content is required")
 
@@ -339,6 +372,174 @@ async def _send_message_handler(
         else:
             raise HTTPException(status_code=409, detail="Duplicate request already in progress.")
 
+    return _MessagePreflightResult(
+        request_received=request_received,
+        request_id=request_id,
+        req=req,
+        normalized_mode=normalized_mode,
+        content=content,
+        user_id=user_id,
+        is_pro=is_pro,
+        user_id_hash=user_id_hash,
+        content_hash=content_hash,
+        client_message_id=client_message_id,
+        assistant_client_id=assistant_client_id,
+        idempotency_key=idempotency_key,
+        idempotency_key_hash=idempotency_key_hash,
+    )
+
+
+async def _resolve_message_setup(
+    *,
+    preflight: _MessagePreflightResult,
+    api_key: ApiKeyRecord,
+) -> _MessageSetupResult:
+    req = preflight.req
+    normalized_mode = preflight.normalized_mode
+    user_id = preflight.user_id
+    is_pro = preflight.is_pro
+    request_id = preflight.request_id
+    client_message_id = preflight.client_message_id
+
+    config_settings = get_settings()
+    environment = str(getattr(config_settings, "environment", "") or "").strip().lower()
+    is_prod = environment == "production"
+    cache_ttl_seconds = max(int(getattr(config_settings, "message_cache_ttl_seconds", 3600)), 1)
+    stream_max_seconds = max(int(getattr(config_settings, "stream_max_seconds", 24)), 1)
+    if not is_prod:
+        stream_max_seconds = max(stream_max_seconds, 60)
+    function_duration_cap: int | None = None
+    if is_prod:
+        # Lock production SSE stream cap below Vercel's 25s hard cutoff.
+        function_duration_cap = 24
+        stream_max_seconds = function_duration_cap
+    fallback_budget_seconds = max(
+        1.0,
+        min(float(getattr(config_settings, "stream_fallback_budget_seconds", 6)), float(stream_max_seconds)),
+    )
+    if is_prod:
+        fallback_budget_seconds = max(fallback_budget_seconds, 8.0)
+    fallback_timeout_seconds = max(fallback_budget_seconds, 3.0)
+    close_timeout_seconds = 0.25
+    heartbeat_seconds = min(
+        max(float(getattr(config_settings, "stream_heartbeat_seconds", 2)), 0.1),
+        2,
+    )
+    raw_start_timeout = float(getattr(config_settings, "stream_start_timeout_seconds", 2))
+    idempotency_ttl_seconds = min(
+        max(int(getattr(config_settings, "stream_idempotency_ttl_seconds", 90)), 60),
+        120,
+    )
+
+    history_limit = max(int(getattr(config_settings, "conversation_context_fetch_limit", 80)), 1)
+    snapshot_result = await _context_builder.load_snapshot(
+        conversation_id=req.conversation_id,
+        user_id=user_id,
+        history_limit=history_limit,
+        request_id=request_id,
+        fetch_snapshot=fetch_conversation_snapshot,
+        warm_snapshot=warm_conversation_snapshot,
+    )
+    snapshot_meta_raw = snapshot_result.meta_raw
+    snapshot_raw_messages = snapshot_result.raw_messages
+    snapshot_meta = snapshot_result.meta
+    if snapshot_meta and snapshot_meta.get("user_id") and str(snapshot_meta.get("user_id")) != user_id:
+        await _ingress_dedupe_clear(client_message_id)
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    snapshot_ms = snapshot_result.snapshot_ms
+    snapshot_degraded = snapshot_result.snapshot_degraded
+
+    mode_candidate = (
+        normalized_mode
+        or snapshot_meta.get("mode")
+        or (snapshot_meta.get("settings") or {}).get("mode")
+        or "chat"
+    )
+    try:
+        selected_mode = normalize_mode(mode_candidate)
+    except ValueError:
+        selected_mode = normalize_mode(None)
+
+    llm_mode = LEARNING_MODE if selected_mode in {"chat", "summary"} else selected_mode
+    if llm_mode == TECHNICAL_MODE:
+        stream_max_seconds = max(
+            stream_max_seconds,
+            int(getattr(config_settings, "technical_stream_max_seconds", 45)),
+        )
+        if function_duration_cap is not None:
+            stream_max_seconds = min(stream_max_seconds, function_duration_cap)
+        technical_start_timeout = float(
+            getattr(config_settings, "technical_stream_start_timeout_seconds", max(raw_start_timeout, 6.0))
+        )
+        technical_cap = max(4.0, min(float(stream_max_seconds) * 0.75, 20.0))
+        stream_start_timeout_seconds = min(max(technical_start_timeout, 2.0), technical_cap)
+        fallback_budget_seconds = max(fallback_budget_seconds, 4.0)
+        fallback_timeout_seconds = max(fallback_budget_seconds, 4.0)
+    else:
+        cap = 10.0 if is_prod else 15.0
+        stream_start_timeout_seconds = min(max(raw_start_timeout, 0.1), cap)
+
+    requested_prompt_mode = PROMPT_MODE_ALIASES.get(req.prompt_mode or "", req.prompt_mode or "")
+    stored_prompt_mode = PROMPT_MODE_ALIASES.get(
+        cast(str, snapshot_meta.get("prompt_mode") or ""),
+        cast(str, snapshot_meta.get("prompt_mode") or ""),
+    )
+    prompt_mode = normalize_prompt_level(requested_prompt_mode or stored_prompt_mode)
+    if prompt_mode not in SUPPORTED_PROMPT_MODES:
+        prompt_mode = normalize_prompt_level(None)
+
+    if llm_mode == TECHNICAL_MODE and not is_pro:
+        await _ingress_dedupe_clear(client_message_id)
+        raise HTTPException(status_code=403, detail="Technical mode is a Pro feature")
+    if llm_mode == SOCRATIC_MODE and not is_pro:
+        await _ingress_dedupe_clear(client_message_id)
+        raise HTTPException(status_code=403, detail="Socratic mode is a Pro feature")
+
+    return _MessageSetupResult(
+        config_settings=config_settings,
+        is_prod=is_prod,
+        cache_ttl_seconds=cache_ttl_seconds,
+        stream_max_seconds=stream_max_seconds,
+        fallback_budget_seconds=fallback_budget_seconds,
+        fallback_timeout_seconds=fallback_timeout_seconds,
+        close_timeout_seconds=close_timeout_seconds,
+        heartbeat_seconds=heartbeat_seconds,
+        stream_start_timeout_seconds=stream_start_timeout_seconds,
+        idempotency_ttl_seconds=idempotency_ttl_seconds,
+        snapshot_meta_raw=snapshot_meta_raw,
+        snapshot_raw_messages=snapshot_raw_messages,
+        snapshot_meta=snapshot_meta,
+        snapshot_ms=snapshot_ms,
+        snapshot_degraded=snapshot_degraded,
+        selected_mode=selected_mode,
+        llm_mode=llm_mode,
+        prompt_mode=prompt_mode,
+    )
+
+
+async def _send_message_handler(
+    request: Request,
+    api_key: ApiKeyRecord = Depends(verify_api_key),
+) -> StreamingResponse:
+    """Handle authenticated chat requests and stream SSE responses."""
+    preflight = await _run_message_preflight(request, api_key)
+    request_received = preflight.request_received
+    request_id = preflight.request_id
+    req = preflight.req
+    normalized_mode = preflight.normalized_mode
+    content = preflight.content
+    user_id = preflight.user_id
+    is_pro = preflight.is_pro
+    user_id_hash = preflight.user_id_hash
+    content_hash = preflight.content_hash
+    client_message_id = preflight.client_message_id
+    assistant_client_id = preflight.assistant_client_id
+    idempotency_key = preflight.idempotency_key
+    idempotency_key_hash = preflight.idempotency_key_hash
+    snapshot_ms = 0.0
+    db_ms = 0.0
+    snapshot_degraded = False
+
     lock_acquired = await _acquire_conversation_lock(req.conversation_id, timeout_seconds=1.0)
     if not lock_acquired:
         raise HTTPException(
@@ -350,95 +551,30 @@ async def _send_message_handler(
     response_started = False
 
     try:
-        config_settings = get_settings()
-        environment = str(getattr(config_settings, "environment", "") or "").strip().lower()
-        is_prod = environment == "production"
-        cache_ttl_seconds = max(int(getattr(config_settings, "message_cache_ttl_seconds", 3600)), 1)
-        stream_max_seconds = max(int(getattr(config_settings, "stream_max_seconds", 24)), 1)
-        if not is_prod:
-            stream_max_seconds = max(stream_max_seconds, 60)
-        function_duration_cap: int | None = None
-        if is_prod:
-            # Lock production SSE stream cap below Vercel's 25s hard cutoff.
-            function_duration_cap = 24
-            stream_max_seconds = function_duration_cap
-        fallback_budget_seconds = max(
-            1.0,
-            min(float(getattr(config_settings, "stream_fallback_budget_seconds", 6)), float(stream_max_seconds)),
-        )
-        if is_prod:
-            fallback_budget_seconds = max(fallback_budget_seconds, 8.0)
-        fallback_timeout_seconds = max(fallback_budget_seconds, 3.0)
-        close_timeout_seconds = 0.25
-        heartbeat_seconds = min(
-            max(float(getattr(config_settings, "stream_heartbeat_seconds", 2)), 0.1),
-            2,
-        )
-        raw_start_timeout = float(getattr(config_settings, "stream_start_timeout_seconds", 2))
-        idempotency_ttl_seconds = min(
-            max(int(getattr(config_settings, "stream_idempotency_ttl_seconds", 90)), 60),
-            120,
-        )
+        setup = await _resolve_message_setup(preflight=preflight, api_key=api_key)
+        config_state = get_provider_config_state()
+        config_settings = setup.config_settings
+        is_prod = setup.is_prod
+        cache_ttl_seconds = setup.cache_ttl_seconds
+        stream_max_seconds = setup.stream_max_seconds
+        fallback_budget_seconds = setup.fallback_budget_seconds
+        fallback_timeout_seconds = setup.fallback_timeout_seconds
+        close_timeout_seconds = setup.close_timeout_seconds
+        heartbeat_seconds = setup.heartbeat_seconds
+        stream_start_timeout_seconds = setup.stream_start_timeout_seconds
+        idempotency_ttl_seconds = setup.idempotency_ttl_seconds
+        snapshot_meta_raw = setup.snapshot_meta_raw
+        snapshot_raw_messages = setup.snapshot_raw_messages
+        snapshot_meta = setup.snapshot_meta
+        snapshot_ms = setup.snapshot_ms
+        snapshot_degraded = setup.snapshot_degraded
+        selected_mode = setup.selected_mode
+        llm_mode = setup.llm_mode
+        prompt_mode = setup.prompt_mode
+
         trusted_proxies = _trusted_proxies_from_settings(config_settings)
-
         history_limit = max(int(getattr(config_settings, "conversation_context_fetch_limit", 80)), 1)
-        snapshot_result = await _context_builder.load_snapshot(
-            conversation_id=req.conversation_id,
-            user_id=user_id,
-            history_limit=history_limit,
-            request_id=request_id,
-            fetch_snapshot=fetch_conversation_snapshot,
-            warm_snapshot=warm_conversation_snapshot,
-        )
-        snapshot_meta_raw = snapshot_result.meta_raw
-        snapshot_raw_messages = snapshot_result.raw_messages
-        snapshot_meta = snapshot_result.meta
-        if snapshot_meta and snapshot_meta.get("user_id") and str(snapshot_meta.get("user_id")) != user_id:
-            await _ingress_dedupe_clear(client_message_id)
-            raise HTTPException(status_code=404, detail="Conversation not found")
-        snapshot_ms = snapshot_result.snapshot_ms
-        snapshot_degraded = snapshot_result.snapshot_degraded
 
-        mode_candidate = (
-            normalized_mode
-            or snapshot_meta.get("mode")
-            or (snapshot_meta.get("settings") or {}).get("mode")
-            or "chat"
-        )
-        try:
-            selected_mode = normalize_mode(mode_candidate)
-        except ValueError:
-            selected_mode = normalize_mode(None)
-    
-        llm_mode = LEARNING_MODE if selected_mode in {"chat", "summary"} else selected_mode
-    
-        if llm_mode == TECHNICAL_MODE:
-            stream_max_seconds = max(
-                stream_max_seconds,
-                int(getattr(config_settings, "technical_stream_max_seconds", 45)),
-            )
-            if function_duration_cap is not None:
-                stream_max_seconds = min(stream_max_seconds, function_duration_cap)
-            technical_start_timeout = float(
-                getattr(config_settings, "technical_stream_start_timeout_seconds", max(raw_start_timeout, 6.0))
-            )
-            technical_cap = max(4.0, min(float(stream_max_seconds) * 0.75, 20.0))
-            stream_start_timeout_seconds = min(max(technical_start_timeout, 2.0), technical_cap)
-            fallback_budget_seconds = max(fallback_budget_seconds, 4.0)
-            fallback_timeout_seconds = max(fallback_budget_seconds, 4.0)
-        else:
-            cap = 10.0 if is_prod else 15.0
-            stream_start_timeout_seconds = min(max(raw_start_timeout, 0.1), cap)
-    
-        requested_prompt_mode = PROMPT_MODE_ALIASES.get(req.prompt_mode or "", req.prompt_mode or "")
-        stored_prompt_mode = PROMPT_MODE_ALIASES.get(
-            cast(str, snapshot_meta.get("prompt_mode") or ""),
-            cast(str, snapshot_meta.get("prompt_mode") or ""),
-        )
-        prompt_mode = normalize_prompt_level(requested_prompt_mode or stored_prompt_mode)
-        if prompt_mode not in SUPPORTED_PROMPT_MODES:
-            prompt_mode = normalize_prompt_level(None)
-    
         asyncio.create_task(
             _capture_telemetry_async(
                 "message_send",
@@ -465,20 +601,7 @@ async def _send_message_handler(
                 "prompt_mode": prompt_mode,
             },
         )
-    
-        if llm_mode == TECHNICAL_MODE and not is_pro:
-            await _ingress_dedupe_clear(client_message_id)
-            if not lock_released:
-                _release_conversation_lock(req.conversation_id)
-                lock_released = True
-            raise HTTPException(status_code=403, detail="Technical mode is a Pro feature")
-        if llm_mode == SOCRATIC_MODE and not is_pro:
-            await _ingress_dedupe_clear(client_message_id)
-            if not lock_released:
-                _release_conversation_lock(req.conversation_id)
-                lock_released = True
-            raise HTTPException(status_code=403, detail="Socratic mode is a Pro feature")
-    
+
         # ── Conversation context & intent ──────────────────────────────────────
         history_messages = await _context_builder.parse_snapshot_messages(snapshot_raw_messages, req.conversation_id)
         if not history_messages:
