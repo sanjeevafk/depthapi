@@ -7,7 +7,7 @@ import re
 import hashlib
 from typing import Any
 
-from logging_config import logger
+from api.logging_config import logger
 
 try:
     import sentry_sdk

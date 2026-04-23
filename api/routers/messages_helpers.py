@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from monitoring import capture_telemetry_event
 from services.message_dispatcher import MessageDispatcher
 from services.request_validator import RequestValidator
-from utils import SOCRATIC_MODE, TECHNICAL_MODE
+from api.utils import SOCRATIC_MODE, TECHNICAL_MODE
 
 _request_validator = RequestValidator()
 _message_dispatcher = MessageDispatcher()

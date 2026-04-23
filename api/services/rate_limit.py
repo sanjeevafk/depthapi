@@ -13,8 +13,8 @@ from typing import Any
 from fastapi import HTTPException
 
 from services.circuit_breaker import CircuitBreaker, CircuitBreakerResult
-from config import get_settings
-from logging_config import anonymize_user_id, logger
+from api.config import get_settings
+from api.logging_config import anonymize_user_id, logger
 from services.cache import get_redis
 from services.api_key_auth import ApiKeyRecord, PLAN_MONTHLY_BUDGETS, PLAN_RPM
 from services.quota_manager import QuotaManager, QuotaResult, TokenReservation

@@ -15,8 +15,8 @@ from pydantic import BaseModel
 from standardwebhooks import Webhook, WebhookVerificationError
 
 from services.api_key_auth import ApiKeyRecord, verify_api_key, PLAN_MONTHLY_BUDGETS
-from auth import get_supabase_admin
-from config import get_settings
+from api.auth import get_supabase_admin
+from api.config import get_settings
 from services.rate_limit import check_rate_limit
 from services.redis_safe import safe_redis_command
 

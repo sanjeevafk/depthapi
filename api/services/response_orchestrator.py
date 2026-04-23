@@ -1,11 +1,9 @@
 """Shared SSE response orchestration helpers for message streaming."""
 
 from __future__ import annotations
-
-import asyncio
 from typing import Any, AsyncGenerator, AsyncIterable, Iterable
 
-from logging_config import logger
+from api.logging_config import logger
 from api.repositories.chat_repository import ChatRepository
 from services.streaming import SseEventBuilder
 
@@ -52,11 +50,7 @@ class ResponseOrchestrator:
         retry: bool = False,
     ) -> None:
         try:
-            await asyncio.to_thread(
-                ChatRepository.update_assistant_message,
-                conversation_id,
-                token_buffer,
-            )
+            await ChatRepository.update_assistant_message(conversation_id, token_buffer)
         except Exception as exc:
             logger.error(
                 "messages_assistant_update_failed",

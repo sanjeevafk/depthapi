@@ -4,9 +4,9 @@ from typing import Any
 
 import orjson
 
-from auth import get_supabase_admin
-from config import get_settings
-from logging_config import logger
+from api.auth import get_supabase_admin
+from api.config import get_settings
+from api.logging_config import logger
 from services.cache import get_redis
 from services.redis_safe import safe_redis_call
 
@@ -59,8 +59,8 @@ async def warm_conversation_snapshot(conversation_id: str, user_id: str | None) 
     settings = get_settings()
     history_limit = max(int(getattr(settings, "conversation_context_fetch_limit", 80)), 1)
     try:
-        conversation_resp = await asyncio.to_thread(
-            lambda: supabase.table("conversations")
+        conversation_resp = await (
+            supabase.table("conversations")
             .select("id, user_id, mode, settings, updated_at")
             .eq("id", conversation_id)
             .single()
@@ -85,7 +85,7 @@ async def warm_conversation_snapshot(conversation_id: str, user_id: str | None) 
                 ordered = base.order("sequence_id", desc=True)
             return ordered.limit(history_limit).execute()
 
-        history_resp = await asyncio.to_thread(_history_query)
+        history_resp = await _history_query()
         rows = getattr(history_resp, "data", None)
         messages = list(reversed(rows)) if isinstance(rows, list) else []
     except Exception as exc:

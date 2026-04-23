@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from config import get_settings
+from api.config import get_settings
 
 
 def _normalize_question_signature(question: str) -> str:

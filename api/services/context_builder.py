@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-from logging_config import anonymize_user_id, logger
+from api.logging_config import anonymize_user_id, logger
 from services.cache import get_redis
 from services.conversation_context import (
     ConversationMessage,
@@ -184,8 +184,8 @@ class ContextBuilder:
             return {}, []
 
         try:
-            conversation_resp = await asyncio.to_thread(
-                lambda: supabase.table("conversations")
+            conversation_resp = await (
+                supabase.table("conversations")
                 .select("id, user_id, mode, settings, updated_at")
                 .eq("id", conversation_id)
                 .single()
@@ -197,8 +197,8 @@ class ContextBuilder:
             if str(conversation.get("user_id") or "") != user_id:
                 return {}, []
 
-            messages_resp = await asyncio.to_thread(
-                lambda: supabase.table("messages")
+            messages_resp = await (
+                supabase.table("messages")
                 .select("role, content, created_at, sequence_id")
                 .eq("conversation_id", conversation_id)
                 .order("sequence_id", desc=True, nullsfirst=False)

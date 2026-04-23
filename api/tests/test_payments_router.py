@@ -9,7 +9,7 @@ from standardwebhooks import Webhook
 import auth as auth_module
 import routers.payments as payments_module
 import services.cache as cache_module
-from logging_config import anonymize_user_id
+from api.logging_config import anonymize_user_id
 
 
 def _test_whsec_secret(label: str = "knowbear-test-webhook-secret") -> str:

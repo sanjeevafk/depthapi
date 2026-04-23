@@ -5,8 +5,8 @@ from typing import Any
 
 import httpx
 
-from config import get_settings
-from logging_config import logger
+from api.config import get_settings
+from api.logging_config import logger
 from services.cache import cache_get, cache_set
 
 

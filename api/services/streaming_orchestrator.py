@@ -6,7 +6,7 @@ import time
 import asyncio
 from typing import Any, Callable, Awaitable
 
-from logging_config import logger
+from api.logging_config import logger
 
 
 async def close_stream(stream) -> None:

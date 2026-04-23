@@ -11,9 +11,9 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError
 from openai.types.chat import ChatCompletionMessageParam
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
-from config import get_settings
-from logging_config import anonymize_user_id, logger, log_sampled_success
-from prompts import SYSTEM_PROMPT, build_prompt
+from api.config import get_settings
+from api.logging_config import anonymize_user_id, logger, log_sampled_success
+from api.prompts import SYSTEM_PROMPT, build_prompt
 from services.inference_constants import (
     TECHNICAL_MAX_TOKENS,
     TECHNICAL_MINIMAL_PROMPT,
@@ -65,7 +65,7 @@ from services.utils_shared import (
     extract_estimated_cost as extract_shared_estimated_cost,
     extract_usage_dict as extract_shared_usage_dict,
 )
-from utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE, normalize_mode
+from api.utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE, normalize_mode
 
 _intent_classifier = IntentClassifier()
 _model_router = ModelRouter()

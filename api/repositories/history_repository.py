@@ -1,11 +1,10 @@
 """History repository for optimized upsert operations."""
 
-import asyncio
 from typing import Any
 
-from auth import get_supabase_admin
-from logging_config import logger, anonymize_user_id, anonymize_text
-from utils import normalize_mode
+from api.auth import get_supabase_admin
+from api.logging_config import logger, anonymize_user_id, anonymize_text
+from api.utils import normalize_mode
 
 
 class HistoryRepository:
@@ -29,7 +28,7 @@ class HistoryRepository:
             "p_levels": levels,
         }
         try:
-            await asyncio.to_thread(lambda: supabase.rpc("upsert_history", payload).execute())
+            await supabase.rpc("upsert_history", payload).execute()
             logger.debug(
                 "history_upsert_rpc_ok",
                 user_id_hash=user_id_hash,

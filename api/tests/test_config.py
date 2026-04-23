@@ -1,6 +1,6 @@
 from pydantic import SecretStr
 
-from config import Settings
+from api.config import Settings
 
 
 def test_provider_keys_are_secretstr_and_trimmed():

@@ -1,4 +1,3 @@
-import asyncio
 from datetime import datetime
 from typing import List, Dict, Any
 
@@ -6,25 +5,10 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException
 
 from services.api_key_auth import ApiKeyRecord, verify_api_key
-from auth import get_supabase_admin
-from logging_config import anonymize_user_id
+from api.auth import get_supabase_admin
+from api.logging_config import anonymize_user_id
 from pydantic import BaseModel
-from utils import DEFAULT_CHAT_MODE, SUPPORTED_CHAT_MODES, normalize_mode
-
-logger = structlog.get_logger(__name__)
-
-router = APIRouter(tags=["history"])
-
-class HistoryItem(BaseModel):
-    id: str
-    topic: str
-    levels: List[str]
-    mode: str = DEFAULT_CHAT_MODE
-    created_at: datetime
-from auth import get_supabase_admin
-from logging_config import anonymize_user_id
-from pydantic import BaseModel
-from utils import DEFAULT_CHAT_MODE, SUPPORTED_CHAT_MODES, normalize_mode
+from api.utils import DEFAULT_CHAT_MODE, SUPPORTED_CHAT_MODES, normalize_mode
 
 logger = structlog.get_logger(__name__)
 
@@ -51,8 +35,8 @@ async def get_history(api_key: ApiKeyRecord = Depends(verify_api_key)):
         raise HTTPException(status_code=500, detail="Database connection error")
     
     try:
-        response = await asyncio.to_thread(
-            lambda: supabase.table("history")
+        response = await (
+            supabase.table("history")
             .select("*")
             .eq("user_id", user_id)
             .order("created_at", desc=True)
@@ -80,14 +64,12 @@ async def add_history_item(data: HistoryCreate, api_key: ApiKeyRecord = Depends(
     try:
         normalized_mode = normalize_mode(data.mode)
         mode = normalized_mode if normalized_mode in SUPPORTED_CHAT_MODES else DEFAULT_CHAT_MODE
-        response = await asyncio.to_thread(
-            lambda: supabase.table("history").insert({
+        response = await supabase.table("history").insert({
                 "user_id": user_id,
                 "topic": data.topic,
                 "levels": data.levels,
                 "mode": mode
             }).execute()
-        )
 
         
         if not response.data:
@@ -108,8 +90,8 @@ async def delete_history_item(item_id: str, api_key: ApiKeyRecord = Depends(veri
         
     try:
         # Securely delete only if user_id matches
-        await asyncio.to_thread(
-            lambda: supabase.table("history")
+        await (
+            supabase.table("history")
             .delete()
             .eq("id", item_id)
             .eq("user_id", user_id)
@@ -134,9 +116,7 @@ async def clear_history(api_key: ApiKeyRecord = Depends(verify_api_key)):
         raise HTTPException(status_code=500, detail="Database connection error")
         
     try:
-        await asyncio.to_thread(
-            lambda: supabase.table("history").delete().eq("user_id", user_id).execute()
-        )
+        await supabase.table("history").delete().eq("user_id", user_id).execute()
         return {"status": "cleared"}
 
     except Exception as e:

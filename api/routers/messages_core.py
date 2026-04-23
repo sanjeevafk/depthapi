@@ -13,10 +13,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 import orjson
 
-from auth import get_supabase_admin
+from api.auth import get_supabase_admin
 from services.api_key_auth import ApiKeyRecord, verify_api_key
-from config import CONTEXT_LOAD_TIMEOUTS, get_settings
-from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
+from api.config import CONTEXT_LOAD_TIMEOUTS, get_settings
+from api.logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from monitoring import capture_telemetry_event
 from services.analytics import build_llm_request_payload, record_llm_request
 import services.cache as cache_module
@@ -55,7 +55,7 @@ from services.redis_safe import safe_redis_call
 from services.rate_limit import _resolve_limits, enforce_request_controls
 from services.streaming import SseEventBuilder, SSE_RESPONSE_HEADERS
 from services.token_count import count_prompt_tokens
-from utils import (
+from api.utils import (
     PROMPT_MODE_ALIASES,
     SUPPORTED_PROMPT_MODES,
     LEARNING_MODE,
@@ -732,7 +732,7 @@ async def _send_message_handler(
             if safe_sequence_id is not None:
                 payload["sequence_id"] = safe_sequence_id
             try:
-                await asyncio.to_thread(lambda: supabase.table("messages").insert(payload).execute())
+                await supabase.table("messages").insert(payload).execute()
                 logger.info(
                     "messages_user_inserted",
                     request_id=request_id,
@@ -772,7 +772,7 @@ async def _send_message_handler(
             if safe_sequence_id is not None:
                 payload["sequence_id"] = safe_sequence_id
             try:
-                await asyncio.to_thread(lambda: supabase.table("messages").insert(payload).execute())
+                await supabase.table("messages").insert(payload).execute()
                 logger.info(
                     "messages_assistant_inserted",
                     request_id=request_id,
@@ -808,8 +808,8 @@ async def _send_message_handler(
                 "updated_at": now_iso,
             }
             try:
-                await asyncio.to_thread(
-                    lambda: supabase.table("conversations")
+                await (
+                    supabase.table("conversations")
                     .update(update_payload)
                     .eq("id", req.conversation_id)
                     .execute()

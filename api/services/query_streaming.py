@@ -16,7 +16,7 @@ from services.api_key_auth import ApiKeyRecord
 
 from fastapi.responses import StreamingResponse
 
-from logging_config import logger, log_sampled_success
+from api.logging_config import logger, log_sampled_success
 from services.streaming import SseEventBuilder, SSE_RESPONSE_HEADERS
 from services.streaming_orchestrator import (
     close_stream,

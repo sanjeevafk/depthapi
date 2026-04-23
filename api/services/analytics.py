@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from auth import get_supabase_admin
-from logging_config import logger
+from api.auth import get_supabase_admin
+from api.logging_config import logger
 from monitoring import redact_pii
 
 
@@ -65,7 +64,7 @@ async def record_llm_request(payload: dict[str, Any]) -> None:
     sanitized = redact_pii(payload)
     sanitized = {key: value for key, value in sanitized.items() if value is not None}
     try:
-        await asyncio.to_thread(lambda: supabase.table("llm_requests").insert(sanitized).execute())
+        await supabase.table("llm_requests").insert(sanitized).execute()
     except Exception as exc:
         logger.error("analytics_llm_insert_failed", error=str(exc))
 

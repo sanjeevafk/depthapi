@@ -5,9 +5,9 @@ from __future__ import annotations
 import re
 from typing import TypedDict
 
-from logging_config import logger
+from api.logging_config import logger
 from services.intent import detect_intent_and_depth
-from utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE
+from api.utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE
 from services.inference_constants import (
     MODEL_PROFILES,
     COST_PENALTY,

@@ -3,7 +3,7 @@ import time
 from collections import Counter
 from typing import Any, Awaitable, Callable
 
-from logging_config import logger
+from api.logging_config import logger
 
 REDIS_CALL_TIMEOUT_SECONDS = 0.8
 REDIS_CIRCUIT_BREAK_SECONDS = 30

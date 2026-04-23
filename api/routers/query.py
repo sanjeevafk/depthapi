@@ -10,8 +10,8 @@ from pydantic import BaseModel, Field
 
 from services.api_key_auth import ApiKeyRecord, verify_api_key
 from services.query_helpers import normalize_levels, cache_key
-from config import get_settings
-from logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
+from api.config import get_settings
+from api.logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from services.cache import cache_get, cache_get_many, cache_set, cache_set_many, check_idempotency_and_cache
 from services.inference import generate_explanation, generate_stream_explanation
 from services.llm_client import get_provider_config_state
@@ -23,7 +23,7 @@ from services.query_streaming import (
     build_query_stream_response,
 )
 from services.idempotency import query_stream_idempotency_key, compute_retry_after_ms
-from utils import (
+from api.utils import (
     DEFAULT_CHAT_MODE,
     FREE_LEVELS,
     LEARNING_MODE,
@@ -57,8 +57,7 @@ class QueryResponse(BaseModel):
 
 async def save_to_history(api_key_id: str, topic: str, levels: list[str], mode: str) -> None:
     """Persist query history scoped to the API key project. Best-effort; never raises."""
-    from auth import get_supabase_admin
-    import asyncio
+    from api.auth import get_supabase_admin
 
     normalized_mode = normalize_mode(mode)
     topic_hash = anonymize_text(topic)
@@ -70,8 +69,8 @@ async def save_to_history(api_key_id: str, topic: str, levels: list[str], mode: 
         return
 
     try:
-        existing = await asyncio.to_thread(
-            lambda: supabase.table("history")
+        existing = await (
+            supabase.table("history")
             .select("id, levels")
             .eq("user_id", api_key_id)
             .eq("topic", topic)
@@ -83,15 +82,15 @@ async def save_to_history(api_key_id: str, topic: str, levels: list[str], mode: 
             item_id = data[0].get("id")
             existing_levels = set(data[0].get("levels") or [])
             new_levels = list(existing_levels.union(set(levels)))
-            await asyncio.to_thread(
-                lambda: supabase.table("history")
+            await (
+                supabase.table("history")
                 .update({"levels": new_levels, "mode": normalized_mode})
                 .eq("id", item_id)
                 .execute()
             )
         else:
-            await asyncio.to_thread(
-                lambda: supabase.table("history")
+            await (
+                supabase.table("history")
                 .insert({"user_id": api_key_id, "topic": topic, "levels": levels, "mode": normalized_mode})
                 .execute()
             )
