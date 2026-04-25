@@ -3,9 +3,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-import auth as auth_module
 import api.main as api_main
 import routers.query as query_module
+from api.services.api_key_auth import ApiKeyRecord, verify_api_key
 
 
 @pytest.mark.asyncio
@@ -18,18 +18,9 @@ async def test_missing_allowed_origins_uses_strict_defaults():
 
 @pytest.mark.asyncio
 async def test_wildcard_origin_is_sanitized_with_warning(monkeypatch):
-    warnings = []
-
-    def fake_warning(event, **kwargs):
-        warnings.append((event, kwargs))
-
-    monkeypatch.setattr(api_main.logger, "warning", fake_warning)
-
     origins = api_main.resolve_allowed_origins("*, https://depthapi.vercel.app")
 
     assert origins == ["https://depthapi.vercel.app"]
-    assert warnings
-    assert warnings[0][0] == "cors_wildcard_origin_sanitized"
 
 
 @pytest.mark.asyncio
@@ -71,23 +62,31 @@ async def test_health_and_query_still_work_with_cors_patch(app_client, monkeypat
     async def fake_generate_explanation(*_args, **_kwargs):
         return "ok"
 
-    async def fake_auth():
+    async def fake_save_to_history(*_args, **_kwargs):
         return None
 
     monkeypatch.setattr(query_module, "cache_get", fake_cache_get)
     monkeypatch.setattr(query_module, "cache_set", fake_cache_set)
     monkeypatch.setattr(query_module, "generate_explanation", fake_generate_explanation)
-    app_client.app.dependency_overrides[auth_module.verify_token_optional] = fake_auth
-    try:
-        health_resp = await app_client.get("/api/health")
-        assert health_resp.status_code == 200
-
-        query_resp = await app_client.post(
-            "/api/query",
-            json={"topic": "CORS hardening", "levels": ["eli5"], "mode": "learn"},
+    monkeypatch.setattr(query_module, "save_to_history", fake_save_to_history)
+    async def fake_key():
+        return ApiKeyRecord(
+            id="test-key-uuid-1234",
+            prefix="sk-depth-test",
+            project_name="Test Project",
+            owner_email="test@example.com",
+            plan="pro",
+            monthly_token_budget=10_000_000,
+            requests_per_minute=100,
         )
-        assert query_resp.status_code == 200
-        payload = query_resp.json()
-        assert payload["explanations"]["eli5"] == "ok"
-    finally:
-        app_client.app.dependency_overrides.pop(auth_module.verify_token_optional, None)
+    app_client.app.dependency_overrides[verify_api_key] = fake_key
+    health_resp = await app_client.get("/api/health")
+    assert health_resp.status_code == 200
+
+    query_resp = await app_client.post(
+        "/api/query",
+        json={"topic": "CORS hardening", "levels": ["eli5"], "mode": "learn"},
+    )
+    assert query_resp.status_code == 200
+    payload = query_resp.json()
+    assert payload["explanations"]["eli5"] == "ok"

@@ -9,8 +9,7 @@ import orjson
 
 import api.services.cache as cache_module
 from api.logging_config import logger
-from api.services.cache import cache_set_value
-from api.services.message_gate import append_conversation_message
+from api.services.message_gate import cache_set_value, append_conversation_message
 from api.services.redis_safe import safe_redis_call
 from api.services.stream_persistence import StreamPersistence
 

@@ -27,7 +27,7 @@ class CaptureQuery:
     def single(self):
         return self
 
-    def execute(self):
+    async def execute(self):
         return SimpleNamespace(data=self.response)
 
 

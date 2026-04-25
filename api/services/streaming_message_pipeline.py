@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 from api.auth import get_supabase_admin
 from api.config import CONTEXT_LOAD_TIMEOUTS
 from api.logging_config import logger
-from api.services.cache import cache_get_value
+from api.services.message_gate import cache_get_value
 from api.services.conversation_context import ConversationMessage
 from api.services.conversation_intent import (
     ConversationIntent,

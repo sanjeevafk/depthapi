@@ -24,6 +24,7 @@ from api.services.stream_helpers import (
 from api.services.stream_event_finalize import finalize_assistant_message
 from api.services.stream_persistence import StreamPersistence
 from api.services.token_count import count_prompt_tokens
+from api.services.conversation_context import ConversationMessage
 from api.utils import SOCRATIC_MODE, TECHNICAL_MODE
 
 
@@ -59,14 +60,14 @@ class StreamEventLoop:
         idempotency_ttl_seconds: int,
         history_limit: int,
         ack_message: str | None,
-        intent_system_prompt: str,
+        intent_system_prompt: str | None,
         socratic_context: str,
-        context_messages: list[dict[str, Any]],
+        context_messages: list[ConversationMessage],
         ensure_context_for_stream: Callable[[], Any],
         cache_key: str,
         cached_response: str | None,
         gatekeeper: Any,
-        redis_eval_ms: float,
+        redis_eval_ms: float | None,
         redis_degraded: bool,
         force_non_stream: bool,
         assistant_message_id: str,
@@ -100,14 +101,14 @@ class StreamEventLoop:
         self.idempotency_ttl_seconds = idempotency_ttl_seconds
         self.history_limit = history_limit
         self.ack_message = ack_message
-        self.intent_system_prompt = intent_system_prompt
+        self.intent_system_prompt = intent_system_prompt or ""
         self.socratic_context = socratic_context
         self.context_messages = context_messages
         self.ensure_context_for_stream = ensure_context_for_stream
         self.cache_key = cache_key
         self.cached_response = cached_response
         self.gatekeeper = gatekeeper
-        self.redis_eval_ms = redis_eval_ms
+        self.redis_eval_ms = float(redis_eval_ms) if redis_eval_ms is not None else 0.0
         self.redis_degraded = redis_degraded
         self.force_non_stream = force_non_stream
         self.assistant_message_id = assistant_message_id

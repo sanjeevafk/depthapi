@@ -568,6 +568,11 @@ class FakeSupabase:
         return query
 
 
+@pytest.fixture
+def fake_supabase():
+    return FakeSupabase()
+
+
 @pytest.fixture(scope="session")
 def test_settings():
     return SimpleNamespace(
@@ -684,10 +689,12 @@ def patch_llm_client(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def patch_asyncio_to_thread(monkeypatch):
+    import asyncio
+
     async def fake_to_thread(func, /, *args, **kwargs):
         return func(*args, **kwargs)
 
-    monkeypatch.setattr(auth_module.asyncio, "to_thread", fake_to_thread)
+    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
 
 
 @pytest.fixture(autouse=True)
@@ -710,7 +717,6 @@ async def app_client(monkeypatch, dummy_redis):
         return dummy_redis
 
     monkeypatch.setattr(cache_module, "get_redis", _get_redis)
-    monkeypatch.setattr(auth_module, "get_redis", _get_redis)
     monkeypatch.setattr(rate_limit_module, "get_redis", _get_redis)
     monkeypatch.setattr(message_gate_module, "get_redis", _get_redis)
     monkeypatch.setattr(conversation_cache_module, "get_redis", _get_redis)
@@ -746,7 +752,6 @@ def fake_api_key_record():
         plan="pro",
         monthly_token_budget=10000000,
         requests_per_minute=100,
-        is_active=True
     )
 
 

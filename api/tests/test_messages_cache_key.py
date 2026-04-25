@@ -1,4 +1,4 @@
-from api.routers.messages import _message_cache_key
+from api.routers.messages_helpers import message_cache_key as _message_cache_key
 
 
 def test_message_cache_key_scoped_to_conversation_and_user():

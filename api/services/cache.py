@@ -197,9 +197,6 @@ class UpstashRedisCompat:
 
 
 _client: UpstashRedisCompat | None = None
-
-
-_client: UpstashRedisCompat | None = None
 _client_lock: asyncio.Lock | None = None
 _client_lock_loop: asyncio.AbstractEventLoop | None = None
 _thread_lock = threading.Lock()

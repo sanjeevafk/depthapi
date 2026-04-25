@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import services.rate_limit as rate_limit_module
+from services.api_key_auth import ApiKeyRecord
 
 
 def test_estimate_tokens_for_text_uses_output_buffer(monkeypatch) -> None:
@@ -18,39 +17,41 @@ def test_quota_keys_include_identifier_and_mode() -> None:
 
 
 def test_resolve_limits_for_anonymous_uses_anon_limits() -> None:
-    settings = SimpleNamespace(
-        rate_limit_burst_window_seconds=8,
-        rate_limit_sustained_window_seconds=60,
-        anon_daily_token_quota=1000,
-        anon_rph=20,
+    settings = object()
+    api_key = ApiKeyRecord(
+        id="starter-key",
+        prefix="sk-depth-starter",
+        project_name="Starter",
+        owner_email="starter@example.com",
+        plan="starter",
+        monthly_token_budget=3_000_000,
+        requests_per_minute=20,
     )
     daily, hourly, rpm, burst, sustained_window, burst_window = rate_limit_module._resolve_limits(
         settings=settings,
-        is_authenticated=False,
-        is_pro=False,
-        mode="learn",
+        api_key=api_key,
     )
-    assert daily == 1000
-    assert hourly == 0
+    assert daily == 100000
+    assert hourly == 16666
     assert rpm == 20
-    assert burst == 0
-    assert sustained_window == 3600
-    assert burst_window == 8
+    assert burst == 30
+    assert sustained_window == 60
+    assert burst_window == 10
 
 
 def test_resolve_limits_for_pro_uses_pro_fields() -> None:
-    settings = SimpleNamespace(
-        rate_limit_burst_window_seconds=10,
-        rate_limit_sustained_window_seconds=45,
-        pro_daily_token_quota=9000,
-        pro_hourly_token_quota=1200,
-        pro_rpm=60,
-        pro_burst=15,
+    settings = object()
+    api_key = ApiKeyRecord(
+        id="pro-key",
+        prefix="sk-depth-pro",
+        project_name="Pro",
+        owner_email="pro@example.com",
+        plan="pro",
+        monthly_token_budget=9_000_000,
+        requests_per_minute=60,
     )
     daily, hourly, rpm, burst, sustained_window, burst_window = rate_limit_module._resolve_limits(
         settings=settings,
-        is_authenticated=True,
-        is_pro=True,
-        mode="technical",
+        api_key=api_key,
     )
-    assert (daily, hourly, rpm, burst, sustained_window, burst_window) == (9000, 1200, 60, 15, 45, 10)
+    assert (daily, hourly, rpm, burst, sustained_window, burst_window) == (300000, 50000, 60, 90, 60, 10)
