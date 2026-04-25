@@ -12,7 +12,7 @@ from monitoring import capture_telemetry_event
 
 import api.services.cache as cache_module
 from api.services.analytics import build_llm_request_payload, record_llm_request
-from api.services.cache import cache_set_value
+from api.services.message_gate import cache_set_value
 from api.services.conversation_context import ConversationMessage
 from api.services.message_dispatcher import MessageDispatcher
 from api.services.inference import generate_explanation

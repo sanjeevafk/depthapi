@@ -74,7 +74,7 @@ async def test_authenticated_requests_fail_open_when_store_unavailable(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_anonymous_requests_fail_closed_when_store_unavailable(monkeypatch, test_settings):
+async def test_anonymous_requests_fail_open_when_store_unavailable(monkeypatch, test_settings):
     test_settings.anon_rph = 1
     test_settings.circuit_breaker_tokens_per_minute = 0
 
@@ -84,15 +84,15 @@ async def test_anonymous_requests_fail_closed_when_store_unavailable(monkeypatch
     monkeypatch.setattr(rate_limit_module, "get_settings", lambda: test_settings)
     monkeypatch.setattr(rate_limit_module, "get_redis", broken_get_redis)
 
-    with pytest.raises(Exception) as exc_info:
-        await rate_limit_module.enforce_request_controls(
-            user_id=None,
-            client_ip="127.0.0.1",
-            reserved_tokens=100,
-            mode="learn",
-        )
+    reservation = await rate_limit_module.enforce_request_controls(
+        user_id="anon-user",
+        client_ip="127.0.0.1",
+        reserved_tokens=100,
+        mode="learn",
+    )
 
-    assert getattr(exc_info.value, "status_code", None) == 503
+    assert reservation.identifier == "key:anon-user"
+    assert reservation.is_anonymous is True
 
 
 @pytest.mark.asyncio

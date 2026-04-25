@@ -9,8 +9,10 @@ from types import SimpleNamespace
 import pytest
 
 import main as main_app
-import routers.messages as messages_module
 import api.services.message_gate as message_gate
+import api.services.inference as inference_module
+import api.auth as auth_module
+import api.services.streaming_message_pipeline as pipeline_module
 
 
 def _allow_gatekeeper(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -25,7 +27,6 @@ def _allow_gatekeeper(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
     monkeypatch.setattr(message_gate, "gatekeep_message_request", _allow)
-    monkeypatch.setattr(messages_module, "gatekeep_message_request", _allow)
 
 
 @pytest.mark.asyncio
@@ -40,17 +41,30 @@ async def test_benchmark_message_throughput(
         return {"user": user, "is_pro": True, "exp": time.time() + 600}
 
     async def fake_fetch_snapshot(**_kwargs: object) -> tuple[str | None, list[str]]:
-        return None, []
+        # Return a valid conversation meta so the pipeline doesn't 404
+        return "{}", []
 
     async def fast_stream(*_args: object, **_kwargs: object):
         yield "ok"
 
     _allow_gatekeeper(monkeypatch)
-    main_app.app.dependency_overrides[messages_module.verify_token] = fake_verify_token
-    monkeypatch.setattr(messages_module, "fetch_conversation_snapshot", fake_fetch_snapshot)
-    monkeypatch.setattr(messages_module, "generate_stream_explanation", fast_stream)
-    monkeypatch.setattr(messages_module, "get_supabase_admin", lambda: None)
-    monkeypatch.setattr(messages_module, "get_settings", lambda: test_settings)
+    # The messages endpoint now uses verify_api_key from api.services.api_key_auth
+    from api.services.api_key_auth import verify_api_key, ApiKeyRecord
+    bench_api_key = ApiKeyRecord(
+        id="bench-key-uuid",
+        prefix="sk-bench",
+        project_name="Bench Project",
+        owner_email="bench@example.com",
+        plan="pro",
+        monthly_token_budget=10000000,
+        requests_per_minute=100,
+    )
+    main_app.app.dependency_overrides[verify_api_key] = lambda: bench_api_key
+    monkeypatch.setattr(message_gate, "fetch_conversation_snapshot", fake_fetch_snapshot)
+    monkeypatch.setattr(inference_module, "generate_stream_explanation", fast_stream)
+    monkeypatch.setattr(auth_module, "get_supabase_admin", lambda: None)
+    monkeypatch.setattr(auth_module, "get_settings", lambda: test_settings)
+    monkeypatch.setattr(pipeline_module, "get_supabase_admin", lambda: None)
 
     payload_base = {
         "conversation_id": "bench-conversation",
@@ -88,4 +102,4 @@ async def test_benchmark_message_throughput(
 
         assert throughput_rps > 0
     finally:
-        main_app.app.dependency_overrides.pop(messages_module.verify_token, None)
+        main_app.app.dependency_overrides.pop(verify_api_key, None)

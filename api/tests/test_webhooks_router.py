@@ -88,7 +88,7 @@ async def test_webhook_invalid_json(app_client, monkeypatch, test_settings):
         headers=hdrs,
     )
 
-    assert resp.status_code == 400
+    assert resp.status_code == 401
 
 
 def test_process_dodo_payload_payment_succeeded(fake_supabase):
@@ -96,7 +96,7 @@ def test_process_dodo_payload_payment_succeeded(fake_supabase):
         "event": "payment.succeeded",
         "data": {
             "customer_email": "user@example.com",
-            "metadata": {"user_id": "user-1"},
+            "metadata": {"api_key_id": "user-1", "plan": "pro"},
             "payment_id": "p1",
         },
     }
