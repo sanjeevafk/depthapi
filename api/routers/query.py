@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from api.services.api_key_auth import ApiKeyRecord, verify_api_key
 from api.services.query_helpers import normalize_levels, cache_key
-from api.config import get_settings
+from api.config import get_settings, get_stream_config
 from api.logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from api.services.cache import cache_get, cache_get_many, cache_set, cache_set_many, check_idempotency_and_cache
 from api.services.inference import generate_explanation, generate_stream_explanation
@@ -305,40 +305,26 @@ async def query_topic_stream(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="message_id must be a UUID") from exc
 
-    settings = get_settings()
-    environment = str(getattr(settings, "environment", "") or "").strip().lower()
-    is_prod = environment == "production"
-    stream_max_seconds = max(int(getattr(settings, "stream_max_seconds", 25)), 1)
-    fallback_budget_seconds = max(
-        1.0,
-        min(float(getattr(settings, "stream_fallback_budget_seconds", 6)), float(stream_max_seconds)),
-    )
-    fallback_timeout_seconds = max(fallback_budget_seconds, 3.0)
-    heartbeat_seconds = min(
-        max(float(getattr(settings, "stream_heartbeat_seconds", 2)), 0.1),
-        2,
-    )
-    raw_start_timeout = float(getattr(settings, "stream_start_timeout_seconds", 2))
-    idempotency_ttl_seconds = min(
-        max(int(getattr(settings, "stream_idempotency_ttl_seconds", 90)), 60),
-        120,
-    )
-    idempotency_stale_seconds = max(
-        5,
-        min(int(getattr(settings, "stream_idempotency_stale_seconds", 20)), idempotency_ttl_seconds),
-    )
+    stream_config = get_stream_config()
+    is_prod = stream_config.is_prod
+    stream_max_seconds = stream_config.stream_max_seconds_learning
+    fallback_budget_seconds = stream_config.fallback_budget_seconds
+    fallback_timeout_seconds = stream_config.fallback_timeout_seconds
+    heartbeat_seconds = stream_config.heartbeat_seconds
+    idempotency_ttl_seconds = stream_config.idempotency_ttl_seconds
+    idempotency_stale_seconds = stream_config.idempotency_stale_seconds
+
     if mode == TECHNICAL_MODE:
-        stream_max_seconds = max(stream_max_seconds, int(getattr(settings, "technical_stream_max_seconds", 45)))
-        technical_start_timeout = float(
-            getattr(settings, "technical_stream_start_timeout_seconds", max(raw_start_timeout, 6.0))
-        )
+        stream_max_seconds = max(stream_max_seconds, stream_config.stream_max_seconds_technical)
         technical_cap = max(4.0, min(float(stream_max_seconds) * 0.75, 20.0))
-        stream_start_timeout_seconds = min(max(technical_start_timeout, 2.0), technical_cap)
+        stream_start_timeout_seconds = min(
+            max(stream_config.technical_stream_start_timeout_seconds, 2.0), technical_cap
+        )
         fallback_budget_seconds = max(fallback_budget_seconds, 4.0)
         fallback_timeout_seconds = max(fallback_budget_seconds, 4.0)
     else:
         cap = 25.0 if is_prod else 60.0
-        stream_start_timeout_seconds = min(max(raw_start_timeout, 0.1), cap)
+        stream_start_timeout_seconds = min(max(stream_config.stream_start_timeout_seconds, 0.1), cap)
 
     idempotency_key: str | None = None
     idempotency_started_at: int | None = None

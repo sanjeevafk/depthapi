@@ -12,8 +12,9 @@
   "typeCheckingMode": "basic",
   "executionEnvironments": [
     {
-      "root": "api",
+      "root": ".",
       "extraPaths": [
+        ".",
         "api"
       ]
     }

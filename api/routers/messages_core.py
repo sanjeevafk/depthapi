@@ -42,6 +42,8 @@ _context_builder = ContextBuilder()
 _message_dispatcher = MessageDispatcher()
 _message_workflow = MessageWorkflow()
 _lock_manager = ConversationLockManager(max_locks=10000, ttl_seconds=600)
+# Public aliases used by facade modules/tests without touching private names.
+message_workflow = _message_workflow
 
 
 class MessageRequest(BaseModel):
@@ -371,6 +373,14 @@ async def _send_message_handler(
         preflight=preflight,
         setup=setup,
     )
+
+
+async def send_message_handler(
+    request: Request,
+    api_key: ApiKeyRecord = Depends(verify_api_key),
+) -> StreamingResponse:
+    """Public wrapper to avoid private-usage warnings in facades."""
+    return await _send_message_handler(request=request, api_key=api_key)
 
 
 @router.post("/messages")

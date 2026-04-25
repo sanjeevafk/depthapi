@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import time
-from asyncio import Semaphore
 from typing import Any, Optional
 
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
 
 from monitoring import capture_telemetry_event
+from api.services.conversation_lock_manager import ConversationLockManager
 from api.services.message_dispatcher import MessageDispatcher
 from api.services.request_validator import RequestValidator
 from api.utils import SOCRATIC_MODE, TECHNICAL_MODE
@@ -19,10 +18,10 @@ from api.utils import SOCRATIC_MODE, TECHNICAL_MODE
 _request_validator = RequestValidator()
 _message_dispatcher = MessageDispatcher()
 
-_CONVERSATION_LOCKS: dict[str, tuple[Semaphore, float]] = {}
-_CONVERSATION_LOCKS_LOCK = asyncio.Lock()
-_CONVERSATION_LOCK_TTL_SECONDS = 600.0
-_CONVERSATION_LOCK_MAX = 10000
+# Singleton lock manager replaces inline _CONVERSATION_LOCKS dict.
+# This consolidates lock state and eliminates duplication with
+# api/services/conversation_lock_manager.py.
+_lock_manager = ConversationLockManager(max_locks=10000, ttl_seconds=600)
 
 
 class MessageRequest(BaseModel):
@@ -38,56 +37,14 @@ class MessageRequest(BaseModel):
     regenerate: bool = False
 
 
-def prune_conversation_locks(now: float) -> None:
-    if len(_CONVERSATION_LOCKS) <= _CONVERSATION_LOCK_MAX:
-        cutoff = now - _CONVERSATION_LOCK_TTL_SECONDS
-    else:
-        cutoff = now - min(_CONVERSATION_LOCK_TTL_SECONDS, 120.0)
-
-    stale_keys: list[str] = []
-    for key, (sem, last_used) in _CONVERSATION_LOCKS.items():
-        if last_used >= cutoff:
-            continue
-        sem_value = getattr(sem, "_value", None)
-        if sem_value == 1:
-            stale_keys.append(key)
-
-    for key in stale_keys:
-        _CONVERSATION_LOCKS.pop(key, None)
-
-
 async def acquire_conversation_lock(conversation_id: str, timeout_seconds: float = 1.0) -> bool:
-    async with _CONVERSATION_LOCKS_LOCK:
-        now = time.time()
-        prune_conversation_locks(now)
-        entry = _CONVERSATION_LOCKS.get(conversation_id)
-        if entry is None:
-            sem = Semaphore(1)
-            _CONVERSATION_LOCKS[conversation_id] = (sem, now)
-        else:
-            sem, _last_used = entry
-            _CONVERSATION_LOCKS[conversation_id] = (sem, now)
-    try:
-        await asyncio.wait_for(sem.acquire(), timeout=timeout_seconds)
-        async with _CONVERSATION_LOCKS_LOCK:
-            _CONVERSATION_LOCKS[conversation_id] = (sem, time.time())
-        return True
-    except asyncio.TimeoutError:
-        return False
+    """Acquire conversation lock via the shared ConversationLockManager."""
+    return await _lock_manager.acquire(conversation_id, timeout_seconds=timeout_seconds)
 
 
 def release_conversation_lock(conversation_id: str) -> None:
-    entry = _CONVERSATION_LOCKS.get(conversation_id)
-    if not entry:
-        return
-    sem, last_used = entry
-    sem.release()
-    now = time.time()
-    sem_value = getattr(sem, "_value", None)
-    if sem_value == 1 and (now - last_used) >= _CONVERSATION_LOCK_TTL_SECONDS:
-        _CONVERSATION_LOCKS.pop(conversation_id, None)
-        return
-    _CONVERSATION_LOCKS[conversation_id] = (sem, now)
+    """Release conversation lock via the shared ConversationLockManager."""
+    _lock_manager.release(conversation_id)
 
 
 def trusted_proxies_from_settings(config_settings: Any) -> set[str]:

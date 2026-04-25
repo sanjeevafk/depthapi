@@ -8,7 +8,7 @@ Responsibilities:
 """
 
 import time
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException
 
@@ -16,7 +16,7 @@ from api.services.circuit_breaker import CircuitBreaker, CircuitBreakerResult
 from api.config import get_settings
 from api.logging_config import anonymize_user_id, logger
 from api.services.cache import get_redis
-from api.services.api_key_auth import ApiKeyRecord, PLAN_MONTHLY_BUDGETS, PLAN_RPM
+from api.services.api_key_auth import ApiKeyRecord, PLAN_RPM
 from api.services.quota_manager import QuotaManager, QuotaResult, TokenReservation
 from api.services.redis_safe import safe_redis_call
 from api.services.token_count import count_prompt_tokens
@@ -176,6 +176,27 @@ _quota_manager = QuotaManager()
 _circuit_breaker = CircuitBreaker()
 
 
+def _as_int(value: Any, default: int = 0) -> int:
+    """Best-effort int parsing for Redis Lua eval return values."""
+    try:
+        if value is None:
+            return default
+        if isinstance(value, bytes):
+            return int(value.decode("utf-8"))
+        return int(value)
+    except Exception:
+        return default
+
+
+def _as_redis_eval_items(result: Any) -> list[Any] | None:
+    """Normalize Redis eval responses to an indexable list."""
+    if isinstance(result, list):
+        return cast(list[Any], result)
+    if isinstance(result, tuple):
+        return list(cast(tuple[Any, ...], result))
+    return None
+
+
 def estimate_tokens_for_text(text: str, *, output_buffer: int | None = None) -> int:
     """Estimate request token cost before inference to enforce hard pre-call quotas."""
     settings = get_settings()
@@ -215,10 +236,11 @@ async def check_rate_limit(
             "return {count, ttl}\n"
         )
         result = await safe_redis_call(redis.eval, script, 1, key, window_seconds, operation="eval")
-        if not isinstance(result, (list, tuple)):
+        items = _as_redis_eval_items(result)
+        if items is None:
             raise RuntimeError("redis result unavailable")
-        count = int(result[0] if result else 0)
-        ttl = int(result[1] if result and len(result) > 1 else window_seconds)
+        count = _as_int(items[0], 0) if len(items) > 0 else 0
+        ttl = _as_int(items[1], window_seconds) if len(items) > 1 else window_seconds
 
         if count > limit:
             return RateLimitResult(
@@ -409,12 +431,13 @@ async def enforce_request_controls(
             circuit_open_seconds,
             operation="eval",
         )
-        if not isinstance(result, (list, tuple)):
+        items = _as_redis_eval_items(result)
+        if items is None:
             raise RuntimeError("redis result unavailable")
     except Exception as exc:
         logger.warning(
             "unified_controls_failed",
-            user_id_hash=anonymize_user_id(str(user_id) if user_id is not None else None),
+            user_id_hash=anonymize_user_id(user_id),
             fail_open=fail_open,
             error=str(exc),
         )
@@ -423,24 +446,24 @@ async def enforce_request_controls(
                 identifier=identifier,
                 mode=mode,
                 reserved_tokens=requested_tokens,
-                is_anonymous=not is_authenticated,
+                is_anonymous=(api_key is None),
                 hourly_bucket=now_minute,
             )
         raise HTTPException(status_code=503, detail={"type": "rate_limiter_unavailable"})
 
-    burst_ok = bool(int(result[0])) if len(result) > 0 else True
-    sustained_ok = bool(int(result[1])) if len(result) > 1 else True
-    daily_ok = bool(int(result[2])) if len(result) > 2 else True
-    hourly_ok = bool(int(result[3])) if len(result) > 3 else True
-    circuit_ok = bool(int(result[4])) if len(result) > 4 else True
+    burst_ok = bool(_as_int(items[0], 1)) if len(items) > 0 else True
+    sustained_ok = bool(_as_int(items[1], 1)) if len(items) > 1 else True
+    daily_ok = bool(_as_int(items[2], 1)) if len(items) > 2 else True
+    hourly_ok = bool(_as_int(items[3], 1)) if len(items) > 3 else True
+    circuit_ok = bool(_as_int(items[4], 1)) if len(items) > 4 else True
 
-    daily_consumed = int(result[7]) if len(result) > 7 else 0
-    hourly_consumed = int(result[8]) if len(result) > 8 else 0
-    burst_ttl = int(result[9]) if len(result) > 9 else burst_window
-    sustained_ttl = int(result[10]) if len(result) > 10 else sustained_window
-    daily_ttl = int(result[11]) if len(result) > 11 else daily_window
-    hourly_ttl = int(result[12]) if len(result) > 12 else 3600
-    circuit_ttl = int(result[13]) if len(result) > 13 else circuit_open_seconds
+    daily_consumed = _as_int(items[7], 0) if len(items) > 7 else 0
+    hourly_consumed = _as_int(items[8], 0) if len(items) > 8 else 0
+    burst_ttl = _as_int(items[9], burst_window) if len(items) > 9 else burst_window
+    sustained_ttl = _as_int(items[10], sustained_window) if len(items) > 10 else sustained_window
+    daily_ttl = _as_int(items[11], daily_window) if len(items) > 11 else daily_window
+    hourly_ttl = _as_int(items[12], 3600) if len(items) > 12 else 3600
+    circuit_ttl = _as_int(items[13], circuit_open_seconds) if len(items) > 13 else circuit_open_seconds
 
     if not daily_ok or not hourly_ok:
         retry_after = max(daily_ttl, hourly_ttl, 1)
@@ -480,6 +503,6 @@ async def enforce_request_controls(
         identifier=identifier,
         mode=mode,
         reserved_tokens=requested_tokens,
-        is_anonymous=not is_authenticated,
+        is_anonymous=(api_key is None),
         hourly_bucket=now_minute,
     )
