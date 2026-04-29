@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from api.services.api_key_auth import ApiKeyRecord, verify_api_key
 from api.services.query_helpers import normalize_levels, cache_key
-from api.config import get_settings, get_stream_config
+from api.config import get_stream_config
 from api.logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from api.services.cache import cache_get, cache_get_many, cache_set, cache_set_many, check_idempotency_and_cache
 from api.services.inference import generate_explanation, generate_stream_explanation
@@ -26,10 +26,7 @@ from api.services.idempotency import query_stream_idempotency_key, compute_retry
 from api.utils import (
     DEFAULT_CHAT_MODE,
     FREE_LEVELS,
-    LEARNING_MODE,
-    SOCRATIC_MODE,
     TECHNICAL_MODE,
-    PROMPT_MODE_ALIASES,
     SUPPORTED_CHAT_MODES,
     normalize_mode,
     sanitize_topic,
@@ -134,7 +131,7 @@ async def query_topic(
     allowed_levels = FREE_LEVELS
     levels = [level for level in normalize_levels(req.levels) if level in allowed_levels]
     if not levels:
-        levels = ["eli15"]
+        levels = ["technical"]
 
     user_id_hash = anonymize_user_id(api_key.id)
     estimated_tokens = estimate_tokens_for_text(topic, output_buffer=900 * max(len(levels), 1))
@@ -286,7 +283,7 @@ async def query_topic_stream(
 
     allowed_levels = FREE_LEVELS
     normalized_levels = [level for level in normalize_levels(req.levels) if level in allowed_levels]
-    level = normalized_levels[0] if normalized_levels else "eli15"
+    level = normalized_levels[0] if normalized_levels else "technical"
 
     user_id_hash = anonymize_user_id(api_key.id)
     estimated_tokens = estimate_tokens_for_text(topic)
@@ -398,7 +395,7 @@ async def query_topic_stream(
         cache_key_value=cache_key(topic, level, mode),
         generate_stream_explanation=generate_stream_explanation,
         generate_explanation=generate_explanation,
-        persist_history=lambda _user, t, l, m: save_to_history(api_key.id, t, l, m),
+        persist_history=lambda _user, t, levels, m: save_to_history(api_key.id, t, levels, m),
         stream_max_seconds=stream_max_seconds,
         stream_start_timeout_seconds=stream_start_timeout_seconds,
         heartbeat_seconds=heartbeat_seconds,

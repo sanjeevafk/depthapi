@@ -85,8 +85,8 @@ async def test_health_and_query_still_work_with_cors_patch(app_client, monkeypat
 
     query_resp = await app_client.post(
         "/api/query",
-        json={"topic": "CORS hardening", "levels": ["eli5"], "mode": "learn"},
+        json={"topic": "CORS hardening", "levels": ["simple"], "mode": "learn"},
     )
     assert query_resp.status_code == 200
     payload = query_resp.json()
-    assert payload["explanations"]["eli5"] == "ok"
+    assert payload["explanations"]["simple"] == "ok"

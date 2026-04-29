@@ -5,7 +5,7 @@ def test_message_cache_key_scoped_to_conversation_and_user():
     base_args = {
         "content": "hello",
         "mode": "chat",
-        "prompt_mode": "eli5",
+        "prompt_mode": "simple",
         "temperature": 0.7,
         "model_alias": "test-model",
         "system_prompt": "system",

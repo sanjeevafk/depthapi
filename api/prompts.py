@@ -1,28 +1,21 @@
-"""DepthAPI Prompt Templates — Refactored & Hardened (Mar 2026)
+"""DepthAPI Prompt Templates
 
 Architecture
 ------------
-Layer 0  SYSTEM_PROMPT         — global identity, policy, uncertainty rule
-Layer 1  Shared fragments      — UNCERTAINTY_CLAUSE, OUTPUT_PLAIN, DIAGRAM_INSTRUCTION
-Layer 2  Mode base templates   — one per mode family (ELI_BASE, SOCRATIC_BASE, …)
-Layer 3  Mode configs          — pure data dicts; no repeated prose
-Layer 4  build_prompt()        — single entry point; validates inputs, composes layers
-Layer 5  Context injectors     — build_search_context(), build_quote_block()
+Layer 0  SYSTEM_PROMPT      — global identity, safety policy, uncertainty rule
+Layer 1  Shared fragments   — uncertainty clause, output format, diagram instruction
+Layer 2  Base templates     — parameterized templates per mode family
+Layer 3  Depth configs      — per-level audience, vocabulary, length rules
+Layer 4  build_prompt()     — single validated entry point; composes all layers
+Layer 5  Context injectors  — search context, quote block, conversation context
 
-Key changes from v2
--------------------
-- All technical prompts unified into PROMPTS registry (were unreachable via PROMPTS[mode])
-- Global SYSTEM_PROMPT added (persona, policy, uncertainty rule — never repeated per-mode)
-- "Think step-by-step" CoT activator removed from ELI modes (conflicted with "Output ONLY")
-- "No 'Thought:'" runtime artifact removed — handle at API/output-filter layer instead
-- ELI modes refactored to a single parameterized base (~70% deduplication)
-- Uncertainty/fallback clause added to every mode
-- {conversation_context} and {search_context} empty-state now handled in builders
-- Length constraints added to ELI10, ELI12, ELI15
-- Meme mode gains appropriateness guardrail
-- Socratic mode: precise question count, misconception-handling rule, variation guardrail
-- Technical depth: sourcing priority rule, hallucination guardrail for citations
-- diagram_type validated via DiagramType enum
+Depth Levels
+------------
+simple     Plain-language overview. No jargon. One analogy.
+accessible Moderate depth. Real-world examples. One term defined in-line.
+technical  Domain terminology. Mechanism + design rationale. Standard API depth.
+expert     Peer-level. First principles, formal notation, open questions cited.
+meme       Single punchy sentence. Engagement / social sharing.
 """
 
 from __future__ import annotations
@@ -161,10 +154,10 @@ def build_diagram_instruction(diagram_type: DiagramType) -> str:
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
-# ELI family base
+# Depth levels base (simple / accessible / technical / expert)
 # ---------------------------------------------------------------------------
 
-_ELI_BASE = """\
+_DEPTH_BASE = """\
 You are explaining {{topic}} to {audience}.
 
 {vocabulary_rule}
@@ -434,125 +427,115 @@ add sections.
 # ELI configs
 # ---------------------------------------------------------------------------
 
-ELI_CONFIGS: dict[str, dict] = {
-    "eli5": {
-        "audience": "a curious 5-year-old",
+DEPTH_CONFIGS: dict[str, dict] = {
+    "simple": {
+        "audience": "someone with no prior domain knowledge",
         "vocabulary_rule": (
-            "Every word must be one a kindergartner already knows. "
-            "No technical terms, scientific names, or abstract nouns."
+            "Use plain, everyday language only. "
+            "No technical terms, acronyms, or domain-specific vocabulary. "
+            "If a concept has no plain equivalent, use a concrete physical analogy."
         ),
         "depth_rule": (
             "Explain only the single core idea. One analogy maximum. "
-            "The analogy must use something they can see, touch, taste, "
-            "or hear — not an abstract comparison."
+            "The analogy must use something universally relatable — "
+            "not an abstract or domain-specific comparison."
         ),
         "engagement_rule": (
-            "End with exactly one open question that makes them want to "
-            "think about what they just heard."
+            "Tone: clear and direct. Treat the reader as intelligent but uninformed. "
+            "No condescension, no over-simplification into inaccuracy."
         ),
         "fallback_phrase": (
-            "That's a really tricky one! Let's find out together."
+            "This topic is at the edge of what I can explain reliably at this depth. "
+            "Here is what I can say with confidence:"
         ),
         "one_shot_example": (
-            "Example for topic \"gravity\":\n"
-            "Gravity is like an invisible hug from the Earth — it pulls "
-            "everything toward it! When you jump up, instead of floating "
-            "away like a balloon, you come right back down. Even when you "
-            "drop your toy, the Earth is saying \"come here!\" Can you feel "
-            "the Earth pulling on you right now when you sit in your chair?"
+            "Example for topic \"API rate limiting\":\n"
+            "A rate limit is like a queue at a coffee shop — the barista can only "
+            "make so many drinks per minute. If too many people order at once, "
+            "some have to wait. Software APIs do the same thing: they cap how often "
+            "you can call them in a given time window so no single user overloads the service."
         ),
-        "length_rule": "3–5 short sentences total.",
+        "length_rule": "2–4 short sentences. One analogy. No lists.",
     },
 
-    "eli10": {
-        "audience": "a curious 10-year-old who loves science experiments",
+    "accessible": {
+        "audience": "a technically curious professional with adjacent domain knowledge",
         "vocabulary_rule": (
-            "Use simple language. You may introduce one real technical term "
-            "only if you immediately explain it in plain words right after."
-        ),
-        "depth_rule": (
-            "Explain the core idea with one relatable real-world example "
-            "from school or home life. Include exactly one 'Did you know?' "
-            "fact that is surprising but verifiably true."
-        ),
-        "engagement_rule": (
-            "Keep the tone enthusiastic and wonder-driven. "
-            "No condescension."
-        ),
-        "fallback_phrase": (
-            "Honestly, I'm not sure I know enough about this to explain it "
-            "well — I'd rather tell you that than guess."
-        ),
-        "one_shot_example": (
-            "Example for topic \"photosynthesis\":\n"
-            "Plants make their own food using sunlight — kind of like how a "
-            "solar panel charges a battery, except the plant uses that energy "
-            "to build sugar out of air and water. The green colour in leaves "
-            "comes from a chemical called chlorophyll, which is the part that "
-            "catches sunlight. Did you know a single tree can pull hundreds of "
-            "litres of water up from its roots every day just to keep this "
-            "process running?"
-        ),
-        "length_rule": "100-140 words.",
-    },
-
-    "eli12": {
-        "audience": "a 12-year-old who is curious about science and technology",
-        "vocabulary_rule": (
-            "Use proper technical terms but define each one immediately "
-            "after using it — in parentheses or in the very next clause."
+            "Use proper technical terms but define each one concisely "
+            "in the same sentence or the immediately following clause. "
+            "Do not assume prior familiarity with the specific domain."
         ),
         "depth_rule": (
             "Explain the mechanism, not just the surface description. "
-            "Connect the topic to something they already use: games, "
-            "phones, social media, sports, or school experiments."
+            "Connect the concept to a real-world system or workflow the audience already encounters. "
+            "Include one concrete \"did you know\" or counterintuitive fact if it aids understanding."
         ),
         "engagement_rule": (
-            "Peer-to-peer tone. Treat them as genuinely smart. "
-            "No baby talk, no over-explaining basics they already know."
+            "Peer-to-peer tone. Direct and informative. "
+            "No filler phrases, no excessive hedging, no patronising simplification."
         ),
         "fallback_phrase": (
-            "Honestly, I'm not confident enough in this topic to give you "
-            "a solid answer — I'd rather say that than guess and mislead you."
+            "I'm not confident enough in the specifics of this topic to give you a "
+            "reliable explanation at this depth. Here is the boundary of what I know with confidence:"
         ),
         "one_shot_example": (
-            "Example for topic \"encryption\":\n"
-            "Encryption is like locking a message inside a box where only "
-            "one specific key can open it. When you send a message on "
-            "WhatsApp, your phone scrambles it using an algorithm (a set of "
-            "mathematical steps) before it leaves. Even if someone intercepts "
-            "it on the way, it looks like random gibberish. The other "
-            "person's app holds the matching key, so it can unscramble and "
-            "read the message. That padlock in your browser's address bar "
-            "means the same process — called TLS — is protecting your data "
-            "right now."
+            "Example for topic \"TLS handshake\":\n"
+            "TLS (Transport Layer Security) negotiates a secure channel before any data is sent. "
+            "Your browser and the server exchange public keys, agree on a cipher suite "
+            "(the encryption algorithm to use), and derive a shared session key — all in "
+            "about 1–3 network round trips. The padlock in your browser's address bar confirms "
+            "this handshake completed. Without it, your data would travel in plain text."
         ),
-        "length_rule": "140-200 words.",
+        "length_rule": "100–160 words. Prose preferred over bullet points.",
     },
 
-    "eli15": {
-        "audience": "a 15-year-old ready for genuine conceptual depth",
+    "technical": {
+        "audience": "a working professional or developer familiar with the domain",
         "vocabulary_rule": (
             "Use accurate domain terminology throughout. "
-            "Do not over-explain basic terms they likely already know — "
-            "treat them as a junior student, not a beginner."
+            "Do not define basic terms the audience already knows. "
+            "Only define terms that are genuinely specialised or uncommon."
         ),
         "depth_rule": (
-            "Go into the mechanism. Show why it works, not just what it does. "
-            "Connect to the history of the idea, its real-world impact, "
-            "or an open question in the field."
+            "Explain the underlying mechanism. Cover: how it works, why it is designed that way, "
+            "and what breaks or changes at the edges. "
+            "Reference real systems, specifications, or implementations where relevant."
         ),
         "engagement_rule": (
-            "Show genuine intellectual enthusiasm. "
-            "Acknowledge complexity honestly rather than flattening it."
+            "Precise and confident. Acknowledge genuine complexity rather than flattening it. "
+            "Show intellectual depth without padding."
         ),
         "fallback_phrase": (
-            "I want to be upfront — I'm not certain enough about the details "
-            "of this topic to give you a reliable explanation. Here's the "
-            "boundary of what I do know with confidence:"
+            "I want to be precise — I'm not certain enough about the details of this topic "
+            "to give a fully reliable technical explanation. Here is what I can confirm:"
         ),
-        "one_shot_example": "",  # no 1-shot at this level; instructions are sufficient
-        "length_rule": "200-280 words.",
+        "one_shot_example": "",  # instructions are sufficient at this depth
+        "length_rule": "180–280 words. Use a short list if enumerating 3+ distinct points.",
+    },
+
+    "expert": {
+        "audience": "a domain expert or senior practitioner — treat as a peer",
+        "vocabulary_rule": (
+            "Use precise, field-standard terminology without any simplification. "
+            "Formal notation, mathematical expressions, and algorithm names are appropriate. "
+            "Cite specific papers, RFCs, or specifications where they anchor the explanation."
+        ),
+        "depth_rule": (
+            "Go to first principles where it adds insight. Cover formal definitions, "
+            "proof sketches, or architectural trade-offs at a level appropriate for a "
+            "conference talk or design review. Acknowledge open problems or active debate in the field."
+        ),
+        "engagement_rule": (
+            "Peer-level precision. Confident about what is known; explicit about uncertainty and debate. "
+            "No hedging beyond what the evidence warrants."
+        ),
+        "fallback_phrase": (
+            "The available evidence on this specific point is thin or contested. "
+            "Here is what the literature supports with reasonable confidence, "
+            "and where the open questions lie:"
+        ),
+        "one_shot_example": "",  # no 1-shot at expert level
+        "length_rule": "250–400 words. Structured prose; use notation or code snippets where they clarify.",
     },
 }
 
@@ -573,16 +556,16 @@ class PromptEntry:
 
 
 PROMPT_REGISTRY: dict[str, PromptEntry] = {
-    # Child / youth modes
-    "eli5": PromptEntry(template=_ELI_BASE),
-    "eli10": PromptEntry(template=_ELI_BASE),
-    "eli12": PromptEntry(template=_ELI_BASE),
-    "eli15": PromptEntry(template=_ELI_BASE),
-    # Fun modes
+    # Core depth levels
+    "simple":     PromptEntry(template=_DEPTH_BASE),
+    "accessible": PromptEntry(template=_DEPTH_BASE),
+    "technical":  PromptEntry(template=_DEPTH_BASE),
+    "expert":     PromptEntry(template=_DEPTH_BASE),
+    # Engagement mode
     "meme": PromptEntry(template=_MEME_BASE),
-    # Socratic mode
+    # Conversation mode
     "socratic": PromptEntry(template=_SOCRATIC_BASE),
-    # Technical modes
+    # Technical sub-modes (mode=technical path)
     "technical_depth": PromptEntry(
         template=_TECHNICAL_DEPTH_BASE,
         requires_search=True,
@@ -710,9 +693,9 @@ def build_prompt(
         else ""
     )
 
-    # --- ELI family ---
-    if mode in ELI_CONFIGS:
-        cfg = ELI_CONFIGS[mode]
+    # --- Depth levels (simple / accessible / technical / expert) ---
+    if mode in DEPTH_CONFIGS:
+        cfg = DEPTH_CONFIGS[mode]
         uncertainty_clause = build_uncertainty_clause(cfg["fallback_phrase"])
         one_shot = cfg["one_shot_example"]
         example_block = f"Example:\n{one_shot}" if one_shot else ""

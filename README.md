@@ -6,7 +6,7 @@ Originally built as KnowBear, an AI-powered layered learning engine web-app, Dep
 
 ## Core Capabilities
 
-- **Layered Knowledge Retrieval**: Delivers content across standardized depth levels (`ELI5`, `ELI15`, `Technical`, etc.).
+- **Layered Knowledge Retrieval**: Delivers content across standardized depth levels (`Simple`, `Accessible`, `Technical`, `Expert`).
 - **Headless Orchestration**: Native support for API-only workflows with no frontend overhead.
 - **Project-Scoped Memory**: Multi-tenant conversation persistence and project-level context management.
 - **Streaming Reliability**: Production-grade SSE streaming with automatic heartbeats, timeout guards, and fail-soft fallback chains.
