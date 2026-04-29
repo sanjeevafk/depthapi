@@ -13,16 +13,9 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from api.config import get_settings
 from api.logging_config import anonymize_user_id, logger, log_sampled_success
-from api.prompts import SYSTEM_PROMPT, build_prompt
-from api.services.inference_constants import (
-    TECHNICAL_MAX_TOKENS,
-    TECHNICAL_MINIMAL_PROMPT,
-    TECHNICAL_TEMPERATURE,
-)
+from api.prompts import build_prompt
 from api.services.inference_classifier import IntentClassifier
 from api.services.inference_message_builder import (
-    COMPARISON_SYSTEM_PROMPT,
-    MODE_SYSTEM_PROMPTS,
     build_messages,
     is_comparison_query,
     trim_history_for_cost,
@@ -31,7 +24,6 @@ from api.services.inference_routing import (
     _effective_alias_chain,
     _technical_route,
     extract_features,
-    route_model_aliases,
 )
 from api.services.inference_search import _append_search_context, _load_search_context, _truncate_search_context
 from api.services.inference_socratic import (
@@ -107,7 +99,17 @@ class _SearchServiceShim:
 search_service = _SearchServiceShim()
 
 
+
+async def _classify_intent(query: str) -> dict[str, str]:
+    """Async-first classification: hybrid (regex + SLM). Falls back to regex on error."""
+    try:
+        return await _intent_classifier.classify_async(query)
+    except Exception:
+        return detect_intent_and_depth_base(query)
+
+
 def detect_intent_and_depth(query: str) -> dict[str, str]:
+    """Sync shim kept for legacy call sites that cannot be made async."""
     try:
         return _intent_classifier.detect_intent_and_depth(query)
     except Exception:
@@ -279,19 +281,27 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
     if mode == TECHNICAL_MODE:
         return await technical_mode_handler(topic, **kwargs)
 
+    # --- Classify intent once; thread results to routing & feature extraction ---
+    classification = await _classify_intent(topic)
+    intent  = classification.get("intent", "explain")
+    depth   = classification.get("depth", "medium")
+
     if mode == SOCRATIC_MODE:
         search_context = await search_service.load_search_context(topic, mode=SOCRATIC_MODE)
         prompt = build_prompt("socratic", topic, conversation_context=kwargs.get("conversation_context", ""))
         prompt = _append_search_context(prompt, search_context)
         routed_aliases = _model_router.route_aliases(
             topic,
-            intent=None,
+            intent=intent,
             mode=mode,
             level=level,
+            depth=depth,
             is_pro=bool(kwargs.get("is_pro", False)),
             search_api_used=bool(search_context),
         )
-        socratic_complexity = float(extract_features(topic, mode=mode, level=level).get("complexity", 0.0) or 0.0)
+        socratic_complexity = float(
+            extract_features(topic, mode=mode, level=level, intent=intent, depth=depth).get("complexity", 0.0) or 0.0
+        )
         max_tokens = int(getattr(get_settings(), "max_output_tokens_socratic", 1024))
         response = await _call_with_quality_escalation(
             [model] if model else routed_aliases,
@@ -304,6 +314,7 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
             return _enforce_socratic_response_constraints(response, topic=topic, wants_direct_answer=True)
         return _response_builder.apply_socratic_fallback(topic, response)
 
+    # --- Learn mode ---
     search_context = await search_service.load_search_context(topic, mode=LEARNING_MODE)
     prompt = build_prompt(level, topic)
     prompt = _append_search_context(prompt, search_context)
@@ -314,13 +325,16 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
 
     routed_aliases = _model_router.route_aliases(
         topic,
-        intent=None,
+        intent=intent,
+        depth=depth,
         mode=mode,
         level=level,
         is_pro=bool(kwargs.get("is_pro", False)),
         search_api_used=bool(search_context),
     )
-    learning_complexity = float(extract_features(topic, mode=mode, level=level).get("complexity", 0.0) or 0.0)
+    learning_complexity = float(
+        extract_features(topic, mode=mode, level=level, intent=intent, depth=depth).get("complexity", 0.0) or 0.0
+    )
     max_tokens = int(getattr(get_settings(), "max_output_tokens_learning", 1024))
     response = await _call_with_quality_escalation(
         [model] if model else routed_aliases,
@@ -337,6 +351,11 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
 
 
 async def generate_stream_explanation(topic: str, level: str, model: str | None = None, **kwargs: Any):
+    # Pre-classify once so streaming path doesn't re-classify internally
+    classification = await _classify_intent(topic)
+    kwargs.setdefault("_pre_classified_intent", classification.get("intent", "explain"))
+    kwargs.setdefault("_pre_classified_depth", classification.get("depth", "medium"))
+
     async for chunk in generate_stream_explanation_impl(
         topic,
         level,

@@ -6,13 +6,12 @@ import re
 from typing import TypedDict
 
 from api.logging_config import logger
-from api.services.intent import detect_intent_and_depth
+from api.services.inference_classifier import IntentClassifier as _IntentClassifier
 from api.utils import LEARNING_MODE, SOCRATIC_MODE, TECHNICAL_MODE
 from api.services.inference_constants import (
     MODEL_PROFILES,
     COST_PENALTY,
     LEARNING_MODEL_SIMPLE,
-    LEARNING_MODEL_DETAILED,
     TECHNICAL_MODEL_PRIMARY,
     TECHNICAL_MODEL_FALLBACK,
     LEARNING_DETAILED_LEVELS,
@@ -33,6 +32,8 @@ from api.services.inference_constants import (
     REASONING_KEYWORDS,
     EXPLANATION_KEYWORDS,
 )
+
+_classifier_shim = _IntentClassifier()
 
 
 class IntentFeatures(TypedDict):
@@ -63,7 +64,7 @@ def extract_features(
     resolved_depth = depth
     if not resolved_intent or not resolved_depth:
         try:
-            classification = detect_intent_and_depth(query)
+            classification = _classifier_shim.detect_intent_and_depth(query)
             resolved_intent = resolved_intent or classification.get("intent", "explain")
             resolved_depth = resolved_depth or classification.get("depth", "medium")
         except Exception as exc:
