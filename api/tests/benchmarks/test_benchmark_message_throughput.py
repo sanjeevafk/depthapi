@@ -70,7 +70,7 @@ async def test_benchmark_message_throughput(
         "conversation_id": "bench-conversation",
         "content": "benchmark message",
         "mode": "learn",
-        "prompt_mode": "eli5",
+        "prompt_mode": "simple",
     }
 
     samples: list[float] = []

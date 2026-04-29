@@ -5,7 +5,7 @@ from services.model_router import ModelRouter
 
 def test_route_model_returns_non_empty_alias_for_learning() -> None:
     router = ModelRouter()
-    alias = router.route_model("Explain DNS simply", intent="explain", mode="learn", level="eli5")
+    alias = router.route_model("Explain DNS simply", intent="explain", mode="learn", level="simple")
     assert isinstance(alias, str)
     assert alias
 

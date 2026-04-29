@@ -17,7 +17,7 @@ from api.services.inference_routing import (
 
 
 class ModelRouter:
-    def route_model(self, query: str, intent: str, mode: str, *, level: str = "eli10", is_pro: bool = False, search_api_used: bool = False) -> str:
+    def route_model(self, query: str, intent: str, mode: str, *, level: str = "accessible", is_pro: bool = False, search_api_used: bool = False) -> str:
         aliases = self.route_aliases(
             query,
             intent=intent,
