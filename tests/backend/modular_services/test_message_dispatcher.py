@@ -23,7 +23,7 @@ async def test_dispatch_normal_message_emits_replay_sequence() -> None:
         message_id="m-1",
         assistant_message_id="a-1",
         mode="learn",
-        prompt_mode="eli5",
+        prompt_mode="simple",
     )
 
     payload = await _collect(response)
@@ -61,7 +61,7 @@ async def test_dispatch_selects_streaming_branch() -> None:
         streaming=True,
         stream_factory=_stream,
         mode="learn",
-        prompt_mode="eli5",
+        prompt_mode="simple",
     )
     payload = await _collect(response)
 
@@ -82,7 +82,7 @@ async def test_dispatch_mode_specific_falls_back_to_normal_for_unknown_mode() ->
             "content": "fallback",
             "message_id": "m-2",
             "assistant_message_id": "a-2",
-            "prompt_mode": "eli5",
+            "prompt_mode": "simple",
         },
     )
     payload = await _collect(response)

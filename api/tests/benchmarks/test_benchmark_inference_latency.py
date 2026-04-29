@@ -25,7 +25,7 @@ async def test_benchmark_inference_latency(monkeypatch: pytest.MonkeyPatch) -> N
     samples: list[float] = []
     for _ in range(30):
         started = time.perf_counter()
-        _ = await inference_module.generate_explanation("dns caching", "eli10", mode="learn")
+        _ = await inference_module.generate_explanation("dns caching", "accessible", mode="learn")
         samples.append((time.perf_counter() - started) * 1000.0)
 
     p50 = statistics.median(samples)

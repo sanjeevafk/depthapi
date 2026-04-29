@@ -11,7 +11,7 @@ async def test_get_history(app_client, monkeypatch, fake_user, fake_supabase):
         {
             "id": "h1",
             "topic": "Cats",
-            "levels": ["eli5"],
+            "levels": ["simple"],
             "mode": "learn",
             "created_at": "2024-01-01T00:00:00Z"
         }
@@ -35,7 +35,7 @@ async def test_add_history(app_client, monkeypatch, fake_user, fake_supabase):
         {
             "id": "h2",
             "topic": "Ocean",
-            "levels": ["eli5"],
+            "levels": ["simple"],
             "mode": "technical",
             "created_at": "2024-01-01T00:00:00Z"
         }
@@ -49,7 +49,7 @@ async def test_add_history(app_client, monkeypatch, fake_user, fake_supabase):
 
     resp = await app_client.post(
         "/api/history",
-        json={"topic": "Ocean", "levels": ["eli5"], "mode": "technical"}
+        json={"topic": "Ocean", "levels": ["simple"], "mode": "technical"}
     )
 
     assert resp.status_code == 200

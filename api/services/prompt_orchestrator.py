@@ -18,7 +18,7 @@ class PromptOrchestrator:
     def build_prompt(self, query: str, context: str | None, mode: str) -> str:
         if mode == "socratic":
             return build_prompt("socratic", query, conversation_context=context or "")
-        return build_prompt(context or "eli10", query)
+        return build_prompt(context or "accessible", query)
 
     def extract_length_constraint(self, text: str) -> tuple[str, int] | None:
         return _extract_length_constraint(text)

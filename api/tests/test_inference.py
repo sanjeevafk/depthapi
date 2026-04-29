@@ -38,7 +38,7 @@ async def test_generate_explanation_learning_injects_search_context(monkeypatch)
     monkeypatch.setattr(inference_module.search_service, "get_search_context", fake_search_context)
     monkeypatch.setattr(inference_module, "call_model", fake_call_model)
 
-    result = await inference_module.generate_explanation("dns caching", "eli5", mode="learn")
+    result = await inference_module.generate_explanation("dns caching", "simple", mode="learn")
     assert "detailed explanation" in result
     assert "External web context" in captured["prompt"]
     assert "search context for learning" in captured["prompt"]
@@ -58,7 +58,7 @@ async def test_generate_explanation_socratic_injects_search_context(monkeypatch)
     monkeypatch.setattr(inference_module.search_service, "get_search_context", fake_search_context)
     monkeypatch.setattr(inference_module, "call_model", fake_call_model)
 
-    result = await inference_module.generate_explanation("dns", "eli15", mode="socratic")
+    result = await inference_module.generate_explanation("dns", "technical", mode="socratic")
     assert "What is DNS?" in result
     assert "External web context" in captured["prompt"]
     assert "search context for socratic" in captured["prompt"]
@@ -110,7 +110,7 @@ async def test_generate_explanation_search_failure_is_fail_soft(monkeypatch):
     monkeypatch.setattr(inference_module.search_service, "get_search_context", broken_search)
     monkeypatch.setattr(inference_module, "call_model", fake_call_model)
 
-    result = await inference_module.generate_explanation("tcp", "eli10", mode="learn")
+    result = await inference_module.generate_explanation("tcp", "accessible", mode="learn")
     assert "without external search" in result
     assert calls["count"] == 1
 
@@ -147,7 +147,7 @@ async def test_learning_length_policy_default_adds_cue_when_trimmed(monkeypatch)
 
     result = await inference_module.generate_explanation(
         "volcanoes",
-        "eli10",
+        "accessible",
         mode="learn",
     )
 
@@ -169,7 +169,7 @@ async def test_learning_length_policy_expanded_allows_more(monkeypatch):
 
     result = await inference_module.generate_explanation(
         "volcanoes explain more",
-        "eli10",
+        "accessible",
         mode="learn",
     )
 
@@ -191,7 +191,7 @@ async def test_learning_length_constraint_uses_complete_sentence(monkeypatch):
 
     result = await inference_module.generate_explanation(
         "ocean currents in under 48 words",
-        "eli10",
+        "accessible",
         mode="learn",
     )
 
@@ -213,7 +213,7 @@ async def test_generate_stream_explanation_passes_temperature(monkeypatch):
     chunks = []
     async for chunk in inference_module.generate_stream_explanation(
         "topic",
-        "eli5",
+        "simple",
         mode="learn",
         regenerate=True,
         temperature=0.8,
@@ -239,7 +239,7 @@ async def test_generate_explanation_socratic_limits_questions(monkeypatch):
 
     result = await inference_module.generate_explanation(
         "energy",
-        "eli15",
+        "technical",
         mode="socratic",
     )
 
@@ -265,7 +265,7 @@ async def test_generate_stream_explanation_socratic_limits_questions(monkeypatch
     streamed = []
     async for chunk in inference_module.generate_stream_explanation(
         "entropy",
-        "eli15",
+        "technical",
         mode="socratic",
     ):
         streamed.append(chunk)
@@ -294,7 +294,7 @@ async def test_generate_stream_explanation_socratic_dedupes_and_caps_questions(m
     streamed = []
     async for chunk in inference_module.generate_stream_explanation(
         "entropy",
-        "eli15",
+        "technical",
         mode="socratic",
     ):
         streamed.append(chunk)
@@ -318,7 +318,7 @@ async def test_generate_stream_explanation_socratic_streams_questions_progressiv
     streamed = []
     async for chunk in inference_module.generate_stream_explanation(
         "entropy",
-        "eli15",
+        "technical",
         mode="socratic",
     ):
         streamed.append(chunk)
@@ -341,7 +341,7 @@ async def test_generate_stream_explanation_socratic_stream_failure_falls_back(mo
     chunks = []
     async for chunk in inference_module.generate_stream_explanation(
         "entropy",
-        "eli15",
+        "technical",
         mode="socratic",
         telemetry_sink=telemetry_sink,
         request_id="req-socratic-fail",
@@ -366,7 +366,7 @@ async def test_generate_stream_explanation_learning_stream_failure_is_graceful(m
     chunks = []
     async for chunk in inference_module.generate_stream_explanation(
         "dns",
-        "eli5",
+        "simple",
         mode="learn",
         telemetry_sink=telemetry_sink,
         request_id="req-learning-fail",
@@ -447,7 +447,7 @@ async def test_generate_stream_explanation_technical_streams_via_llm_stream(monk
     streamed = []
     async for chunk in inference_module.generate_stream_explanation(
         "topic",
-        "eli15",
+        "technical",
         mode="technical",
     ):
         streamed.append(chunk)
@@ -483,7 +483,7 @@ async def test_generate_stream_explanation_technical_does_not_duplicate_request_
     chunks = []
     async for chunk in inference_module.generate_stream_explanation(
         "topic",
-        "eli15",
+        "technical",
         mode="technical",
         request_id="req-123",
         temperature=0.7,
@@ -564,7 +564,7 @@ async def test_generate_stream_explanation_technical_partial_stream_failure_is_g
     chunks = []
     async for chunk in inference_module.generate_stream_explanation(
         "topic",
-        "eli15",
+        "technical",
         mode="technical",
         telemetry_sink=telemetry_sink,
     ):
@@ -580,7 +580,7 @@ def test_weighted_routing_prefers_technical_model_for_complex_queries():
     ranked = inference_module.route_model_aliases(
         "Compare distributed consensus tradeoffs and derive correctness guarantees.",
         mode="technical",
-        level="eli15",
+        level="technical",
     )
     assert ranked[0] in {"technical-gemini-pro", "technical-groq-llama8b"}
 
@@ -589,7 +589,7 @@ def test_weighted_routing_prefers_fast_model_for_latency_queries():
     ranked = inference_module.route_model_aliases(
         "Give me a quick summary of DNS.",
         mode="learn",
-        level="eli5",
+        level="simple",
     )
     assert ranked[0] in {"learn-groq-llama8b", "learn-gemini-flash"}
 
@@ -598,7 +598,7 @@ def test_weighted_routing_prefers_fast_technical_model_for_latency_queries():
     ranked = inference_module.route_model_aliases(
         "Quick summary of React reconciliation and key rendering caveats.",
         mode="technical",
-        level="eli15",
+        level="technical",
     )
     assert ranked[0] in {"technical-groq-llama8b", "technical-gemini-flash"}
 
@@ -678,7 +678,7 @@ async def test_learning_quality_retry_uses_next_alias_once(monkeypatch):
 
     result = await inference_module.generate_explanation(
         "explain dns",
-        "eli10",
+        "accessible",
         mode="learn",
     )
 

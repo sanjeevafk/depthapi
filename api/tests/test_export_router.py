@@ -31,7 +31,7 @@ async def test_export_requires_pro(app_client, monkeypatch, fake_user):
         "/api/export",
         json={
             "topic": "Cats",
-            "explanations": {"eli5": "Meow"},
+            "explanations": {"simple": "Meow"},
             "format": "txt",
             "premium": True,
             "mode": "learn"
@@ -56,7 +56,7 @@ async def test_export_txt_success(app_client, monkeypatch, fake_user):
         "/api/export",
         json={
             "topic": "Cats",
-            "explanations": {"eli5": "Meow"},
+            "explanations": {"simple": "Meow"},
             "format": "txt",
             "premium": True,
             "mode": "learn"
@@ -82,7 +82,7 @@ async def test_export_missing_levels_triggers_generation(app_client, monkeypatch
 
     monkeypatch.setattr(export_module, "check_is_pro", fake_check_is_pro)
     monkeypatch.setattr(export_module, "generate_explanation", fake_generate)
-    monkeypatch.setattr(export_module, "FREE_LEVELS", ["eli5", "eli10"])
+    monkeypatch.setattr(export_module, "FREE_LEVELS", ["simple", "accessible"])
     monkeypatch.setattr(export_module, "StreamingResponse", fake_streaming_response)
 
     async def fake_auth():
@@ -94,7 +94,7 @@ async def test_export_missing_levels_triggers_generation(app_client, monkeypatch
         "/api/export",
         json={
             "topic": "Cats",
-            "explanations": {"eli5": "Meow"},
+            "explanations": {"simple": "Meow"},
             "format": "md",
             "premium": True,
             "mode": "learn"
@@ -102,7 +102,7 @@ async def test_export_missing_levels_triggers_generation(app_client, monkeypatch
     )
 
     assert resp.status_code == 200
-    assert "eli10" in calls
+    assert "accessible" in calls
 
 
 @pytest.mark.asyncio
@@ -121,7 +121,7 @@ async def test_export_invalid_format(app_client, monkeypatch, fake_user):
         "/api/export",
         json={
             "topic": "Cats",
-            "explanations": {"eli5": "Meow"},
+            "explanations": {"simple": "Meow"},
             "format": "pdf",
             "premium": True,
             "mode": "learn"

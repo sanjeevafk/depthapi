@@ -36,7 +36,7 @@ async def test_generate_explanation_enforces_word_limit_constraint(monkeypatch) 
 
     response = await inference_module.generate_explanation(
         "Explain cache eviction in 5 words",
-        "eli10",
+        "accessible",
         mode="learn",
     )
     assert len(response.split()) <= 5

@@ -8,14 +8,16 @@
     "learn"
   ],
   "prompt_modes": [
-    "eli5",
-    "eli10",
-    "eli12",
-    "eli15",
+    "simple",
+    "accessible",
+    "technical",
+    "expert",
     "meme"
   ],
   "pro_modes": [
     "technical",
     "socratic"
   ],
-  "default_mode": "learn"}
+  "default_mode": "learn"
+}
+

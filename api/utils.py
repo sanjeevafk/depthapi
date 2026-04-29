@@ -1,4 +1,4 @@
-"""Input validation and mode normalization utilities."""
+"""Input validation, mode normalization, and depth-level utilities."""
 
 import asyncio
 import html
@@ -15,7 +15,7 @@ LEARNING_MODE = "learn"
 TECHNICAL_MODE = "technical"
 SOCRATIC_MODE = "socratic"
 
-FREE_LEVELS = ["eli5", "eli10", "eli12", "eli15", "meme"]
+FREE_LEVELS = ["simple", "accessible", "technical", "expert", "meme"]
 PREMIUM_LEVELS: list[str] = []
 PROMPT_LEVELS = FREE_LEVELS
 
@@ -30,7 +30,6 @@ _DEFAULT_CHAT_MODE_DATA = {
     "free_modes": [LEARNING_MODE, SOCRATIC_MODE],
     "pro_modes": [TECHNICAL_MODE],
     "prompt_modes": PROMPT_LEVELS,
-    "legacy_modes": [],
 }
 
 T = TypeVar("T")
@@ -63,7 +62,7 @@ def normalize_mode(mode: str | None) -> str:
 
 def normalize_prompt_level(level: str | None) -> str:
     normalized = (level or "").strip().lower()
-    return normalized if normalized in PROMPT_LEVELS else "eli15"
+    return normalized if normalized in PROMPT_LEVELS else "technical"
 
 
 def sanitize_filename(value: str) -> str:
@@ -122,7 +121,6 @@ CHAT_MODES = _CHAT_MODE_DATA.get("chat_modes") or []
 CHAT_FREE_MODES = _CHAT_MODE_DATA.get("free_modes") or []
 CHAT_PREMIUM_MODES = _CHAT_MODE_DATA.get("pro_modes") or []
 CHAT_PROMPT_MODES = _CHAT_MODE_DATA.get("prompt_modes") or []
-CHAT_LEGACY_MODES = _CHAT_MODE_DATA.get("legacy_modes") or []
 
 SUPPORTED_CHAT_MODES = set(CHAT_MODES)
 SUPPORTED_PROMPT_MODES = set(CHAT_PROMPT_MODES)

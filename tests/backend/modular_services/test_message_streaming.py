@@ -25,7 +25,7 @@ async def test_replay_response_emits_meta_delta_done() -> None:
         message_id="m1",
         assistant_message_id="a1",
         mode="learn",
-        prompt_mode="eli10",
+        prompt_mode="accessible",
     )
     events = await _collect_stream(response)
     payload = "".join(events)
@@ -64,7 +64,7 @@ async def test_stream_response_uses_cached_response_path() -> None:
         content="topic",
         content_hash="h1",
         selected_mode="learn",
-        prompt_mode="eli10",
+        prompt_mode="accessible",
         assistant_message_id="a1",
         client_message_id="m1",
         conversation_id="c1",

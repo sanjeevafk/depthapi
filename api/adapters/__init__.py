@@ -1,4 +1,4 @@
-"""Compatibility adapters used during strangler-pattern refactors."""
+"""Adapter utilities for deprecation tracking and API migration."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ R = TypeVar("R")
 
 
 def deprecated_in_favor_of(new_module: str) -> Callable[[Callable[P, R]], Callable[P, R]]:
-    """Log calls to legacy APIs that are being replaced.
+    """Emit a warning log when a deprecated API is called.
 
     Parameters
     ----------
