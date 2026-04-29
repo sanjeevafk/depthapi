@@ -17,7 +17,9 @@ from api.services.conversation_intent import (
     classify_conversation_intent,
     build_intent_system_prompt,
 )
-from api.services.inference import TECHNICAL_MAX_TOKENS, SYSTEM_PROMPT, MODE_SYSTEM_PROMPTS
+from api.prompts import SYSTEM_PROMPT
+from api.services.inference_constants import TECHNICAL_MAX_TOKENS
+from api.services.inference_message_builder import MODE_SYSTEM_PROMPTS
 from api.services.llm_client import get_provider_config_state
 from api.services.message_dispatcher import MessageDispatcher
 from api.services.message_gate import gatekeep_message_request

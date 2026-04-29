@@ -10,7 +10,9 @@ import orjson
 from fastapi import Request
 
 from api.logging_config import logger, log_sampled_success
-from api.services.inference import SYSTEM_PROMPT, MODE_SYSTEM_PROMPTS, generate_stream_explanation
+from api.prompts import SYSTEM_PROMPT
+from api.services.inference_message_builder import MODE_SYSTEM_PROMPTS
+from api.services.inference import generate_stream_explanation
 from api.services.llm_client import get_provider_config_state
 from api.services.message_gate import append_conversation_message
 from api.services.streaming import SseEventBuilder
