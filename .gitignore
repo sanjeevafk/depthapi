@@ -22,9 +22,8 @@ tsconfig.node.tsbuildinfo
 vite.config.d.ts
 
 local-docs/
-finish-this.md
+datasets/
 .vscode/settings.json
 .planning/debug
 test-results/
-VERCEL_DEPLOYMENT_PLAN.md
 .codex
