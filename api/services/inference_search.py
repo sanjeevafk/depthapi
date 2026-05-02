@@ -35,6 +35,36 @@ def _append_search_context(prompt: str, context: str) -> str:
     )
 
 
+def _append_rag_context(prompt: str, context: str) -> str:
+    if not context:
+        return prompt
+    return (
+        f"{prompt}\n\n"
+        "--- RETRIEVED DEVELOPER KNOWLEDGE ---\n"
+        "The following excerpts are from verified technical sources.\n"
+        "Base your answer primarily on this content.\n"
+        "Do NOT invent API signatures, package names, or version numbers not present below.\n"
+        "If the retrieved content does not answer the question, say so explicitly.\n"
+        "Always end with a SOURCES section listing which sources you used.\n"
+        "---\n"
+        f"{context}\n"
+        "--- END RETRIEVED KNOWLEDGE ---"
+    )
+
+
+def format_rag_context(results: list[dict]) -> str:
+    if not results:
+        return ""
+    
+    formatted = []
+    for i, res in enumerate(results):
+        content = res.get("content", "").strip()
+        source = res.get("citation", {}).get("source_url") or res.get("citation", {}).get("source_tier") or "Unknown"
+        formatted.append(f"[{i+1}] Source: {source}\n{content}")
+    
+    return "\n\n".join(formatted)
+
+
 async def _load_search_context(topic: str, *, mode: str) -> str:
     normalized_topic = " ".join((topic or "").strip().split())
     if not normalized_topic:

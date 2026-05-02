@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 import time
 from typing import Any, cast
 
@@ -25,7 +26,14 @@ from api.services.inference_routing import (
     _technical_route,
     extract_features,
 )
-from api.services.inference_search import _append_search_context, _load_search_context, _truncate_search_context
+from api.services.inference_search import (
+    _append_rag_context,
+    _append_search_context,
+    _load_search_context,
+    _truncate_search_context,
+    format_rag_context,
+)
+from api.services.rag_backend_router import retrieve_context as retrieve_rag_context
 from api.services.inference_socratic import (
     _enforce_socratic_response_constraints,
     _normalize_question_signature,
@@ -315,8 +323,21 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
         return _response_builder.apply_socratic_fallback(topic, response)
 
     # --- Learn mode ---
+    # 1. RAG Retrieval
+    rag_results = await retrieve_rag_context(
+        query=topic,
+        api_key_id=str(kwargs.get("user_id") or "anonymous"),
+        limit=int(os.getenv("RAG_TOP_K", "5")),
+        collection_id=kwargs.get("collection_id")
+    )
+    rag_context = format_rag_context(rag_results)
+    
+    # 2. Web Search
     search_context = await search_service.load_search_context(topic, mode=LEARNING_MODE)
+    
+    # 3. Assemble Prompt
     prompt = build_prompt(level, topic)
+    prompt = _append_rag_context(prompt, rag_context)
     prompt = _append_search_context(prompt, search_context)
     length_constraint = _prompt_orchestrator.extract_length_constraint(topic)
     prompt = _prompt_orchestrator.apply_length_constraints(prompt, length_constraint)

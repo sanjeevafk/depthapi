@@ -17,7 +17,13 @@ from api.services.inference_constants import (
     TECHNICAL_TEMPERATURE,
 )
 from api.services.inference_routing import _learning_model_for_level
-from api.services.inference_search import _append_search_context
+from api.services.inference_search import (
+    _append_rag_context,
+    _append_search_context,
+    format_rag_context,
+)
+from api.services.rag_backend_router import retrieve_context as retrieve_rag_context
+import os
 
 _tech_logger = structlog.get_logger(__name__)
 
@@ -190,8 +196,21 @@ async def generate_stream_explanation(
         )
         prompt = _append_search_context(prompt, search_context)
     else:
+        # 1. RAG Retrieval
+        rag_results = await retrieve_rag_context(
+            query=topic,
+            api_key_id=str(kwargs.get("user_id") or "anonymous"),
+            limit=int(os.getenv("RAG_TOP_K", "5")),
+            collection_id=kwargs.get("collection_id")
+        )
+        rag_context = format_rag_context(rag_results)
+
+        # 2. Web Search
         search_context = await load_search_context_fn(topic, mode="learn")
+        
+        # 3. Assemble Prompt
         prompt = build_prompt_fn(level, topic)
+        prompt = _append_rag_context(prompt, rag_context)
         prompt = _append_search_context(prompt, search_context)
         length_constraint = prompt_orchestrator.extract_length_constraint(topic)
         prompt = prompt_orchestrator.apply_length_constraints(prompt, length_constraint)

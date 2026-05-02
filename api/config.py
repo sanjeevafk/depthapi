@@ -113,8 +113,9 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr = SecretStr("")
     openrouter_timeout_seconds: int = 90
     llm_timeout_seconds: int = 60
-    embedding_model: str = "text-embedding-3-small"
-    embedding_dimension: int = 1536
+    embedding_provider: str = "gemini"
+    embedding_model: str = "text-embedding-004"
+    embedding_dimension: int = 768
 
     stream_max_seconds: int = 30  # Increased from 20 to 30 for large input handling
     technical_stream_max_seconds: int = 32  # Increased from 22 to 32

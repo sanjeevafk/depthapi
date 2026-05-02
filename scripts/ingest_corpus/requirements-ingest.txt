@@ -1,0 +1,11 @@
+# DepthAPI Ingest-time dependencies (NOT for production API)
+# Install: pip install -r scripts/ingest_corpus/requirements-ingest.txt
+
+# Web scraping
+scrapling>=0.4.7
+
+# PDF extraction (requires Java 11+ — install from adoptium.net)
+opendataloader-pdf>=2.4.1
+
+# These are already in api/requirements.txt but listed here for standalone use
+httpx>=0.27.0
