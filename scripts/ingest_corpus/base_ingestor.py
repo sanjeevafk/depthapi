@@ -17,7 +17,7 @@ import logging
 import re
 import unicodedata
 from dataclasses import asdict, dataclass
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 from pathlib import Path
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
@@ -40,6 +40,7 @@ class Chunk:
     token_count: int
     source_type: str  # "markdown" | "html" | "pdf" | "qa_pair"
     tags: list[str]   # e.g. ["python", "stdlib", "P0"]
+    metadata: dict[str, Any] | None = None
 
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
@@ -269,6 +270,11 @@ class BaseIngestor:
         self._existing_ids = self._load_existing_ids()
         self.new_count = 0
         self.skip_count = 0
+        self.skip_stats = {
+            "too_short": 0,
+            "validator_reject": 0,
+            "duplicate": 0,
+        }
         self._buffer: list[Chunk] = []
         self._validators = list(validators) if validators else []
 
@@ -285,17 +291,21 @@ class BaseIngestor:
         order: int,
         source_url: str | None = None,
         tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> Chunk | None:
         content = clean_text(content)
         if len(content) < 50:
+            self.skip_stats["too_short"] += 1
             return None
         for validator in self._validators:
             if not validator(content):
                 self.skip_count += 1
+                self.skip_stats["validator_reject"] += 1
                 return None
         cid = chunk_id(content)
         if cid in self._existing_ids:
             self.skip_count += 1
+            self.skip_stats["duplicate"] += 1
             return None
         self._existing_ids.add(cid)
         return Chunk(
@@ -307,6 +317,7 @@ class BaseIngestor:
             token_count=rough_token_count(content),
             source_type=self.source_type,
             tags=tags or [],
+            metadata=metadata or None,
         )
 
     def add(
@@ -315,10 +326,12 @@ class BaseIngestor:
         source_url: str | None = None,
         tags: list[str] | None = None,
         start_order: int = 0,
+        metadata: list[dict[str, Any] | None] | None = None,
     ) -> list[Chunk]:
         added: list[Chunk] = []
         for i, text in enumerate(texts):
-            chunk = self._make_chunk(text, start_order + i, source_url, tags)
+            row_meta = metadata[i] if metadata and i < len(metadata) else None
+            chunk = self._make_chunk(text, start_order + i, source_url, tags, row_meta)
             if chunk:
                 self._buffer.append(chunk)
                 self.new_count += 1

@@ -18,10 +18,9 @@ import re
 import sys
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
-
-import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from scripts.ingest_corpus.base_ingestor import (
@@ -32,6 +31,11 @@ from scripts.ingest_corpus.base_ingestor import (
     make_min_word_validator,
     split_text_semantic,
 )
+
+try:
+    from scrapling import Fetcher
+except ImportError:  # pragma: no cover
+    Fetcher = None
 
 TARGETS: dict[str, dict] = {
     "fastapi":    {"source_name": "FastAPI Docs",     "start_url": "https://fastapi.tiangolo.com/tutorial/first-steps/",  "allowed_domain": "fastapi.tiangolo.com",   "content_selectors": ["article","main","div.md-content","body"],               "tags": ["fastapi","python","api","P0"],              "max_pages": 400, "delay": 0.3},
@@ -50,19 +54,32 @@ _SKIP_RE = re.compile(
 )
 
 
-def _fetch(url: str, timeout: int = 15) -> str | None:
-    """Fetch a URL and return raw HTML text, or None on error."""
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (compatible; DepthAPI-Ingest/1.0; +https://github.com)",
-            "Accept": "text/html,application/xhtml+xml",
-        }
-        r = httpx.get(url, headers=headers, timeout=timeout, follow_redirects=True)
-        r.raise_for_status()
-        return r.text
-    except Exception as e:
-        log.warning(f"  Fetch failed: {url} — {e}")
-        return None
+def _normalize_url(url: str) -> str:
+    parsed = urlparse(url)
+    clean = parsed._replace(fragment="", query="")
+    return clean.geturl().rstrip("/")
+
+
+def _fetch_with_scrapling(fetcher: Fetcher, url: str) -> str | None:
+    """Fetch with Scrapling using adaptive kwargs when available."""
+    attempts = (
+        {"timeout": 20, "follow_redirects": True},
+        {"timeout": 20},
+        {},
+    )
+    for kwargs in attempts:
+        try:
+            response = fetcher.get(url, **kwargs)
+            text = getattr(response, "text", None)
+            if text:
+                return text
+        except TypeError:
+            # Scrapling version may not support this kwargs shape; retry leaner call.
+            continue
+        except Exception as e:
+            log.warning(f"  Fetch failed: {url} — {e}")
+            return None
+    return None
 
 
 def _extract_text_from_html(raw_html: str, content_selectors: list[str]) -> str:
@@ -109,7 +126,7 @@ def _extract_links(raw_html: str, base_url: str) -> list[str]:
         href = m.group(1)
         # Skip JS templates, email, javascript
         if href and not href.startswith(("javascript:", "mailto:")) and "${" not in href:
-            full = urljoin(base_url, href).split("#")[0].rstrip("/")
+            full = _normalize_url(urljoin(base_url, href))
             links.append(full)
     return links
 
@@ -150,37 +167,64 @@ def crawl_target(target_key: str, max_pages: int | None = None) -> None:
         source_type="html",
         validators=validators,
     )
+    if Fetcher is None:
+        log.error("Scrapling is not installed. Install with: pip install -r scripts/ingest_corpus/requirements-ingest.txt")
+        sys.exit(1)
+
+    fetcher = Fetcher()
     visited: set[str] = set()
-    queue: deque[str] = deque([cfg["start_url"]])
+    queued: set[str] = set()
+    queue: deque[str] = deque([_normalize_url(cfg["start_url"])])
+    queued.add(_normalize_url(cfg["start_url"]))
     chunk_order = 0
     pages_done = 0
+    max_workers = max(2, min(12, int(cfg.get("concurrency", 6))))
+    request_delay = float(cfg.get("delay", 0.2))
 
     while queue and pages_done < cap:
-        url = queue.popleft()
-        url_clean = url.rstrip("/")
-        if url_clean in visited:
+        batch_urls: list[str] = []
+        while queue and len(batch_urls) < max_workers and (pages_done + len(batch_urls)) < cap:
+            u = queue.popleft()
+            if u in visited:
+                continue
+            batch_urls.append(u)
+            visited.add(u)
+
+        if not batch_urls:
             continue
-        visited.add(url_clean)
 
-        raw_html = _fetch(url)
-        if not raw_html:
-            continue
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(_fetch_with_scrapling, fetcher, url): url for url in batch_urls}
+            for future in as_completed(futures):
+                url = futures[future]
+                raw_html = future.result()
+                pages_done += 1
+                if not raw_html:
+                    continue
 
-        text, links = _parse_html(raw_html, cfg["content_selectors"], url)
-        if text and len(text) > 200:
-            chunks = split_text_semantic(text, chunk_size=800, overlap_words=25)
-            ingestor.add(chunks, source_url=url, tags=cfg["tags"], start_order=chunk_order)
-            chunk_order += len(chunks)
+                text, links = _parse_html(raw_html, cfg["content_selectors"], url)
+                if text and len(text) > 200:
+                    chunks = split_text_semantic(text, chunk_size=800, overlap_words=25)
+                    ingestor.add(chunks, source_url=url, tags=cfg["tags"], start_order=chunk_order)
+                    chunk_order += len(chunks)
 
-        for link in links:
-            link_clean = link.rstrip("/")
-            if is_valid_url(link, cfg["allowed_domain"], cfg.get("path_prefix")) and link_clean not in visited:
-                queue.append(link)
+                for link in links:
+                    link_clean = _normalize_url(link)
+                    if not is_valid_url(link_clean, cfg["allowed_domain"], cfg.get("path_prefix")):
+                        continue
+                    if link_clean in visited or link_clean in queued:
+                        continue
+                    queue.append(link_clean)
+                    queued.add(link_clean)
 
-        pages_done += 1
-        if pages_done % 25 == 0:
-            log.info(f"  [{cfg['source_name']}] {pages_done}/{cap} pages | {ingestor.new_count} chunks")
-        time.sleep(cfg["delay"])
+                if pages_done % 25 == 0:
+                    log.info(
+                        f"  [{cfg['source_name']}] {pages_done}/{cap} pages | "
+                        f"{ingestor.new_count} chunks | queue={len(queue)}"
+                    )
+
+        if request_delay > 0:
+            time.sleep(request_delay)
 
     total = ingestor.flush()
     log.info(f"[{cfg['source_name']}] Done. Pages: {pages_done} | Total chunks: {total}")

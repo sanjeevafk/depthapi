@@ -27,3 +27,5 @@ datasets/
 .planning/debug
 test-results/
 .codex
+.env.local
+.env.cloud
