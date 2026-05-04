@@ -4,6 +4,7 @@ Processes documents from the queue, chunks them, and generates embeddings.
 
 import hashlib
 import ipaddress
+import re
 import socket
 from datetime import datetime, timezone
 from typing import Any, Dict, List
@@ -47,6 +48,28 @@ class IngestionWorker:
         self.embed_service = get_embedding_service()
         self.chunk_size = 512  # Tokens
         self.chunk_overlap = 100 # Tokens
+        self._link_re = re.compile(r"https?://")
+        self._anchor_re = re.compile(r"\]\(#.+?\)")
+
+    def _clean_text(self, text: str) -> str:
+        text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", "", text)
+        text = re.sub(r"[ \t]{2,}", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+    def _is_valid_chunk(self, text: str) -> bool:
+        words = text.split()
+        if len(words) < 30:
+            return False
+        link_ratio = len(self._link_re.findall(text)) / max(1, len(words))
+        if link_ratio > 0.2:
+            return False
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        if len(lines) >= 3:
+            anchor_lines = [ln for ln in lines if self._anchor_re.search(ln)]
+            if anchor_lines and len(anchor_lines) / len(lines) > 0.6:
+                return False
+        return True
 
     async def run_once(self):
         """Perform one cycle of the worker: claim, process, release."""
@@ -184,7 +207,9 @@ class IngestionWorker:
         while start < len(tokens):
             end = start + self.chunk_size
             chunk_tokens = tokens[start:end]
-            chunks.append(self.tokenizer.decode(chunk_tokens))
+            chunk_text = self._clean_text(self.tokenizer.decode(chunk_tokens))
+            if self._is_valid_chunk(chunk_text):
+                chunks.append(chunk_text)
             start += (self.chunk_size - self.chunk_overlap)
             
         return chunks

@@ -24,7 +24,14 @@ from urllib.parse import urljoin, urlparse
 import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from scripts.ingest_corpus.base_ingestor import BaseIngestor, log, split_text
+from scripts.ingest_corpus.base_ingestor import (
+    BaseIngestor,
+    log,
+    make_link_ratio_validator,
+    make_markdown_toc_validator,
+    make_min_word_validator,
+    split_text_semantic,
+)
 
 TARGETS: dict[str, dict] = {
     "fastapi":    {"source_name": "FastAPI Docs",     "start_url": "https://fastapi.tiangolo.com/tutorial/first-steps/",  "allowed_domain": "fastapi.tiangolo.com",   "content_selectors": ["article","main","div.md-content","body"],               "tags": ["fastapi","python","api","P0"],              "max_pages": 400, "delay": 0.3},
@@ -133,7 +140,16 @@ def crawl_target(target_key: str, max_pages: int | None = None) -> None:
     cap = max_pages or cfg["max_pages"]
     log.info(f"Starting crawl: {cfg['source_name']} (max {cap} pages)")
 
-    ingestor = BaseIngestor(cfg["source_name"], source_type="html")
+    validators = [
+        make_min_word_validator(30),
+        make_link_ratio_validator(0.2),
+        make_markdown_toc_validator(),
+    ]
+    ingestor = BaseIngestor(
+        cfg["source_name"],
+        source_type="html",
+        validators=validators,
+    )
     visited: set[str] = set()
     queue: deque[str] = deque([cfg["start_url"]])
     chunk_order = 0
@@ -152,7 +168,7 @@ def crawl_target(target_key: str, max_pages: int | None = None) -> None:
 
         text, links = _parse_html(raw_html, cfg["content_selectors"], url)
         if text and len(text) > 200:
-            chunks = split_text(text, chunk_size=512, overlap=100)
+            chunks = split_text_semantic(text, chunk_size=800, overlap_words=25)
             ingestor.add(chunks, source_url=url, tags=cfg["tags"], start_order=chunk_order)
             chunk_order += len(chunks)
 

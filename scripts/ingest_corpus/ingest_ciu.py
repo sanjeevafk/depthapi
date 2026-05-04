@@ -15,7 +15,14 @@ from pathlib import Path
 # Allow running as a script from repo root
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.ingest_corpus.base_ingestor import BaseIngestor, log, split_by_header
+from scripts.ingest_corpus.base_ingestor import (
+    BaseIngestor,
+    log,
+    make_link_ratio_validator,
+    make_markdown_toc_validator,
+    make_min_word_validator,
+    split_by_header_semantic,
+)
 
 DATASETS = Path(__file__).resolve().parents[2] / "datasets"
 CIU_ROOT = DATASETS / "coding-interview-university"
@@ -43,12 +50,26 @@ def should_skip_section(text: str) -> bool:
     return bool(_SKIP_RE.match(first_line))
 
 
+def strip_markdown_noise(text: str) -> str:
+    """Remove CIU repo metadata blocks and TOC-only lists."""
+    # Drop <details> blocks (translations, misc repo metadata)
+    text = re.sub(r"<details>.*?</details>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    # Drop anchor-only list items (TOC/navigation)
+    text = re.sub(r"^\s*-\s*\[[^\]]+\]\(#.+?\)\s*$", "", text, flags=re.MULTILINE)
+    # Drop bare translation lists like '- [Bahasa](translations/README-id.md)'
+    text = re.sub(r"^\s*-\s*\[[^\]]+\]\(translations/.+?\)\s*$", "", text, flags=re.MULTILINE)
+    # Collapse extra blank lines after removals
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def extract_prose_from_ciu(md_text: str) -> list[str]:
     """
     Split on ### headers, keep sections that have actual prose/content.
     CIU uses ### for topics (e.g. '### Arrays'), which is the right granularity.
     """
     # Split at H2 and H3 boundaries
+    md_text = strip_markdown_noise(md_text)
     sections = re.split(r"(?m)^(?=#{2,3} )", md_text)
     results: list[str] = []
 
@@ -61,7 +82,12 @@ def extract_prose_from_ciu(md_text: str) -> list[str]:
 
         # For large sections, further split at H3
         if len(section) > 800:
-            sub = split_by_header(section, header_prefix="###", chunk_size=600, overlap=80)
+            sub = split_by_header_semantic(
+                section,
+                header_prefix="###",
+                chunk_size=800,
+                overlap_words=25,
+            )
             results.extend(sub)
         else:
             results.append(section)
@@ -70,7 +96,16 @@ def extract_prose_from_ciu(md_text: str) -> list[str]:
 
 
 def run() -> None:
-    ingestor = BaseIngestor("Coding Interview University", source_type="markdown")
+    validators = [
+        make_min_word_validator(30),
+        make_link_ratio_validator(0.2),
+        make_markdown_toc_validator(),
+    ]
+    ingestor = BaseIngestor(
+        "Coding Interview University",
+        source_type="markdown",
+        validators=validators,
+    )
     total_order = 0
 
     for file_path, display_name in SOURCES:
