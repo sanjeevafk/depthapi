@@ -29,3 +29,13 @@ test-results/
 .codex
 .env.local
 .env.cloud
+
+# Local/dev artifacts
+.venv-ingest/
+tools/
+graphify-out/
+scratch/
+AGENTS.md
+
+# Generated local RAG outputs
+data/rag/
