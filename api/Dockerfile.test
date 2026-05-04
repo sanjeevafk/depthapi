@@ -7,7 +7,6 @@ RUN pip install --no-cache-dir -r /app/requirements.txt \
     && pip install --no-cache-dir pytest
 
 COPY api /app
-COPY shared /shared
 
 ENV PYTHONPATH=/app
 
