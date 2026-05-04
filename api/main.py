@@ -26,6 +26,10 @@ from api.services.redis_safe import redis_circuit_active
 from api.services.inference import close_client
 from api.services.search import close_search_client
 from api.services.llm_client import get_provider_config_state
+from api.services.rag_dimension_guard import (
+    get_dimension_guard_status,
+    validate_embedding_dimension_or_raise,
+)
 from api.services.llm_errors import LLMError, LLMBadRequest, LLMInvalidAPIKey, LLMUnavailable
 from api.logging_config import (
     setup_logging,
@@ -62,6 +66,7 @@ async def lifespan(app: FastAPI):
             logger.warning("provider_config_validation", **payload)
     
     logger.info("startup")
+    await validate_embedding_dimension_or_raise()
     yield
     await asyncio.gather(close_redis(), close_client(), close_search_client())
 
@@ -240,4 +245,5 @@ async def health():
         "version": "2.0.0",
         "provider_stack": stack,
         "rate_limit_backend": limits,
+        "rag_dimension_guard": await get_dimension_guard_status(),
     }

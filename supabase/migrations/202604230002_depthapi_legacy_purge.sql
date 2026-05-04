@@ -26,15 +26,21 @@ ALTER TABLE public.conversations
 -- Index for hot-path conversation lookup by API Key
 CREATE INDEX IF NOT EXISTS idx_conversations_api_key_id ON public.conversations(api_key_id);
 
--- Refactor: history
-ALTER TABLE public.history 
-    ADD COLUMN IF NOT EXISTS api_key_id UUID REFERENCES public.api_keys(id) ON DELETE SET NULL;
+-- Refactor: history (optional if table exists in this environment)
+DO $$
+BEGIN
+    IF to_regclass('public.history') IS NOT NULL THEN
+        ALTER TABLE public.history 
+            ADD COLUMN IF NOT EXISTS api_key_id UUID REFERENCES public.api_keys(id) ON DELETE SET NULL;
 
-ALTER TABLE public.history 
-    ALTER COLUMN user_id DROP NOT NULL;
+        ALTER TABLE public.history 
+            ALTER COLUMN user_id DROP NOT NULL;
 
--- Index for history lookup by API Key
-CREATE INDEX IF NOT EXISTS idx_history_api_key_id ON public.history(api_key_id);
+        -- Index for history lookup by API Key
+        CREATE INDEX IF NOT EXISTS idx_history_api_key_id ON public.history(api_key_id);
+    END IF;
+END
+$$;
 
 -- 4. CLEANUP AUTH TRIGGERS (BEST EFFORT)
 -- If there is a trigger on auth.users that initializes legacy rows, we drop it.
@@ -42,4 +48,10 @@ DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 DROP FUNCTION IF EXISTS public.handle_new_user CASCADE;
 
 COMMENT ON TABLE public.conversations IS 'Core conversation state, scoped to an API Key project.';
-COMMENT ON TABLE public.history IS 'Query history, scoped to an API Key project.';
+DO $$
+BEGIN
+    IF to_regclass('public.history') IS NOT NULL THEN
+        COMMENT ON TABLE public.history IS 'Query history, scoped to an API Key project.';
+    END IF;
+END
+$$;

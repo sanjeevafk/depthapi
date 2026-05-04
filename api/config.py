@@ -114,7 +114,7 @@ class Settings(BaseSettings):
     openrouter_timeout_seconds: int = 90
     llm_timeout_seconds: int = 60
     embedding_provider: str = "gemini"
-    embedding_model: str = "text-embedding-004"
+    embedding_model: str = "gemini-embedding-001"
     embedding_dimension: int = 768
 
     stream_max_seconds: int = 30  # Increased from 20 to 30 for large input handling
