@@ -18,7 +18,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.ingest_corpus.base_ingestor import BaseIngestor, log, split_text
+from scripts.ingest_corpus.base_ingestor import (
+    BaseIngestor,
+    log,
+    make_link_ratio_validator,
+    make_markdown_toc_validator,
+    make_min_word_validator,
+    split_text_semantic,
+)
 
 DATASETS = Path(__file__).resolve().parents[2] / "datasets"
 DOCS_ROOT = DATASETS / "python-3.14-docs-html"
@@ -86,7 +93,7 @@ def _parse_html(html_path: Path) -> list[str]:
     text = "\n".join(parser.texts)
     if len(text) < 100:
         return []
-    return split_text(text, chunk_size=512, overlap=100)
+    return split_text_semantic(text, chunk_size=800, overlap_words=25)
 
 
 def collect_html_files(limit: int | None = None) -> list[tuple[Path, str]]:
@@ -124,7 +131,16 @@ def run(limit: int | None = None) -> None:
     files = collect_html_files(limit=limit)
     log.info(f"Found {len(files)} HTML pages to ingest")
 
-    ingestor = BaseIngestor("Python 3 Official Docs", source_type="html")
+    validators = [
+        make_min_word_validator(30),
+        make_link_ratio_validator(0.2),
+        make_markdown_toc_validator(),
+    ]
+    ingestor = BaseIngestor(
+        "Python 3 Official Docs",
+        source_type="html",
+        validators=validators,
+    )
     total_order = 0
 
     for i, (html_path, source_url) in enumerate(files):

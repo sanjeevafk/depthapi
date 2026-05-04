@@ -17,6 +17,7 @@ import logging
 import re
 import unicodedata
 from dataclasses import asdict, dataclass
+from typing import Callable, Iterable
 from pathlib import Path
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
@@ -123,6 +124,60 @@ def split_text(
     return [c for c in result if len(c.strip()) >= 50]  # drop tiny fragments
 
 
+def split_text_semantic(
+    text: str,
+    chunk_size: int = 800,
+    overlap_words: int = 25,
+) -> list[str]:
+    """Sentence-aware splitter that avoids mid-word fragments."""
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    chunks: list[str] = []
+
+    def _sentences(para: str) -> list[str]:
+        parts = re.split(r"(?<=[.!?])\s+", para.strip())
+        return [p.strip() for p in parts if p.strip()]
+
+    current: list[str] = []
+    current_len = 0
+
+    for para in paragraphs:
+        sentences = _sentences(para)
+        if not sentences:
+            continue
+        for sent in sentences:
+            sent_len = len(sent)
+            if current_len + sent_len + 1 <= chunk_size:
+                current.append(sent)
+                current_len += sent_len + 1
+            else:
+                if current:
+                    chunks.append(" ".join(current).strip())
+                current = [sent]
+                current_len = sent_len
+
+        if current:
+            chunks.append(" ".join(current).strip())
+            current = []
+            current_len = 0
+
+    if current:
+        chunks.append(" ".join(current).strip())
+
+    if overlap_words <= 0:
+        return [c for c in chunks if len(c.strip()) >= 50]
+
+    overlapped: list[str] = []
+    for i, chunk in enumerate(chunks):
+        if i == 0:
+            overlapped.append(chunk)
+            continue
+        prev_words = chunks[i - 1].split()
+        tail = " ".join(prev_words[-overlap_words:])
+        overlapped.append((tail + "\n" + chunk).strip())
+
+    return [c for c in overlapped if len(c.strip()) >= 50]
+
+
 def split_by_header(
     text: str,
     header_prefix: str = "###",
@@ -143,9 +198,71 @@ def split_by_header(
     return chunks
 
 
+def split_by_header_semantic(
+    text: str,
+    header_prefix: str = "###",
+    chunk_size: int = 800,
+    overlap_words: int = 25,
+) -> list[str]:
+    """Split markdown at header boundaries, then sentence-aware splitting."""
+    sections = re.split(rf"(?m)^{re.escape(header_prefix)} ", text)
+    chunks: list[str] = []
+    for section in sections:
+        section = section.strip()
+        if not section:
+            continue
+        if len(section) <= chunk_size:
+            chunks.append(section)
+        else:
+            chunks.extend(
+                split_text_semantic(
+                    section,
+                    chunk_size=chunk_size,
+                    overlap_words=overlap_words,
+                )
+            )
+    return chunks
+
+
+ChunkValidator = Callable[[str], bool]
+
+
+def make_min_word_validator(min_words: int = 30) -> ChunkValidator:
+    def _validate(text: str) -> bool:
+        return len(text.split()) >= min_words
+    return _validate
+
+
+def make_link_ratio_validator(max_ratio: float = 0.2) -> ChunkValidator:
+    def _validate(text: str) -> bool:
+        words = text.split()
+        if not words:
+            return False
+        link_count = len(re.findall(r"https?://", text))
+        return (link_count / max(1, len(words))) <= max_ratio
+    return _validate
+
+
+def make_markdown_toc_validator() -> ChunkValidator:
+    def _validate(text: str) -> bool:
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        if not lines:
+            return False
+        anchor_lines = [ln for ln in lines if re.search(r"\]\(#.+?\)", ln)]
+        if len(lines) >= 3 and len(anchor_lines) / len(lines) > 0.6:
+            return False
+        return True
+    return _validate
+
+
 # ─── BaseIngestor ─────────────────────────────────────────────────────────────
 class BaseIngestor:
-    def __init__(self, source_name: str, source_type: str = "prose"):
+    def __init__(
+        self,
+        source_name: str,
+        source_type: str = "prose",
+        validators: Iterable[ChunkValidator] | None = None,
+    ):
         self.source_name = source_name
         self.source_type = source_type
         DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -153,6 +270,7 @@ class BaseIngestor:
         self.new_count = 0
         self.skip_count = 0
         self._buffer: list[Chunk] = []
+        self._validators = list(validators) if validators else []
 
     def _load_existing_ids(self) -> set[str]:
         if not CHUNKS_FILE.exists():
@@ -171,6 +289,10 @@ class BaseIngestor:
         content = clean_text(content)
         if len(content) < 50:
             return None
+        for validator in self._validators:
+            if not validator(content):
+                self.skip_count += 1
+                return None
         cid = chunk_id(content)
         if cid in self._existing_ids:
             self.skip_count += 1

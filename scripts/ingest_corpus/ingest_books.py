@@ -20,7 +20,15 @@ from pathlib import Path
 # Allow running from repo root
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.ingest_corpus.base_ingestor import BaseIngestor, log, split_by_header, split_text
+from scripts.ingest_corpus.base_ingestor import (
+    BaseIngestor,
+    log,
+    make_link_ratio_validator,
+    make_markdown_toc_validator,
+    make_min_word_validator,
+    split_by_header_semantic,
+    split_text_semantic,
+)
 
 import opendataloader_pdf
 
@@ -76,23 +84,42 @@ def chunk_markdown_book(md_text: str, chunk_size: int = 500, overlap: int = 80) 
     Strategy: split at ## (chapter) and ### (section) headers.
     """
     # First pass: split at chapter level
-    chapters = split_by_header(md_text, header_prefix="##", chunk_size=chunk_size * 3, overlap=0)
+    chapters = split_by_header_semantic(
+        md_text,
+        header_prefix="##",
+        chunk_size=chunk_size * 3,
+        overlap_words=0,
+    )
     chunks: list[str] = []
     for chapter in chapters:
         if len(chapter) <= chunk_size:
             chunks.append(chapter)
         else:
             # Second pass: split chapter at section level
-            sections = split_by_header(chapter, header_prefix="###", chunk_size=chunk_size, overlap=overlap)
+            sections = split_by_header_semantic(
+                chapter,
+                header_prefix="###",
+                chunk_size=chunk_size,
+                overlap_words=25,
+            )
             if sections:
                 chunks.extend(sections)
             else:
-                chunks.extend(split_text(chapter, chunk_size=chunk_size, overlap=overlap))
+                chunks.extend(split_text_semantic(chapter, chunk_size=chunk_size, overlap_words=25))
     return [c for c in chunks if len(c.strip()) >= 80]
 
 
 def run(dry_run: bool = False) -> None:
-    ingestor = BaseIngestor("CS-Books-Notes-For-Professionals", source_type="pdf")
+    validators = [
+        make_min_word_validator(30),
+        make_link_ratio_validator(0.2),
+        make_markdown_toc_validator(),
+    ]
+    ingestor = BaseIngestor(
+        "CS-Books-Notes-For-Professionals",
+        source_type="pdf",
+        validators=validators,
+    )
     total_order = 0
 
     with tempfile.TemporaryDirectory(prefix="depthapi_books_") as tmpdir:
