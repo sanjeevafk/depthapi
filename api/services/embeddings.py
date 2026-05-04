@@ -5,7 +5,8 @@ Supports OpenAI and Google Gemini.
 from typing import List, Optional
 
 import structlog
-import google.generativeai as genai
+from google import genai
+from google.genai import types as genai_types
 from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -27,8 +28,7 @@ class EmbeddingService:
             api_key = str(api_key or "").strip()
             if not api_key:
                 raise ValueError("GEMINI_API_KEY is required for Gemini embeddings")
-            genai.configure(api_key=api_key)
-            self.gemini_client = genai
+            self.gemini_client = genai.Client(api_key=api_key)
         else:
             api_key = getattr(settings, "openai_api_key", "")
             if hasattr(api_key, "get_secret_value"):
@@ -37,6 +37,26 @@ class EmbeddingService:
             if not api_key:
                 raise ValueError("OPENAI_API_KEY is required for OpenAI embeddings")
             self.openai_client = AsyncOpenAI(api_key=api_key)
+
+    def _gemini_model_candidates(self) -> list[str]:
+        model = str(self.model or "").strip().removeprefix("models/")
+        if not model:
+            model = "gemini-embedding-001"
+        return [model]
+
+    @staticmethod
+    def _extract_gemini_embeddings(result: object) -> List[List[float]]:
+        embeddings = getattr(result, "embeddings", None)
+        if embeddings is not None:
+            out: List[List[float]] = []
+            for item in embeddings:
+                values = getattr(item, "values", None)
+                if values is None:
+                    continue
+                out.append([float(v) for v in values])
+            if out:
+                return out
+        raise ValueError("Unrecognized Gemini embedding response shape")
 
     @retry(
         stop=stop_after_attempt(3),
@@ -56,13 +76,33 @@ class EmbeddingService:
                 return []
 
             if self.provider == "gemini":
-                # Gemini text-embedding-004 handles batches natively
-                result = self.gemini_client.embed_content(
-                    model=f"models/{self.model}",
-                    content=valid_texts,
-                    task_type="retrieval_document",
-                )
-                return result["embedding"]
+                last_err: Exception | None = None
+                for model_name in self._gemini_model_candidates():
+                    try:
+                        result = self.gemini_client.models.embed_content(
+                            model=model_name,
+                            contents=valid_texts,
+                            config=genai_types.EmbedContentConfig(
+                                task_type="RETRIEVAL_DOCUMENT",
+                                output_dimensionality=self.dimensions,
+                            ),
+                        )
+                        vectors = self._extract_gemini_embeddings(result)
+                        if len(vectors) == len(valid_texts):
+                            return vectors
+                        # Some versions may collapse to one vector; keep deterministic behavior.
+                        if len(vectors) == 1 and len(valid_texts) == 1:
+                            return vectors
+                        raise ValueError(
+                            f"Gemini returned {len(vectors)} embeddings for {len(valid_texts)} inputs"
+                        )
+                    except Exception as exc:
+                        last_err = exc
+                        logger.warning("gemini_embedding_model_attempt_failed", model=model_name, error=str(exc))
+                        continue
+                if last_err:
+                    raise last_err
+                raise RuntimeError("No Gemini embedding model candidates available")
             else:
                 response = await self.openai_client.embeddings.create(
                     input=valid_texts,

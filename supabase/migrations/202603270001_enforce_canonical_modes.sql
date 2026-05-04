@@ -4,17 +4,23 @@
 alter table public.conversations
   drop constraint if exists conversations_mode_check;
 
-update public.history
-set mode = case
-  when mode = 'technical' then 'technical'
-  when mode = 'socratic' then 'socratic'
-  else 'learn'
+do $$
+begin
+  if to_regclass('public.history') is not null then
+    update public.history
+    set mode = case
+      when mode = 'technical' then 'technical'
+      when mode = 'socratic' then 'socratic'
+      else 'learn'
+    end
+    where mode is distinct from case
+      when mode = 'technical' then 'technical'
+      when mode = 'socratic' then 'socratic'
+      else 'learn'
+    end;
+  end if;
 end
-where mode is distinct from case
-  when mode = 'technical' then 'technical'
-  when mode = 'socratic' then 'socratic'
-  else 'learn'
-end;
+$$;
 
 update public.conversations
 set mode = case

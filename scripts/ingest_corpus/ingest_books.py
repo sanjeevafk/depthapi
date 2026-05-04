@@ -38,21 +38,36 @@ BOOKS_ROOT = DATASETS / "CS-and-Programming-Books"
 # ─── P0/P1 books to ingest ────────────────────────────────────────────────────
 # Format: (relative path from BOOKS_ROOT, tags)
 P0_P1_BOOKS: list[tuple[str, list[str]]] = [
-    # P0
+    # P0 - Languages & Databases
     ("Python/PythonNotesForProfessionals.pdf",         ["python", "stdlib", "P0"]),
     ("Javascript/JavaScriptNotesForProfessionals.pdf", ["javascript", "P0"]),
     ("Typescript/TypeScriptNotesForProfessionals.pdf", ["typescript", "P0"]),
     ("Sql/PostgreSQLNotesForProfessionals.pdf",        ["postgresql", "sql", "P0"]),
     ("Sql/SQLNotesForProfessionals.pdf",               ["sql", "P0"]),
-    # P1
-    ("Algorithm/AlgorithmsNotesForProfessionals.pdf",  ["algorithms", "data-structures", "P1"]),
-    ("Bash-shell-git/GitNotesForProfessionals.pdf",    ["git", "P1"]),
-    ("Bash-shell-git/BashNotesForProfessionals.pdf",   ["bash", "shell", "P1"]),
-    ("Bash-shell-git/LinuxNotesForProfessionals.pdf",  ["linux", "P1"]),
+    ("Interview Specific/SQL Tutorial.pdf",            ["sql", "P0"]),
+    
+    # P1 - Runtimes & Frameworks
     ("React/ReactJSNotesForProfessionals.pdf",         ["react", "frontend", "P1"]),
     ("Nodejs/NodeJSNotesForProfessionals.pdf",         ["nodejs", "javascript", "P1"]),
     ("html-css/CSSNotesForProfessionals.pdf",          ["css", "frontend", "P1"]),
+    ("Javascript/Eloquent_JavaScript.pdf",             ["javascript", "P1"]),
     ("Java/JavaNotesForProfessionals.pdf",             ["java", "P1"]),
+    
+    # P1 - Core Tools & Infra
+    ("Bash-shell-git/GitNotesForProfessionals.pdf",    ["git", "P1"]),
+    ("Bash-shell-git/BashNotesForProfessionals.pdf",   ["bash", "shell", "P1"]),
+    ("Bash-shell-git/LinuxNotesForProfessionals.pdf",  ["linux", "P1"]),
+    ("dev-ops/Apache Maven 3 Cookbook.pdf",            ["maven", "devops", "P1"]),
+
+    # P2 - Algorithms & System Design
+    ("Algorithm/AlgorithmsNotesForProfessionals.pdf",  ["algorithms", "data-structures", "P2"]),
+    ("Algorithm/Introduction to Algorithms.pdf",       ["algorithms", "theory", "P2"]),
+    ("System Design 💻/System Design Handbook - Aman Barnwal.pdf", ["system-design", "architecture", "P2"]),
+    ("Interview Specific/Cracking the coding interview 6th edition.pdf", ["interview", "coding", "P2"]),
+
+    # P2 - Data & ML
+    ("Machine-Learning/Python Data Science Handbook.pdf", ["python", "data-science", "P2"]),
+    ("Machine-Learning/Data Engineering Cookbook.pdf",    ["data-engineering", "P2"]),
 ]
 
 

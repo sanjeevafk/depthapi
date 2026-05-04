@@ -44,6 +44,14 @@ def phase_docs(sources: list[str] | None = None, max_pages: int | None = None) -
     from scripts.ingest_corpus.ingest_docs import run
     run(sources or ["fastapi", "pydantic", "sqlalchemy"], max_pages=max_pages)
 
+def phase_local_repos(
+    manifest: str | None = None,
+    priority: str = "all",
+    max_files: int | None = None,
+) -> dict:
+    from scripts.ingest_corpus.ingest_local_repos import DEFAULT_MANIFEST, run
+    return run(manifest_path=manifest or DEFAULT_MANIFEST, priority=priority, max_files=max_files)
+
 
 def print_summary() -> None:
     if not CHUNKS_FILE.exists():
@@ -74,6 +82,9 @@ def run(
     limit: int | None = None,
     sources: list[str] | None = None,
     max_pages: int | None = None,
+    manifest: str | None = None,
+    priority: str = "all",
+    max_files: int | None = None,
 ) -> None:
     t0 = time.time()
     log.info(f"Running phases: {phases}")
@@ -94,6 +105,14 @@ def run(
         log.info("── Phase: Live Doc Sites (Scrapling) ──")
         phase_docs(sources=sources, max_pages=max_pages)
 
+    if "local_repos" in phases:
+        log.info("── Phase: Local Repo Docs (English-only) ──")
+        result = phase_local_repos(manifest=manifest, priority=priority, max_files=max_files)
+        log.info(
+            f"Local repos ingest done: sources={result.get('sources_run')} "
+            f"namespaces={result.get('namespace_counts')}"
+        )
+
     print_summary()
     log.info(f"Total wall time: {time.time() - t0:.1f}s")
 
@@ -106,6 +125,9 @@ if __name__ == "__main__":
     parser.add_argument("--limit", type=int, default=None, help="Python docs: max HTML files")
     parser.add_argument("--source", nargs="+", default=None, help="Docs: sources to scrape")
     parser.add_argument("--max-pages", type=int, default=None, help="Docs: pages per source")
+    parser.add_argument("--manifest", type=str, default=None, help="Local repos manifest path")
+    parser.add_argument("--priority", type=str, default="all", choices=["P0", "P1", "P2", "all"])
+    parser.add_argument("--max-files", type=int, default=None, help="Local repos max files per source")
     args = parser.parse_args()
     run(
         phases=args.phase,
@@ -113,4 +135,7 @@ if __name__ == "__main__":
         limit=args.limit,
         sources=args.source,
         max_pages=args.max_pages,
+        manifest=args.manifest,
+        priority=args.priority,
+        max_files=args.max_files,
     )
