@@ -36,6 +36,9 @@ tools/
 graphify-out/
 scratch/
 AGENTS.md
+.code-review-graph
+.scrapling_cache
+.agents
 
 # Generated local RAG outputs
 data/rag/
