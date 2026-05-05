@@ -11,7 +11,6 @@ from google.genai import types as genai_types
 from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-import torch
 from sentence_transformers import SentenceTransformer
 from api.config import get_settings
 
@@ -25,6 +24,11 @@ class EmbeddingService:
         self.model = getattr(settings, "embedding_model", "text-embedding-3-small")
         self.dimensions = getattr(settings, "embedding_dimension", 1536)
 
+        self.reload_clients()
+
+    def reload_clients(self):
+        """Re-initializes all model clients based on current self.provider and self.model."""
+        settings = get_settings()
         if self.provider == "gemini":
             api_key = getattr(settings, "gemini_api_key", "")
             if hasattr(api_key, "get_secret_value"):
@@ -42,8 +46,8 @@ class EmbeddingService:
                 raise ValueError("OPENAI_API_KEY is required for OpenAI embeddings")
             self.openai_client = AsyncOpenAI(api_key=api_key)
         elif self.provider == "local_bge":
-            # Keep local inference CUDA-aware but fall back to CPU
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            # Forcing CPU for stability as requested
+            device = "cpu"
             self.local_model = SentenceTransformer(str(self.model), device=device)
             logger.info("local_model_loaded", model=self.model, device=device)
         else:
@@ -131,6 +135,8 @@ class EmbeddingService:
                     "normalize_embeddings": True,
                     "convert_to_numpy": True,
                     "show_progress_bar": False,
+                    "batch_size": 16, # As requested
+                    "precision": "float32", # float16 not supported on CPU, using float32 for accuracy
                 }
 
                 try:
