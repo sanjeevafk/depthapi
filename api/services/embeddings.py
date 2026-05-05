@@ -11,9 +11,12 @@ from google.genai import types as genai_types
 from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+import torch
+from sentence_transformers import SentenceTransformer
 from api.config import get_settings
 
 logger = structlog.get_logger(__name__)
+
 
 class EmbeddingService:
     def __init__(self):
@@ -21,7 +24,7 @@ class EmbeddingService:
         self.provider = getattr(settings, "embedding_provider", "openai")
         self.model = getattr(settings, "embedding_model", "text-embedding-3-small")
         self.dimensions = getattr(settings, "embedding_dimension", 1536)
-        
+
         if self.provider == "gemini":
             api_key = getattr(settings, "gemini_api_key", "")
             if hasattr(api_key, "get_secret_value"):
@@ -39,15 +42,10 @@ class EmbeddingService:
                 raise ValueError("OPENAI_API_KEY is required for OpenAI embeddings")
             self.openai_client = AsyncOpenAI(api_key=api_key)
         elif self.provider == "local_bge":
-            try:
-                from sentence_transformers import SentenceTransformer
-            except ImportError as exc:
-                raise RuntimeError(
-                    "sentence-transformers is required for EMBEDDING_PROVIDER=local_bge. "
-                    "Install with: pip install sentence-transformers torch"
-                ) from exc
-            # Keep local inference CPU-safe by default for low-VRAM environments.
-            self.local_model = SentenceTransformer(str(self.model), device="cpu")
+            # Keep local inference CUDA-aware but fall back to CPU
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.local_model = SentenceTransformer(str(self.model), device=device)
+            logger.info("local_model_loaded", model=self.model, device=device)
         else:
             raise ValueError(
                 f"Unsupported embedding provider '{self.provider}'. "
@@ -77,13 +75,13 @@ class EmbeddingService:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
-        reraise=True
+        reraise=True,
     )
     async def create_embeddings(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings for a list of strings."""
         if not texts:
             return []
-            
+
         try:
             cleaned_texts = [t.replace("\n", " ").strip() for t in texts]
             # Filter empty strings
@@ -114,26 +112,50 @@ class EmbeddingService:
                         )
                     except Exception as exc:
                         last_err = exc
-                        logger.warning("gemini_embedding_model_attempt_failed", model=model_name, error=str(exc))
+                        logger.warning(
+                            "gemini_embedding_model_attempt_failed",
+                            model=model_name,
+                            error=str(exc),
+                        )
                         continue
                 if last_err:
                     raise last_err
                 raise RuntimeError("No Gemini embedding model candidates available")
             elif self.provider == "openai":
                 response = await self.openai_client.embeddings.create(
-                    input=valid_texts,
-                    model=self.model,
-                    dimensions=self.dimensions
+                    input=valid_texts, model=self.model, dimensions=self.dimensions
                 )
                 return [data.embedding for data in response.data]
             else:
-                vectors = await asyncio.to_thread(
-                    self.local_model.encode,
-                    valid_texts,
-                    normalize_embeddings=True,
-                    convert_to_numpy=True,
-                    show_progress_bar=False,
-                )
+                encode_kwargs = {
+                    "normalize_embeddings": True,
+                    "convert_to_numpy": True,
+                    "show_progress_bar": False,
+                }
+
+                try:
+                    # Try passing output_dimensionality directly (supported in newer sentence-transformers)
+                    if int(self.dimensions) != 1024:
+                        encode_kwargs["output_dimensionality"] = int(self.dimensions)
+
+                    vectors = await asyncio.to_thread(
+                        self.local_model.encode, valid_texts, **encode_kwargs
+                    )
+                except (TypeError, ValueError):
+                    # Fallback for older versions or unsupported models: Encode at full dim then slice
+                    # Note: Slicing works for Matryoshka-trained models like BGE-M3
+                    del encode_kwargs["output_dimensionality"]
+                    vectors = await asyncio.to_thread(
+                        self.local_model.encode, valid_texts, **encode_kwargs
+                    )
+                    if int(self.dimensions) < vectors.shape[1]:
+                        # Slice and re-normalize
+                        import numpy as np
+
+                        vectors = vectors[:, : int(self.dimensions)]
+                        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+                        vectors = vectors / np.where(norms == 0, 1, norms)
+
                 out = vectors.tolist()
                 if not out:
                     return []
@@ -144,13 +166,20 @@ class EmbeddingService:
                         f"but EMBEDDING_DIMENSION is {self.dimensions}"
                     )
                 return [[float(v) for v in row] for row in out]
-            
+
         except Exception as exc:
-            logger.error("embedding_failed", provider=self.provider, error=str(exc), model=self.model)
+            logger.error(
+                "embedding_failed",
+                provider=self.provider,
+                error=str(exc),
+                model=self.model,
+            )
             raise
+
 
 # Global singleton instance
 _service: Optional[EmbeddingService] = None
+
 
 def get_embedding_service() -> EmbeddingService:
     global _service
