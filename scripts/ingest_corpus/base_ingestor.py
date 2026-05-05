@@ -281,9 +281,13 @@ class BaseIngestor:
     def _load_existing_ids(self) -> set[str]:
         if not CHUNKS_FILE.exists():
             return set()
-        with CHUNKS_FILE.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-        return {c["id"] for c in data}
+        try:
+            with CHUNKS_FILE.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            return {c["id"] for c in data if "id" in c}
+        except (json.JSONDecodeError, KeyError):
+            log.warning(f"Failed to load existing IDs from {CHUNKS_FILE}, starting fresh.")
+            return set()
 
     def _make_chunk(
         self,
