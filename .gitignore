@@ -39,3 +39,5 @@ AGENTS.md
 
 # Generated local RAG outputs
 data/rag/
+backups/
+output/
