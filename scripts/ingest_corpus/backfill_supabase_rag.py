@@ -182,6 +182,7 @@ async def _upsert_chunks_for_document(
                 "source_url": ch.get("source_url"),
                 "source_type": ch.get("source_type"),
                 "tags": ch.get("tags", []),
+                "original_chunk_order": int(ch.get("chunk_order", 0) or 0),
             }
         )
         row = {
@@ -193,6 +194,12 @@ async def _upsert_chunks_for_document(
             "metadata": metadata_row,
         }
         rows.append(row)
+
+    # Normalize chunk_order to avoid duplicate constraint violations per document.
+    # Preserve the original ordering intent by sorting on the original chunk_order.
+    rows.sort(key=lambda r: (r.get("chunk_order", 0), r.get("content_hash", "")))
+    for idx, row in enumerate(rows):
+        row["chunk_order"] = idx
 
     for i in range(0, len(rows), batch_size):
         batch = rows[i:i + batch_size]
