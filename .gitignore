@@ -39,6 +39,9 @@ AGENTS.md
 .code-review-graph
 .scrapling_cache
 .agents
+dlwp_pages/
+dlwp_pages_cleaned/
+
 
 # Generated local RAG outputs
 data/rag/
