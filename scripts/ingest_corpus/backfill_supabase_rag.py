@@ -189,6 +189,7 @@ async def _upsert_chunks_for_document(
             "document_id": document_id,
             "content": content,
             "content_hash": content_hash,
+            "embedding": ch.get("embedding"),
             "token_count": int(ch.get("token_count", 0) or 0),
             "chunk_order": int(ch.get("chunk_order", 0) or 0),
             "metadata": metadata_row,

@@ -412,8 +412,13 @@ class DLWPIngestor:
             return
 
         # ── Phase 2: Embed ────────────────────────────────────────────────────
-        log.info("Phase 2: Embedding with local BGE-M3 (output_dimensionality=768)…")
+        log.info(f"Phase 2: Embedding with {EMBEDDING_MODEL} (CPU, FP32)…")
+        # Ensure we use the model defined in this script's config
         embed_service = get_embedding_service()
+        embed_service.model = EMBEDDING_MODEL
+        embed_service.provider = "local_bge"
+        # Reset local_model to ensure it uses the correct model and CPU device
+        embed_service.reload_clients()
         total_batches = (len(all_raw) + self.batch_size - 1) // self.batch_size
 
         for i in range(0, len(all_raw), self.batch_size):
