@@ -7,6 +7,13 @@ Handles:
 - Writing raw chunks (embedding is a separate step, or done per-ingestor)
 - Progress reporting
 - Normalisation of whitespace / control characters
+
+v2 additions:
+- Stable deterministic chunk IDs (content_hash-based)
+- doc_id for document-level grouping
+- raw_text / cleaned_text dual storage for hybrid retrieval
+- version field for pipeline-level traceability
+- Incremental indexing via content_hash deduplication
 """
 
 from __future__ import annotations
@@ -32,8 +39,17 @@ log = logging.getLogger("ingest")
 # ─── Data model ───────────────────────────────────────────────────────────────
 @dataclass
 class Chunk:
-    id: str           # sha256 of content (first 16 hex chars)
-    content: str
+    # ── Identity ──────────────────────────────────────────────────────────────
+    id: str           # sha256[:16] of cleaned_text — stable dedup key (v1 compat)
+    doc_id: str       # Stable document-level ID (e.g. sha256 of source_name+url)
+    chunk_id: str     # Deterministic chunk ID: "<doc_id>#c<order:04d>"
+    content_hash: str # Full SHA-256 of cleaned_text for incremental indexing
+    version: str      # Pipeline version tag, e.g. "v2"
+    # ── Text ──────────────────────────────────────────────────────────────────
+    content: str      # Alias for cleaned_text (backward compat)
+    raw_text: str     # Unmodified text — preserved for BM25 / lexical search
+    cleaned_text: str # NFC-normalised, whitespace-collapsed — used for embeddings
+    # ── Source ────────────────────────────────────────────────────────────────
     source_name: str
     source_url: str | None
     chunk_order: int
@@ -45,14 +61,14 @@ class Chunk:
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR  = REPO_ROOT / "data" / "rag" / "trusted"
+DATA_DIR = REPO_ROOT / "data" / "rag" / "trusted"
 CHUNKS_FILE = DATA_DIR / "chunks.json"
 
 
 # ─── Text utilities ───────────────────────────────────────────────────────────
 _CTRL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
-_MULTI_NL   = re.compile(r"\n{3,}")
-_MULTI_SP   = re.compile(r"[ \t]{2,}")
+_MULTI_NL = re.compile(r"\n{3,}")
+_MULTI_SP = re.compile(r"[ \t]{2,}")
 
 
 def clean_text(text: str) -> str:
@@ -70,7 +86,19 @@ def rough_token_count(text: str) -> int:
 
 
 def chunk_id(content: str) -> str:
+    """Return first 16 hex chars of SHA-256 — backward-compat dedup key."""
     return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+
+
+def content_hash(content: str) -> str:
+    """Return full SHA-256 hex digest of content for incremental indexing."""
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def make_doc_id(source_name: str, source_url: str | None) -> str:
+    """Deterministic document-level ID based on name + URL."""
+    key = f"{source_name}::{source_url or ''}"
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
 
 
 # ─── Recursive character splitter ────────────────────────────────────────────
@@ -231,6 +259,7 @@ ChunkValidator = Callable[[str], bool]
 def make_min_word_validator(min_words: int = 30) -> ChunkValidator:
     def _validate(text: str) -> bool:
         return len(text.split()) >= min_words
+
     return _validate
 
 
@@ -241,6 +270,7 @@ def make_link_ratio_validator(max_ratio: float = 0.2) -> ChunkValidator:
             return False
         link_count = len(re.findall(r"https?://", text))
         return (link_count / max(1, len(words))) <= max_ratio
+
     return _validate
 
 
@@ -253,6 +283,7 @@ def make_markdown_toc_validator() -> ChunkValidator:
         if len(lines) >= 3 and len(anchor_lines) / len(lines) > 0.6:
             return False
         return True
+
     return _validate
 
 
@@ -263,7 +294,17 @@ class BaseIngestor:
         source_name: str,
         source_type: str = "prose",
         validators: Iterable[ChunkValidator] | None = None,
+        near_dup_threshold: int | None = 4,
     ):
+        """
+        Args:
+            source_name:       Human-readable corpus label.
+            source_type:       One of 'pdf', 'markdown', 'html', 'prose'.
+            validators:        Optional list of ChunkValidator callables.
+            near_dup_threshold: Hamming distance threshold for SimHash near-dup
+                               detection (0-64). None disables near-dup checks.
+                               Default 4 ≈ 94% text similarity.
+        """
         self.source_name = source_name
         self.source_type = source_type
         DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -274,9 +315,17 @@ class BaseIngestor:
             "too_short": 0,
             "validator_reject": 0,
             "duplicate": 0,
+            "near_duplicate": 0,
         }
         self._buffer: list[Chunk] = []
         self._validators = list(validators) if validators else []
+
+        # Near-duplicate filter (SimHash, optional)
+        if near_dup_threshold is not None:
+            from scripts.ingest_corpus.neardup_filter import NearDupFilter
+            self._near_dup: NearDupFilter | None = NearDupFilter(threshold=near_dup_threshold)
+        else:
+            self._near_dup = None
 
     def _load_existing_ids(self) -> set[str]:
         if not CHUNKS_FILE.exists():
@@ -286,7 +335,9 @@ class BaseIngestor:
                 data = json.load(f)
             return {c["id"] for c in data if "id" in c}
         except (json.JSONDecodeError, KeyError):
-            log.warning(f"Failed to load existing IDs from {CHUNKS_FILE}, starting fresh.")
+            log.warning(
+                f"Failed to load existing IDs from {CHUNKS_FILE}, starting fresh."
+            )
             return set()
 
     def _make_chunk(
@@ -296,29 +347,39 @@ class BaseIngestor:
         source_url: str | None = None,
         tags: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        raw_text: str | None = None,
+        version: str = "v1",
+        doc_id: str | None = None,
     ) -> Chunk | None:
-        content = clean_text(content)
-        if len(content) < 50:
+        cleaned = clean_text(content)
+        if len(cleaned) < 50:
             self.skip_stats["too_short"] += 1
             return None
         for validator in self._validators:
-            if not validator(content):
+            if not validator(cleaned):
                 self.skip_count += 1
                 self.skip_stats["validator_reject"] += 1
                 return None
-        cid = chunk_id(content)
+        cid = chunk_id(cleaned)
         if cid in self._existing_ids:
             self.skip_count += 1
             self.skip_stats["duplicate"] += 1
             return None
         self._existing_ids.add(cid)
+        _doc_id = doc_id or make_doc_id(self.source_name, source_url)
         return Chunk(
             id=cid,
-            content=content,
+            doc_id=_doc_id,
+            chunk_id=f"{_doc_id}#c{order:04d}",
+            content_hash=content_hash(cleaned),
+            version=version,
+            content=cleaned,
+            raw_text=raw_text if raw_text is not None else cleaned,
+            cleaned_text=cleaned,
             source_name=self.source_name,
             source_url=source_url,
             chunk_order=order,
-            token_count=rough_token_count(content),
+            token_count=rough_token_count(cleaned),
             source_type=self.source_type,
             tags=tags or [],
             metadata=metadata or None,
@@ -342,6 +403,60 @@ class BaseIngestor:
                 added.append(chunk)
         return added
 
+    def add_chunks(self, chunks: list[Chunk]) -> list[Chunk]:
+        """
+        Accept pre-built Chunk objects (e.g. from HierarchicalSemanticChunker).
+
+        Runs, in order:
+          1. Minimum-length guard  (< 50 chars)
+          2. Validator chain
+          3. Exact dedup          (content_hash[:16])
+          4. Near-dup detection   (SimHash, if enabled)
+
+        Args:
+            chunks: Chunk objects with all fields already populated.
+
+        Returns:
+            List of chunks accepted into the buffer.
+        """
+        added: list[Chunk] = []
+        for chunk in chunks:
+            # 1. Minimum length guard
+            if len(chunk.cleaned_text) < 50:
+                self.skip_stats["too_short"] += 1
+                self.skip_count += 1
+                continue
+
+            # 2. Validator chain
+            rejected = False
+            for validator in self._validators:
+                if not validator(chunk.cleaned_text):
+                    self.skip_count += 1
+                    self.skip_stats["validator_reject"] += 1
+                    rejected = True
+                    break
+            if rejected:
+                continue
+
+            # 3. Exact dedup by short ID (content_hash[:16])
+            if chunk.id in self._existing_ids:
+                self.skip_count += 1
+                self.skip_stats["duplicate"] += 1
+                continue
+
+            # 4. SimHash near-duplicate detection
+            if self._near_dup and self._near_dup.is_duplicate(chunk.cleaned_text):
+                self.skip_count += 1
+                self.skip_stats["near_duplicate"] += 1
+                continue
+
+            self._existing_ids.add(chunk.id)
+            self._buffer.append(chunk)
+            self.new_count += 1
+            added.append(chunk)
+
+        return added
+
     def flush(self) -> int:
         """Write buffered chunks to chunks.json. Returns total chunk count."""
         if not self._buffer:
@@ -358,10 +473,22 @@ class BaseIngestor:
         with CHUNKS_FILE.open("w", encoding="utf-8") as f:
             json.dump(existing, f, ensure_ascii=False, indent=2)
 
+        nd_stats = self._near_dup.stats() if self._near_dup else {}
         log.info(
             f"[{self.source_name}] wrote {len(self._buffer)} new chunks "
-            f"(skipped {self.skip_count} dupes) → total {len(existing)}"
+            f"| skipped: exact_dup={self.skip_stats['duplicate']} "
+            f"near_dup={self.skip_stats['near_duplicate']} "
+            f"short={self.skip_stats['too_short']} "
+            f"validator={self.skip_stats['validator_reject']} "
+            f"→ total {len(existing)}"
         )
+        if nd_stats:
+            log.info(
+                f"  SimHash stats: checked={nd_stats['total_checked']} "
+                f"rejected={nd_stats['near_dup_rejected']} "
+                f"unique_fps={nd_stats['unique_fingerprints']} "
+                f"threshold={nd_stats['threshold']}"
+            )
         self._buffer.clear()
         return len(existing)
 
