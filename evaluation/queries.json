@@ -1,0 +1,52 @@
+[
+  {
+    "id": "q001",
+    "query": "How does backpropagation work in neural networks?",
+    "type": "conceptual"
+  },
+  {
+    "id": "q002",
+    "query": "Python list comprehension with filter condition",
+    "type": "code"
+  },
+  {
+    "id": "q003",
+    "query": "What is the difference between BFS and DFS graph traversal?",
+    "type": "conceptual"
+  },
+  {
+    "id": "q004",
+    "query": "How to implement a binary search tree in Python?",
+    "type": "code"
+  },
+  {
+    "id": "q005",
+    "query": "Explain the CAP theorem in distributed systems",
+    "type": "conceptual"
+  },
+  {
+    "id": "q006",
+    "query": "SQL JOIN types: INNER, LEFT, RIGHT, FULL OUTER",
+    "type": "conceptual"
+  },
+  {
+    "id": "q007",
+    "query": "How does the GIL affect Python multithreading?",
+    "type": "conceptual"
+  },
+  {
+    "id": "q008",
+    "query": "async def and await syntax in Python asyncio",
+    "type": "code"
+  },
+  {
+    "id": "q009",
+    "query": "What is Big O notation and time complexity analysis?",
+    "type": "conceptual"
+  },
+  {
+    "id": "q010",
+    "query": "Implementing a LRU cache with O(1) lookup",
+    "type": "code"
+  }
+]

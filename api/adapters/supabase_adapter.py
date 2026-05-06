@@ -71,6 +71,11 @@ class SupabaseHTTPTable:
         self.filters.append((column, f"is.{_encode_filter_value(value)}"))
         return self
 
+    def in_(self, column: str, values: list[Any]) -> "SupabaseHTTPTable":
+        encoded_vals = ",".join(_encode_filter_value(v) for v in values)
+        self.filters.append((column, f"in.({encoded_vals})"))
+        return self
+
     def order(self, column: str, desc: bool = False, nullsfirst: bool = False) -> "SupabaseHTTPTable":
         suffix = ".desc" if desc else ".asc"
         if nullsfirst:
