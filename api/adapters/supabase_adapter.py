@@ -7,7 +7,6 @@ from typing import Any, Dict, List, Optional, Union
 
 import httpx
 import structlog
-from api.config import get_settings
 
 logger = structlog.get_logger(__name__)
 
