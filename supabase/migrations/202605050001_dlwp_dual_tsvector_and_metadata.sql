@@ -99,7 +99,13 @@ DECLARE
   k_dense          INT;
   k_sparse_simple  INT;
   k_sparse_english INT;
+  cleaned_query    TEXT;
+  cleaned_simple   TEXT;
 BEGIN
+  cleaned_query := regexp_replace(COALESCE(query_text, ''), '[^[:alnum:][:space:]]', ' ', 'g');
+  cleaned_query := trim(regexp_replace(cleaned_query, '\s+', ' ', 'g'));
+  cleaned_simple := regexp_replace(cleaned_query, '\s+', ' & ', 'g');
+
   -- Dynamic RRF k-values based on query mode
   IF query_mode = 'code' THEN
     k_dense          := 60;
@@ -113,7 +119,7 @@ BEGIN
   END IF;
 
   RETURN QUERY
-  WITH vector_ranks AS (
+  WITH vector_candidates AS (
     SELECT
       kc.id,
       (1 - (kc.embedding <=> query_embedding))::FLOAT AS similarity,
@@ -123,46 +129,52 @@ BEGIN
     JOIN public.knowledge_collections c  ON kd.collection_id = c.id
     WHERE c.api_key_id = target_api_key_id
       AND kc.embedding IS NOT NULL
-      AND (1 - (kc.embedding <=> query_embedding)) >= min_similarity
       AND kc.deleted_at IS NULL
       AND kd.deleted_at IS NULL
       AND c.deleted_at IS NULL
     ORDER BY kc.embedding <=> query_embedding
     LIMIT candidate_pool_size
   ),
+  vector_ranks AS (
+    SELECT *
+    FROM vector_candidates
+    WHERE similarity >= min_similarity
+  ),
   fts_english_ranks AS (
     SELECT
       kc.id,
       ROW_NUMBER() OVER (
-        ORDER BY ts_rank_cd(kc.fts_tokens, websearch_to_tsquery('english', query_text)) DESC, kc.id
+        ORDER BY ts_rank_cd(kc.fts_tokens, websearch_to_tsquery('english', cleaned_query)) DESC, kc.id
       ) AS rank
     FROM public.knowledge_chunks kc
     JOIN public.knowledge_documents kd   ON kc.document_id = kd.id
     JOIN public.knowledge_collections c  ON kd.collection_id = c.id
     WHERE c.api_key_id = target_api_key_id
-      AND kc.fts_tokens @@ websearch_to_tsquery('english', query_text)
+      AND cleaned_query <> ''
+      AND kc.fts_tokens @@ websearch_to_tsquery('english', cleaned_query)
       AND kc.deleted_at IS NULL
       AND kd.deleted_at IS NULL
       AND c.deleted_at IS NULL
-    ORDER BY ts_rank_cd(kc.fts_tokens, websearch_to_tsquery('english', query_text)) DESC
+    ORDER BY ts_rank_cd(kc.fts_tokens, websearch_to_tsquery('english', cleaned_query)) DESC
     LIMIT candidate_pool_size
   ),
   fts_simple_ranks AS (
     SELECT
       kc.id,
       ROW_NUMBER() OVER (
-        ORDER BY ts_rank_cd(kc.fts_tokens_simple, to_tsquery('simple', regexp_replace(query_text, '\s+', ' & ', 'g'))) DESC, kc.id
+        ORDER BY ts_rank_cd(kc.fts_tokens_simple, to_tsquery('simple', cleaned_simple)) DESC, kc.id
       ) AS rank
     FROM public.knowledge_chunks kc
     JOIN public.knowledge_documents kd   ON kc.document_id = kd.id
     JOIN public.knowledge_collections c  ON kd.collection_id = c.id
     WHERE c.api_key_id = target_api_key_id
       AND kc.fts_tokens_simple IS NOT NULL
-      AND kc.fts_tokens_simple @@ to_tsquery('simple', regexp_replace(query_text, '\s+', ' & ', 'g'))
+      AND cleaned_simple <> ''
+      AND kc.fts_tokens_simple @@ to_tsquery('simple', cleaned_simple)
       AND kc.deleted_at IS NULL
       AND kd.deleted_at IS NULL
       AND c.deleted_at IS NULL
-    ORDER BY ts_rank_cd(kc.fts_tokens_simple, to_tsquery('simple', regexp_replace(query_text, '\s+', ' & ', 'g'))) DESC
+    ORDER BY ts_rank_cd(kc.fts_tokens_simple, to_tsquery('simple', cleaned_simple)) DESC
     LIMIT candidate_pool_size
   ),
   all_candidates AS (
