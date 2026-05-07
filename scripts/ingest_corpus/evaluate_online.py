@@ -24,6 +24,13 @@ QUERIES_FILE = EVAL_DIR / "queries.json"
 GROUND_TRUTH_FILE = EVAL_DIR / "ground_truth.json"
 API_KEY_ID = "11111111-1111-1111-1111-111111111111"
 
+
+def _normalize_hash(value: str) -> str:
+    if not value:
+        return ""
+    cleaned = "".join(ch for ch in value.lower() if ch.isalnum())
+    return cleaned[:16]
+
 async def evaluate_query(supabase, embed_service, reranker_service, query_text, relevant_hashes, top_k=20, rerank=False):
     # 1. Embed query
     query_embedding = await embed_service.create_embeddings([query_text])
@@ -58,7 +65,7 @@ async def evaluate_query(supabase, embed_service, reranker_service, query_text, 
     if not hash_resp.data:
         return []
         
-    id_to_hash = {str(r["id"]): r["content_hash"] for r in hash_resp.data}
+    id_to_hash = {str(r["id"]): _normalize_hash(r["content_hash"]) for r in hash_resp.data}
     retrieved_hashes = [id_to_hash.get(str(h["chunk_id"])) for h in hits if str(h["chunk_id"]) in id_to_hash]
     
     matches = set(retrieved_hashes) & relevant_hashes
@@ -107,7 +114,8 @@ async def main():
     for q_entry in queries:
         qid = q_entry["id"]
         text = q_entry["query"]
-        relevant = set(ground_truth.get(qid, []))
+        relevant = {_normalize_hash(h) for h in ground_truth.get(qid, [])}
+        relevant = {h for h in relevant if h}
         
         if not relevant: continue
         
