@@ -42,10 +42,14 @@ async def retrieve_context(query: str, api_key_id: str, **kwargs):
             return []
         
         # Determine namespaces (MVP: trusted + customer collection if provided)
-        namespaces = [os.getenv("RAG_TRUSTED_NAMESPACE", "trusted")]
+        namespaces = []
+        if kwargs.get("use_trusted_corpus", True):
+            namespaces.append(os.getenv("RAG_TRUSTED_NAMESPACE", "trusted"))
         collection_id = kwargs.get("collection_id")
         if collection_id:
             namespaces.append(f"{api_key_id}/{collection_id}")
+        if not namespaces:
+            return []
             
         results = await backend.retrieve(
             query_embedding=query_vectors[0],
