@@ -11,6 +11,7 @@ from api.auth import get_supabase_admin
 from api.config import get_settings
 from api.adapters.supabase_adapter import SupabaseHTTPClient
 from api.services.embeddings import get_embedding_service
+from api.services.reranker import get_reranker_service
 
 logger = structlog.get_logger(__name__)
 
@@ -99,7 +100,7 @@ class RetrievalService:
 
             # 3. Reranking Stage (Placeholder)
             # TODO: Integrate a Cross-Encoder (e.g. Cohere or Jina) here
-            ranked_candidates = self._passthrough_rerank(query, candidates)[:limit]
+            ranked_candidates = (await self._passthrough_rerank(query, candidates))[:limit]
 
             # 4. Context Expansion (Neighboring chunks)
             final_context = []
@@ -161,8 +162,8 @@ class RetrievalService:
             logger.warning("context_expansion_failed", chunk_id=candidate["chunk_id"], error=str(exc))
             return candidate["content"]
 
-    def _passthrough_rerank(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Temporary passthrough reranker. In production, this uses a Cross-Encoder."""
+    async def _passthrough_rerank(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Rerank candidates with a cross-encoder, falling back to RRF ordering."""
         deduped: Dict[str, Dict[str, Any]] = {}
         for candidate in candidates:
             chunk_id = candidate.get("chunk_id")
@@ -171,8 +172,16 @@ class RetrievalService:
             existing = deduped.get(chunk_id)
             if existing is None or candidate.get("rrf_score", 0) > existing.get("rrf_score", 0):
                 deduped[chunk_id] = candidate
-        # For now, we trust the RRF score from Postgres and keep best per chunk.
-        return sorted(deduped.values(), key=lambda x: x.get("rrf_score", 0), reverse=True)
+        ordered = sorted(deduped.values(), key=lambda x: x.get("rrf_score", 0), reverse=True)
+        if not query or len(ordered) <= 1:
+            return ordered
+
+        try:
+            reranker = get_reranker_service()
+            return await reranker.rerank(query, ordered, top_n=len(ordered))
+        except Exception as exc:
+            logger.warning("rerank_failed_fallback", error=str(exc))
+            return ordered
 
     async def _search_candidates(
         self,
