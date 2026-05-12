@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Literal
 import httpx
 from pydantic import SecretStr
 
-import config as config_module
+import api.config as config_module
 from api.logging_config import logger
 from api.services.cache import cache_get, cache_set
 

@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import SecretStr
 
-import config
+import api.config as config
 
 ProviderName = Literal["groq", "cerebras", "gemini", "openrouter"]
 
