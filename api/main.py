@@ -15,6 +15,7 @@ from slowapi.util import get_remote_address
 
 from routers import (
     query,
+    ingest,
     export,
     history,
     webhooks,
@@ -211,6 +212,7 @@ async def llm_error_handler(request: Request, exc: LLMError):
 
 # --- Core DepthAPI Routes ---
 app.include_router(query.router, prefix="/api")
+app.include_router(ingest.router, prefix="/api")
 app.include_router(messages.router, prefix="/api")
 app.include_router(history.router, prefix="/api")
 app.include_router(export.router, prefix="/api")
