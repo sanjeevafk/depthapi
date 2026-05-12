@@ -57,6 +57,8 @@ class MessageRequest(BaseModel):
     prompt_mode: Optional[str] = None
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     regenerate: bool = False
+    collection_id: Optional[str] = None
+    use_trusted_corpus: bool = True
 
 
 def _idempotency_key(user_id: str, message_id: str) -> str:
