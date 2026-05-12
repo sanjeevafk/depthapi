@@ -430,6 +430,8 @@ class StreamEventLoop:
                 request_id=self.request_id,
                 user_id=self.user_id,
                 is_pro=self.is_pro,
+                collection_id=self.req.collection_id,
+                use_trusted_corpus=self.req.use_trusted_corpus,
                 telemetry_sink=telemetry_sink,
                 conversation_messages=self.context_messages,
                 conversation_context=self.socratic_context,
@@ -497,6 +499,8 @@ class StreamEventLoop:
                         conversation_context=self.socratic_context,
                         intent_system_prompt=self.intent_system_prompt,
                         fallback_timeout_seconds=self.fallback_timeout_seconds,
+                        collection_id=self.req.collection_id,
+                        use_trusted_corpus=self.req.use_trusted_corpus,
                     )
                 except Exception as exc:
                     logger.error(

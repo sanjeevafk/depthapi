@@ -116,6 +116,8 @@ async def run_fallback_generation(
     conversation_context: str,
     intent_system_prompt: str,
     fallback_timeout_seconds: float,
+    collection_id: str | None = None,
+    use_trusted_corpus: bool = True,
 ) -> str:
     result = await asyncio.wait_for(
         generate_explanation(
@@ -131,6 +133,8 @@ async def run_fallback_generation(
             conversation_messages=conversation_messages,
             conversation_context=conversation_context,
             intent_system_prompt=intent_system_prompt,
+            collection_id=collection_id,
+            use_trusted_corpus=use_trusted_corpus,
         ),
         timeout=fallback_timeout_seconds,
     )
