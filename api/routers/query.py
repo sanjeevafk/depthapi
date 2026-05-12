@@ -40,6 +40,8 @@ class QueryRequest(BaseModel):
     levels: list[str] = Field(default=FREE_LEVELS)
     premium: bool = False
     mode: str = DEFAULT_CHAT_MODE
+    collection_id: str | None = None
+    use_trusted_corpus: bool = True
     bypass_cache: bool = False
     temperature: float = 0.7
     regenerate: bool = False
@@ -181,6 +183,8 @@ async def query_topic(
             regenerate=req.regenerate,
             request_id=request_id,
             user_id=api_key.id,
+            collection_id=req.collection_id,
+            use_trusted_corpus=req.use_trusted_corpus,
             telemetry_sink=level_telemetry[level],
         )
         for level in missing_levels
