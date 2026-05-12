@@ -184,16 +184,17 @@ class RetrievalService:
         limit: int,
         min_similarity: float,
     ) -> List[Dict[str, Any]]:
-        search_res = await db.rpc(
-            "hybrid_search_v4",
-            {
-                "query_text": query,
-                "query_embedding": query_vector,
-                "target_api_key_id": api_key_id,
-                "final_count": limit * 2,  # Get more for reranking
-                "min_similarity": min_similarity,
-            },
-        ).execute()
+        rpc_name = "hybrid_search_trusted_v4" if tier == "trusted" else "hybrid_search_v4"
+        payload: dict[str, Any] = {
+            "query_text": query,
+            "query_embedding": query_vector,
+            "final_count": limit * 2,
+            "min_similarity": min_similarity,
+        }
+        if tier != "trusted":
+            payload["target_api_key_id"] = api_key_id
+
+        search_res = await db.rpc(rpc_name, payload).execute()
         candidates = search_res.data or []
         for candidate in candidates:
             candidate["source_tier"] = tier
