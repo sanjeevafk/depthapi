@@ -219,6 +219,8 @@ def build_query_stream_response(
                 regenerate=req.regenerate,
                 request_id=request_id,
                 user_id=user_id_raw,
+                collection_id=req.collection_id,
+                use_trusted_corpus=req.use_trusted_corpus,
                 telemetry_sink=telemetry_sink,
             )
             stream_iter = _stream_chunks(stream)
@@ -292,6 +294,8 @@ def build_query_stream_response(
                             regenerate=req.regenerate,
                             request_id=request_id,
                             user_id=user_id_raw,
+                            collection_id=req.collection_id,
+                            use_trusted_corpus=req.use_trusted_corpus,
                             telemetry_sink=telemetry_sink,
                         ),
                         timeout=fallback_timeout,
@@ -367,6 +371,8 @@ def build_query_stream_response(
                             regenerate=req.regenerate,
                             request_id=request_id,
                             user_id=user_id_raw,
+                            collection_id=req.collection_id,
+                            use_trusted_corpus=req.use_trusted_corpus,
                             telemetry_sink=telemetry_sink,
                         ),
                         timeout=fallback_timeout,
