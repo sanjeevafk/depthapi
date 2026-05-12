@@ -1,88 +1,82 @@
-# DepthAPI: Headless Contextual AI Engine
+# DepthAPI: The Cognitive Synthesis Engine
 
-DepthAPI is a high-performance B2B AI orchestration engine designed to deliver explanations at the precise depth required for any professional context—from simplified executive summaries to deep technical audits.
+> **From Surface-Level Answers to First-Principles Wisdom.**
 
-Originally built as KnowBear, an AI-powered layered learning engine web-app, DepthAPI has evolved into a fully headless service layer optimized for multi-tenant integration and programmatic scaling.
+DepthAPI is a high-performance, **headless B2B infrastructure** designed to deliver information at the precise cognitive depth required for any professional context. It transforms raw data into structured intelligence, ranging from ELI5 analogies to deep technical audits.
 
-## Core Capabilities
+---
 
-- **Layered Knowledge Retrieval**: Delivers content across standardized depth levels (`Simple`, `Accessible`, `Technical`, `Expert`).
-- **Headless Orchestration**: Native support for API-only workflows with no frontend overhead.
-- **Project-Scoped Memory**: Multi-tenant conversation persistence and project-level context management.
-- **Streaming Reliability**: Production-grade SSE streaming with automatic heartbeats, timeout guards, and fail-soft fallback chains.
-- **Provider Agnostic**: Unified interface for OpenAI, Gemini, Groq, Cerebras, and OpenRouter with dynamic failover routing.
+## Key Features
+
+### 1. The 5x3 Depth-Mode Matrix
+Unlike generic LLM wrappers, DepthAPI uses a proprietary orchestration layer to deliver 15 distinct interaction "lenses":
+
+| Depth | Answer Mode | Socratic Mode | Compare Mode |
+| :--- | :--- | :--- | :--- |
+| **Simple** | Plain-language analogies | Guided discovery | Surface-level trade-offs |
+| **Accessible** | Real-world examples | Conceptual scaffolding | Structural differences |
+| **Technical** | Mechanism + Rationale | Logic-based questioning | API/Schema comparison |
+| **Expert** | First Principles + Math | Peer-level inquiry | Formal notation audits |
+| **Meme** | Internet culture / Slang | Irony-based learning | Cultural "vibe" check |
+
+### 2. Dynamic Model Escalation (The "Moat")
+DepthAPI doesn't just call one model; it intelligently routes queries to the most cost-effective "brain" for the job:
+*   **Speed Tier:** Low-complexity queries route to **Groq (Llama 3.1 8B)** for sub-second responses.
+*   **Reasoning Tier:** Complex technical or expert queries escalate to **Gemini 1.5 Pro**, leveraging its 2M-token context window for massive document synthesis.
+*   **Failover Logic:** Production-grade circuit breakers automatically reroute traffic between providers (Groq, Gemini, OpenAI, Cerebras) if a provider stumbles.
+
+### 3. Production-Ready RAG (Hybrid Intelligence)
+Optimized for massive corpuses (tested up to 250k+ chunks), our RAG infrastructure includes:
+*   **Hybrid Search (v4):** Combines Vector similarity with BM25 keyword matching for surgical precision.
+*   **Context Expansion:** Automatically fetches neighboring chunks (pre- and post-) to ensure the LLM understands the full paragraph, not just a fragment.
+*   **Source Attribution:** Built-in metadata tracking for citations, page numbers, and source URLs.
+
+### 4. "Stealth Industrial" Design Philosophy
+Engineered for developers, DepthAPI follows a high-density, no-fluff output style. Every response is structured to maximize information density while minimizing cognitive load.
+
+---
 
 ## Tech Stack
 
 | Layer | Technologies |
-|------|--------------|
-| **Backend** | FastAPI, Python 3.11+, Pydantic v2, Structlog |
-| **Authentication** | API Key-based (SHA-256 hashed), scoped to plan metadata |
-| **Persistence** | Supabase (PostgreSQL), pgvector (RAG ready) |
-| **Speed/Concurrency** | Upstash Redis (Caching, Rate Limiting, Idempotency) |
-| **Inference** | LiteLLM-compatible multi-provider routing |
+| :--- | :--- |
+| **Core Engine** | FastAPI (Python 3.11+), Pydantic v2, Structlog |
+| **Cognitive Layer** | LiteLLM-compatible Routing, Custom Prompt Fragments |
+| **Persistence** | Supabase (PostgreSQL), pgvector (Scale-ready RAG) |
+| **Observability** | Upstash Redis (Caching, Rate Limiting, Idempotency) |
+| **Auth** | SHA-256 Hashed API Keys, Plan-scoped Metadata |
 
-## Architecture
+---
 
-```mermaid
-flowchart TD
-    API[FastAPI Endpoint] --> AUTH[API Key Validator]
-    AUTH --> GATE[Message Gatekeeper]
-    GATE --> REDIS[(Redis / Rate Limits)]
-    GATE --> SNAPS[Conversation Snapshot]
-    SNAPS --> ORCH[Streaming Orchestrator]
-    ORCH --> INF[Inference Router]
-    INF --> LLM[LLM Providers]
-    ORCH --> DB[(Supabase / History)]
+## Quick Start
+
+### Installation
+```bash
+git clone https://github.com/your-repo/depthapi
+python -m venv .venv
+source .venv/bin/activate
+pip install -r api/requirements.txt
 ```
 
-## Authentication
-
-DepthAPI uses the `X-API-Key` header for authentication. 
-
+### Usage
 ```bash
 curl -X POST "https://api.depthapi.com/v1/query" \
-     -H "X-API-Key: sk-depth-your-key-here" \
+     -H "X-API-Key: sk-depth-..." \
      -H "Content-Type: application/json" \
-     -d '{"topic": "Quantum Computing", "mode": "technical"}'
+     -d '{
+       "topic": "Quantum Decoherence",
+       "level": "expert",
+       "mode": "technical"
+     }'
 ```
 
-Keys are stored as SHA-256 digests. Plan-based rate limits and token budgets are enforced dynamically at the project level.
+---
 
-## Repository Structure
-
-```text
-DepthAPI/
-|-- api/
-|   |-- routers/          # API endpoints (messages, query, payments, webhooks)
-|   |-- services/         # Core logic (auth, streaming, inference, rate limiting)
-|   |-- repositories/     # Database abstractions
-|   `-- tests/            # Backend test suite
-|-- supabase/
-|   `-- migrations/       # SQL schema and B2B transition history
-|-- scripts/              # Utility scripts for migration and maintenance
-`-- README.md
-```
-
-## Local Development
-
-### Prerequisites
-- Python 3.11+
-- Redis (Local or Upstash)
-- Supabase Instance
-
-### Backend Setup
-1. Clone the repository.
-2. Create a virtual environment: `python -m venv .venv`.
-3. Install dependencies: `pip install -r api/requirements.txt`.
-4. Copy `.env.example` to `.env` and fill in credentials.
-5. Start the dev server: `uvicorn main:app --reload`.
-
-## Testing
-Run the comprehensive backend test suite:
-```bash
-pytest api/tests
-```
+## Vertical-Agnostic, Expert-Specific
+While the engine is vertical-agnostic, it is uniquely powerful for:
+*   **Dev-Verticals:** Ingesting 100k+ pages of technical documentation.
+*   **Legal/Compliance:** Cross-referencing complex regulatory books.
+*   **Higher Education:** Transforming textbooks into personalized tutors.
 
 ## License
 Apache License 2.0
