@@ -328,7 +328,8 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
         query=topic,
         api_key_id=str(kwargs.get("user_id") or "anonymous"),
         limit=int(os.getenv("RAG_TOP_K", "5")),
-        collection_id=kwargs.get("collection_id")
+        collection_id=kwargs.get("collection_id"),
+        use_trusted_corpus=kwargs.get("use_trusted_corpus", True),
     )
     rag_context = format_rag_context(rag_results)
     

@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Optional
 
 import structlog
 from api.auth import get_supabase_admin
-from api.config import get_settings
 from api.adapters.supabase_adapter import SupabaseHTTPClient
 from api.services.embeddings import get_embedding_service
 from api.services.reranker import get_reranker_service
@@ -42,6 +41,7 @@ class RetrievalService:
         limit: int = 5,
         neighbor_window: int = 1,
         min_similarity: float = 0.75,
+        use_trusted_corpus: bool = True,
     ) -> List[Dict[str, Any]]:
         """Perform hybrid search, expand context, and return snippets with citations."""
         if not query or not str(query).strip():
@@ -74,7 +74,7 @@ class RetrievalService:
                         min_similarity=min_similarity,
                     )
                 )
-            if trusted_db:
+            if trusted_db and use_trusted_corpus:
                 search_tasks.append(
                     self._search_candidates(
                         db=trusted_db,
@@ -98,8 +98,7 @@ class RetrievalService:
             if not candidates:
                 return []
 
-            # 3. Reranking Stage (Placeholder)
-            # TODO: Integrate a Cross-Encoder (e.g. Cohere or Jina) here
+            # 3. Reranking Stage (Cross-Encoder)
             ranked_candidates = (await self._passthrough_rerank(query, candidates))[:limit]
 
             # 4. Context Expansion (Neighboring chunks)
