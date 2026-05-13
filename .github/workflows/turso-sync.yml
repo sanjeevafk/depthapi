@@ -1,0 +1,49 @@
+name: Turso Platform Sync
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'  # Every 15 minutes (incremental)
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Sync mode'
+        required: true
+        default: 'incremental'
+        type: choice
+        options:
+          - incremental
+          - full
+          - validate-only
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install supabase libsql-experimental
+
+      - name: Run Turso sync
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: |
+          MODE="${{ github.event.inputs.mode || 'incremental' }}"
+          if [ "$MODE" = "full" ]; then
+            python scripts/turso/sync_platform.py --full
+          elif [ "$MODE" = "validate-only" ]; then
+            python scripts/turso/sync_platform.py --validate-only
+          else
+            python scripts/turso/sync_platform.py
+          fi
