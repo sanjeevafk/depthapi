@@ -41,7 +41,7 @@ Engineered for developers, DepthAPI follows a high-density, no-fluff output styl
 | Layer | Technologies |
 | :--- | :--- |
 | **Core Engine** | FastAPI (Python 3.11+), Pydantic v2, Structlog |
-| **Cognitive Layer** | LiteLLM-compatible Routing, Custom Prompt Fragments |
+| **Cognitive Layer** | OpenAI-compatible Routing, Custom Prompt Fragments |
 | **Persistence** | Supabase (PostgreSQL), pgvector (Scale-ready RAG) |
 | **Observability** | Upstash Redis (Caching, Rate Limiting, Idempotency) |
 | **Auth** | SHA-256 Hashed API Keys, Plan-scoped Metadata |
@@ -60,14 +60,33 @@ pip install -r api/requirements.txt
 
 ### Usage
 ```bash
-curl -X POST "https://api.depthapi.com/v1/query" \
-     -H "X-API-Key: sk-depth-..." \
+curl -X POST "https://api.depthapi.com/api/query" \
+  -H "Authorization: Bearer sk-depth-..." \
      -H "Content-Type: application/json" \
      -d '{
        "topic": "Quantum Decoherence",
-       "level": "expert",
-       "mode": "technical"
+    "levels": ["expert"],
+    "mode": "technical",
+    "use_trusted_corpus": true
      }'
+
+### Ingest Documents (RAG)
+```bash
+curl -X POST "https://api.depthapi.com/api/ingest" \
+  -H "Authorization: Bearer sk-depth-..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection_name": "company-docs",
+    "filename": "handbook.txt",
+    "raw_text": "..."
+  }'
+```
+
+### Collections
+```bash
+curl -X GET "https://api.depthapi.com/api/collections" \
+  -H "Authorization: Bearer sk-depth-..."
+```
 ```
 
 ---
