@@ -236,6 +236,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trg_knowledge_chunks_fts ON knowledge_chunks;
 CREATE TRIGGER trg_knowledge_chunks_fts BEFORE INSERT OR UPDATE OF content ON knowledge_chunks
 FOR EACH ROW EXECUTE FUNCTION trg_update_fts_tokens_v4();
 
@@ -244,8 +245,11 @@ CREATE OR REPLACE FUNCTION update_updated_at() RETURNS TRIGGER AS $$
 BEGIN NEW.updated_at = now(); RETURN NEW; END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trg_knowledge_collections_updated ON knowledge_collections;
 CREATE TRIGGER trg_knowledge_collections_updated BEFORE UPDATE ON knowledge_collections FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DROP TRIGGER IF EXISTS trg_knowledge_documents_updated ON knowledge_documents;
 CREATE TRIGGER trg_knowledge_documents_updated BEFORE UPDATE ON knowledge_documents FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DROP TRIGGER IF EXISTS trg_knowledge_ingestion_queue_updated ON knowledge_ingestion_queue;
 CREATE TRIGGER trg_knowledge_ingestion_queue_updated BEFORE UPDATE ON knowledge_ingestion_queue FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 -- INDEXES
