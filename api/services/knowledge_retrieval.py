@@ -7,7 +7,9 @@ from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
 import structlog
+from pydantic import SecretStr
 from api.auth import get_supabase_admin
+from api.config import get_settings
 from api.adapters.supabase_adapter import SupabaseHTTPClient
 from api.services.embeddings import get_embedding_service
 from api.services.reranker import get_reranker_service
@@ -22,8 +24,9 @@ def get_trusted_corpus_admin() -> SupabaseHTTPClient | None:
     if not getattr(settings, "local_pgvector_url", ""):
         return None
     secret_key = getattr(settings, "local_pgvector_secret_key", "")
-    if hasattr(secret_key, "get_secret_value"):
+    if isinstance(secret_key, SecretStr):
         secret_key = secret_key.get_secret_value()
+    secret_key = str(secret_key or "").strip()
     if not secret_key:
         logger.warning("trusted_corpus_secret_missing")
         return None
@@ -93,7 +96,10 @@ class RetrievalService:
                 if isinstance(result, Exception):
                     logger.warning("retrieval_tier_query_failed", error=str(result))
                     continue
-                candidates.extend(result)
+                if isinstance(result, list):
+                    candidates.extend(result)
+                    continue
+                logger.warning("retrieval_tier_query_unexpected", result_type=type(result).__name__)
 
             if not candidates:
                 return []
