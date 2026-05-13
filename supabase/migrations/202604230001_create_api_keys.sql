@@ -52,6 +52,7 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_owner_email ON api_keys (owner_email);
 ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
 
 -- Only the service role (used by the FastAPI backend) can read/write.
+DROP POLICY IF EXISTS "service_role_full_access" ON api_keys;
 CREATE POLICY "service_role_full_access" ON api_keys
     FOR ALL
     TO service_role
