@@ -6,8 +6,8 @@ from fastapi import HTTPException
 
 import api.auth as api_auth_module
 import routers.query as query_module
-import api.services.rate_limit as rate_limit_module
-from api.services.api_key_auth import ApiKeyRecord, verify_api_key
+import api.services.security.rate_limit as rate_limit_module
+from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
 
 
 @pytest.fixture

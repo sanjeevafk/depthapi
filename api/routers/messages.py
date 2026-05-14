@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
-from api.services.api_key_auth import ApiKeyRecord, verify_api_key
+from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
 
 from . import messages_core as _core
 

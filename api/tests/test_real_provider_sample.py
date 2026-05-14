@@ -3,7 +3,7 @@ import os
 import pytest
 
 from api.config import get_settings
-from api.services.llm_client import close_llm_client, create_chat_completion
+from api.services.inference.llm_client import close_llm_client, create_chat_completion
 
 
 @pytest.mark.asyncio

@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from api.auth import get_supabase_admin
 from api.logging_config import anonymize_user_id, logger
-from api.services.api_key_auth import ApiKeyRecord, verify_api_key
+from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
 
 router = APIRouter(tags=["ingest"])
 
