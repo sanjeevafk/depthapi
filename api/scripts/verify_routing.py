@@ -17,7 +17,7 @@ sys.modules["api.services.rag_backend_router"] = MagicMock()
 sys.modules["api.services.search"] = MagicMock()
 sys.modules["api.services.inference_search"] = MagicMock()
 
-from api.services.inference_routing import (
+from api.services.inference.inference_routing import (
     extract_features,
     route_model_aliases,
     _effective_alias_chain,

@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-import api.services.inference as inference_module
+import api.services.inference.inference as inference_module
 
 
 @pytest.mark.asyncio

@@ -1,8 +1,8 @@
 """Tests for large text input handling and truncation."""
 
 import pytest
-from api.services.input_limit import truncate_input_if_needed, get_max_input_tokens_for_alias
-from api.services.token_count import count_prompt_tokens
+from api.services.security.input_limit import truncate_input_if_needed, get_max_input_tokens_for_alias
+from api.services.messaging.token_count import count_prompt_tokens
 from api.utils import LEARNING_MODE, TECHNICAL_MODE, SOCRATIC_MODE
 
 

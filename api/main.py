@@ -22,16 +22,16 @@ from routers import (
     payments,
     messages,
 )
-from api.services.cache import close_redis
-from api.services.redis_safe import redis_circuit_active
-from api.services.inference import close_client
-from api.services.search import close_search_client
-from api.services.llm_client import get_provider_config_state
-from api.services.rag_dimension_guard import (
+from api.services.infra.cache import close_redis
+from api.services.infra.redis_safe import redis_circuit_active
+from api.services.inference.inference import close_client
+from api.services.rag.search import close_search_client
+from api.services.inference.llm_client import get_provider_config_state
+from api.services.rag.rag_dimension_guard import (
     get_dimension_guard_status,
     validate_embedding_dimension_or_raise,
 )
-from api.services.llm_errors import LLMError, LLMBadRequest, LLMInvalidAPIKey, LLMUnavailable
+from api.services.inference.llm_errors import LLMError, LLMBadRequest, LLMInvalidAPIKey, LLMUnavailable
 from api.logging_config import (
     setup_logging,
     logger,

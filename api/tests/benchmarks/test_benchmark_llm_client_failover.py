@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import api.services.llm_client as llm_client_module
+import api.services.inference.llm_client as llm_client_module
 
 
 class DummyProviderState:

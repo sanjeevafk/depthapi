@@ -9,10 +9,10 @@ from types import SimpleNamespace
 import pytest
 
 import main as main_app
-import api.services.message_gate as message_gate
-import api.services.inference as inference_module
+import api.services.messaging.message_gate as message_gate
+import api.services.inference.inference as inference_module
 import api.auth as auth_module
-import api.services.streaming_message_pipeline as pipeline_module
+import api.services.messaging.streaming_message_pipeline as pipeline_module
 
 
 def _allow_gatekeeper(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -48,8 +48,8 @@ async def test_benchmark_message_throughput(
         yield "ok"
 
     _allow_gatekeeper(monkeypatch)
-    # The messages endpoint now uses verify_api_key from api.services.api_key_auth
-    from api.services.api_key_auth import verify_api_key, ApiKeyRecord
+    # The messages endpoint now uses verify_api_key from api.services.security.api_key_auth
+    from api.services.security.api_key_auth import verify_api_key, ApiKeyRecord
     bench_api_key = ApiKeyRecord(
         id="bench-key-uuid",
         prefix="sk-bench",

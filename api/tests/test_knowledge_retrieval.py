@@ -1,6 +1,6 @@
 import pytest
 
-import api.services.knowledge_retrieval as retrieval_module
+import api.services.rag.knowledge_retrieval as retrieval_module
 from api.tests.conftest import FakeSupabase
 
 

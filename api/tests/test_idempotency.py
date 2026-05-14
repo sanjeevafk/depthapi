@@ -1,6 +1,6 @@
 import pytest
 
-from api.services.idempotency import message_idempotency_key, query_stream_idempotency_key
+from api.services.security.idempotency import message_idempotency_key, query_stream_idempotency_key
 
 
 def test_query_stream_idempotency_key_is_stable_for_valid_inputs() -> None:
