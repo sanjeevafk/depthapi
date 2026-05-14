@@ -48,3 +48,4 @@ data/rag/
 backups/
 output/
 DepthAPI_Infographic.html
+scripts/turso/.venv_sync/
