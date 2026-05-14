@@ -19,16 +19,16 @@ import main as main_app
 import api.main as api_main_app
 import config as config_module
 import auth as auth_module
-import api.services.cache as cache_module
-import api.services.search as search_module
-import api.services.llm_client as llm_client_module
-import api.services.inference as inference_module
-import api.services.rate_limit as rate_limit_module
-import api.services.message_gate as message_gate_module
-import api.services.conversation_cache as conversation_cache_module
-import api.services.user_cache as user_cache_module
-import api.services.redis_safe as redis_safe_module
-from api.services.api_key_auth import ApiKeyRecord, verify_api_key
+import api.services.infra.cache as cache_module
+import api.services.rag.search as search_module
+import api.services.inference.llm_client as llm_client_module
+import api.services.inference.inference as inference_module
+import api.services.security.rate_limit as rate_limit_module
+import api.services.messaging.message_gate as message_gate_module
+import api.services.conversation.conversation_cache as conversation_cache_module
+import api.services.infra.user_cache as user_cache_module
+import api.services.infra.redis_safe as redis_safe_module
+from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
 
 
 class AppClientWrapper:

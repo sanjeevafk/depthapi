@@ -2,7 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-import api.services.cache as cache_module
+import api.services.infra.cache as cache_module
 
 
 @pytest.mark.asyncio

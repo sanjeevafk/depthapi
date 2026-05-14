@@ -8,21 +8,21 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from api.services.api_key_auth import ApiKeyRecord, verify_api_key
-from api.services.query_helpers import normalize_levels, cache_key
+from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
+from api.services.messaging.query_helpers import normalize_levels, cache_key
 from api.config import get_stream_config
 from api.logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
-from api.services.cache import cache_get, cache_get_many, cache_set, cache_set_many, check_idempotency_and_cache
-from api.services.inference import generate_explanation, generate_stream_explanation
-from api.services.llm_client import get_provider_config_state
-from api.services.llm_errors import LLMError, LLMUnavailable
-from api.services.rate_limit import enforce_request_controls, estimate_tokens_for_text
-from api.services.query_streaming import (
+from api.services.infra.cache import cache_get, cache_get_many, cache_set, cache_set_many, check_idempotency_and_cache
+from api.services.inference.inference import generate_explanation, generate_stream_explanation
+from api.services.inference.llm_client import get_provider_config_state
+from api.services.inference.llm_errors import LLMError, LLMUnavailable
+from api.services.security.rate_limit import enforce_request_controls, estimate_tokens_for_text
+from api.services.messaging.query_streaming import (
     build_query_stream_replay_response,
     build_query_stream_wait_response,
     build_query_stream_response,
 )
-from api.services.idempotency import query_stream_idempotency_key, compute_retry_after_ms
+from api.services.security.idempotency import query_stream_idempotency_key, compute_retry_after_ms
 from api.utils import (
     DEFAULT_CHAT_MODE,
     FREE_LEVELS,

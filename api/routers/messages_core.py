@@ -13,20 +13,20 @@ from pydantic import BaseModel, Field, ValidationError
 from api.auth import get_supabase_admin
 from api.config import CONTEXT_LOAD_TIMEOUTS, get_settings
 from api.logging_config import anonymize_text, anonymize_user_id, logger
-import api.services.cache as cache_module
-from api.services.api_key_auth import ApiKeyRecord, verify_api_key
-from api.services.conversation_cache import warm_conversation_snapshot
-from api.services.context_builder import ContextBuilder
-from api.services.llm_client import get_provider_config_state
-from api.services.llm_errors import LLMUnavailable
-from api.services.message_workflow import MessageWorkflow
-from api.services.request_validator import RequestValidator
-from api.services.redis_safe import safe_redis_call
-from api.services.message_utils import normalize_mode
-from api.services.message_dispatcher import MessageDispatcher
-from api.services.message_gate import fetch_conversation_snapshot
-from api.services.streaming_message_pipeline import StreamingMessagePipeline
-from api.services.conversation_lock_manager import ConversationLockManager
+import api.services.infra.cache as cache_module
+from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
+from api.services.conversation.conversation_cache import warm_conversation_snapshot
+from api.services.rag.context_builder import ContextBuilder
+from api.services.inference.llm_client import get_provider_config_state
+from api.services.inference.llm_errors import LLMUnavailable
+from api.services.messaging.message_workflow import MessageWorkflow
+from api.services.security.request_validator import RequestValidator
+from api.services.infra.redis_safe import safe_redis_call
+from api.services.messaging.message_utils import normalize_mode
+from api.services.messaging.message_dispatcher import MessageDispatcher
+from api.services.messaging.message_gate import fetch_conversation_snapshot
+from api.services.messaging.streaming_message_pipeline import StreamingMessagePipeline
+from api.services.conversation.conversation_lock_manager import ConversationLockManager
 from api.utils import (
     PROMPT_MODE_ALIASES,
     SUPPORTED_PROMPT_MODES,

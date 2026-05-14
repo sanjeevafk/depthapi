@@ -22,7 +22,7 @@ os.environ["GROQ_API_KEY"] = "mock_key"
 os.environ["GEMINI_API_KEY"] = "mock_key"
 os.environ["REDIS_URL"] = "redis://localhost:6379"
 
-from api.services.inference import generate_explanation
+from api.services.inference.inference import generate_explanation
 from api.utils import FREE_LEVELS
 
 async def run_depth_tests(topic: str):

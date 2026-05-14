@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import api.main as api_main
 import routers.query as query_module
-from api.services.api_key_auth import ApiKeyRecord, verify_api_key
+from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
 
 
 @pytest.mark.asyncio

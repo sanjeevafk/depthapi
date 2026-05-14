@@ -4,7 +4,7 @@ from typing import List, Dict, Any
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
 
-from api.services.api_key_auth import ApiKeyRecord, verify_api_key
+from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
 from api.auth import get_supabase_admin
 from api.logging_config import anonymize_user_id
 from pydantic import BaseModel

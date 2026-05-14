@@ -3,8 +3,8 @@ import types
 import pytest
 
 import config as config_module
-import api.services.cache as cache_module
-import api.services.sentry_client as sentry_client
+import api.services.infra.cache as cache_module
+import api.services.infra.sentry_client as sentry_client
 
 
 @pytest.mark.asyncio

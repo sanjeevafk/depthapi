@@ -8,7 +8,7 @@ from standardwebhooks import Webhook
 
 import auth as auth_module
 import routers.payments as payments_module
-import api.services.cache as cache_module
+import api.services.infra.cache as cache_module
 from api.logging_config import anonymize_user_id
 
 
