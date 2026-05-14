@@ -100,9 +100,29 @@ class SyncMetrics:
 # Vector serialization
 # ---------------------------------------------------------------------------
 
-def embedding_to_blob(embedding: list[float]) -> bytes:
-    """Serialize a float32 embedding list into a raw BLOB."""
-    return struct.pack(f"{len(embedding)}f", *embedding)
+def embedding_to_blob(embedding) -> bytes:
+    """Serialize a float32 embedding into a raw BLOB.
+    Handles all formats from Supabase PostgREST:
+      - flat list:   [0.1, 0.2, ...]
+      - nested list: [[0.1, 0.2, ...]]
+      - string:      "[0.1, 0.2, ...]"
+    """
+    if isinstance(embedding, str):
+        # PostgreSQL vector returned as "[0.1, 0.2, ...]"
+        try:
+            # Strip brackets and split
+            cleaned = embedding.strip("[]").split(",")
+            embedding = [float(v.strip()) for v in cleaned if v.strip()]
+        except Exception:
+            embedding = json.loads(embedding)
+    
+    if not embedding:
+        return b""
+        
+    if isinstance(embedding[0], list):
+        embedding = embedding[0]
+        
+    return struct.pack(f"{len(embedding)}f", *[float(v) for v in embedding])
 
 
 def blob_to_embedding(blob: bytes) -> list[float]:
@@ -133,37 +153,54 @@ def compute_partition_hash(rows: list[dict]) -> str:
 # Sync State persistence
 # ---------------------------------------------------------------------------
 
-def load_sync_cursor(turso: libsql.Connection) -> datetime:
-    """Load last synced_at cursor from Turso sync_state table."""
+def load_sync_cursor(turso: libsql.Connection) -> tuple[datetime, str | None, str | None]:
+    """Load last sync state from Turso sync_state table."""
+    try:
+        # Ensure columns exist for keyset resumption
+        turso.execute("ALTER TABLE sync_state ADD COLUMN last_created_at TEXT").fetchall()
+        turso.execute("ALTER TABLE sync_state ADD COLUMN last_id TEXT").fetchall()
+    except Exception:
+        pass # Columns likely exist
+
     try:
         rows = turso.execute(
-            "SELECT last_synced_at FROM sync_state WHERE id = 1"
+            "SELECT last_synced_at, last_created_at, last_id FROM sync_state WHERE id = 1"
         ).fetchall()
         if rows:
-            ts = rows[0][0]
-            return datetime.fromisoformat(ts).replace(tzinfo=timezone.utc)
+            ts, last_created_at, last_id = rows[0]
+            dt = datetime.fromisoformat(ts).replace(tzinfo=timezone.utc)
+            return dt, last_created_at, last_id
     except Exception as e:
         log.warning(f"Could not read sync_state: {e}")
-    # Default: sync last 24h on first run
-    return datetime.now(timezone.utc) - timedelta(hours=24)
+    
+    # Default: sync last 24h
+    return datetime.now(timezone.utc) - timedelta(hours=24), None, None
 
 
 def save_sync_cursor(
     turso: libsql.Connection,
     cursor: datetime,
     metrics: SyncMetrics,
+    last_created_at: str | None = None,
+    last_id: str | None = None,
 ) -> None:
     """Persist the sync cursor and run stats into Turso."""
     turso.execute(
         """
-        INSERT INTO sync_state (id, last_synced_at, last_run_at, rows_processed, rows_failed, checksum_mismatches)
-        VALUES (1, ?, ?, ?, ?, ?)
+        INSERT INTO sync_state (
+            id, last_synced_at, last_run_at, 
+            rows_processed, rows_failed, checksum_mismatches,
+            last_created_at, last_id
+        )
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             last_synced_at = excluded.last_synced_at,
             last_run_at    = excluded.last_run_at,
             rows_processed = rows_processed + excluded.rows_processed,
             rows_failed    = rows_failed    + excluded.rows_failed,
-            checksum_mismatches = checksum_mismatches + excluded.checksum_mismatches
+            checksum_mismatches = checksum_mismatches + excluded.checksum_mismatches,
+            last_created_at = excluded.last_created_at,
+            last_id = excluded.last_id
         """,
         (
             cursor.isoformat(),
@@ -171,6 +208,8 @@ def save_sync_cursor(
             metrics.rows_processed,
             metrics.rows_failed,
             metrics.checksum_mismatches,
+            last_created_at,
+            last_id,
         ),
     )
     turso.commit()
@@ -184,23 +223,31 @@ def fetch_page_from_supabase(
     supabase: Client,
     since: str,
     limit: int,
-    offset: int,
+    last_created_at: str | None = None,
+    last_id: str | None = None,
 ) -> list[dict]:
     """
-    Paginated fetch from Supabase with overlap-window cursor.
-    Includes soft-deleted rows (deleted_at IS NOT NULL) for tombstone propagation.
+    Paginated fetch from Supabase with Keyset Pagination (created_at, id).
+    This avoids the performance and offset limits of standard pagination.
     """
-    result = (
-        supabase.table("knowledge_chunks")
-        .select(
-            "id, document_id, content, metadata, embedding, content_hash, "
-            "created_at, updated_at, deleted_at, "
-            "fts_tokens_simple"  # used to derive topic hints if needed
+    query = supabase.table("knowledge_chunks").select(
+        "id, document_id, content, metadata, embedding, content_hash, "
+        "created_at, deleted_at"
+    )
+
+    if last_created_at and last_id:
+        # Keyset logic: (created_at > last) OR (created_at == last AND id > last)
+        query = query.or_(
+            f"created_at.gt.{last_created_at},"
+            f"and(created_at.eq.{last_created_at},id.gt.{last_id})"
         )
-        .gte("updated_at", since)
-        .order("updated_at", desc=False)
-        .order("id", desc=False)  # stable secondary sort
-        .range(offset, offset + limit - 1)
+    else:
+        query = query.gte("created_at", since)
+
+    result = (
+        query.order("created_at", desc=False)
+        .order("id", desc=False)
+        .limit(limit)
         .execute()
     )
     return result.data or []
@@ -298,7 +345,7 @@ def upsert_batch(
                     row.get("content_hash", ""),
                     sync_hash,
                     row.get("created_at"),
-                    row.get("updated_at"),
+                    row.get("created_at"),  # no updated_at on source — use created_at
                     is_deleted,
                     row.get("deleted_at"),
                 ),
@@ -332,12 +379,12 @@ def validate_partition(
     since_s = since.isoformat()
     until_s = until.isoformat()
 
-    # Fetch source hashes
+    # Fetch source hashes (use created_at — no updated_at on knowledge_chunks)
     src = (
         supabase.table("knowledge_chunks")
         .select("id, content_hash")
-        .gte("updated_at", since_s)
-        .lt("updated_at", until_s)
+        .gte("created_at", since_s)
+        .lt("created_at", until_s)
         .is_("deleted_at", "null")
         .execute()
     ).data or []
@@ -345,7 +392,7 @@ def validate_partition(
     # Fetch replica hashes
     replica_rows = turso.execute(
         "SELECT id, content_hash FROM knowledge_chunks_platform "
-        "WHERE updated_at >= ? AND updated_at < ? AND is_deleted = 0",
+        "WHERE created_at >= ? AND created_at < ? AND is_deleted = 0",
         (since_s, until_s),
     ).fetchall()
     replica = [{"id": r[0], "content_hash": r[1]} for r in replica_rows]
@@ -404,10 +451,13 @@ def run_sync(full_sync: bool = False, validate_only: bool = False) -> SyncMetric
     if full_sync:
         # Sync from the beginning of time
         cursor = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        last_created_at = None
+        last_id = None
         log.info("Full sync requested — fetching all records.")
     else:
-        cursor = load_sync_cursor(turso)
+        cursor, last_created_at, last_id = load_sync_cursor(turso)
 
+    # For full sync, start from a time far in the past
     since = cursor - timedelta(minutes=OVERLAP_WINDOW_MINUTES)
     now = datetime.now(timezone.utc)
     log.info(f"Sync window: {since.isoformat()} → {now.isoformat()}")
@@ -418,9 +468,8 @@ def run_sync(full_sync: bool = False, validate_only: bool = False) -> SyncMetric
         log.info(f"Validation complete: {metrics.report()}")
         return metrics
 
-    # Incremental sync with adaptive batching
+    # Keyset pagination with adaptive batching
     batch_size = BATCH_SIZE_INIT
-    offset = 0
     error_streak = 0
 
     while True:
@@ -429,7 +478,9 @@ def run_sync(full_sync: bool = False, validate_only: bool = False) -> SyncMetric
         for attempt in range(RETRY_ATTEMPTS):
             try:
                 page = fetch_page_from_supabase(
-                    supabase, since.isoformat(), batch_size, offset
+                    supabase, since.isoformat(), batch_size,
+                    last_created_at=last_created_at,
+                    last_id=last_id
                 )
                 error_streak = 0
                 break
@@ -439,7 +490,7 @@ def run_sync(full_sync: bool = False, validate_only: bool = False) -> SyncMetric
                 log.warning(f"Fetch failed (attempt {attempt + 1}): {e}. Retrying in {wait}s.")
                 time.sleep(wait)
         else:
-            log.error(f"Failed to fetch page at offset={offset} after {RETRY_ATTEMPTS} attempts. Stopping.")
+            log.error(f"Failed to fetch page after {RETRY_ATTEMPTS} attempts. Stopping.")
             break
 
         if not page:
@@ -448,20 +499,26 @@ def run_sync(full_sync: bool = False, validate_only: bool = False) -> SyncMetric
 
         try:
             upsert_batch(turso, page, metrics)
-        except Exception:
+            # Update cursors for keyset pagination
+            last_created_at = page[-1]["created_at"]
+            last_id = page[-1]["id"]
+            
+            # Per-batch checkpointing (allow pausing/resuming)
+            save_sync_cursor(turso, since, metrics, last_created_at, last_id)
+            metrics.rows_processed = 0 # reset for cumulative storage in sync_state
+            
+        except Exception as e:
             error_streak += 1
             # Adaptive batch size: shrink on errors
             batch_size = max(BATCH_SIZE_MIN, batch_size // 2)
-            log.warning(f"Reduced batch size to {batch_size} after error.")
-
-        offset += len(page)
+            log.warning(f"Reduced batch size to {batch_size} after error: {e}")
 
         # Adaptive batch size: grow on success streak
         if error_streak == 0 and batch_size < BATCH_SIZE_MAX:
             batch_size = min(BATCH_SIZE_MAX, int(batch_size * 1.5))
 
-    # Save new cursor to now
-    save_sync_cursor(turso, now, metrics)
+    # Save final cursor
+    save_sync_cursor(turso, now, metrics, last_created_at, last_id)
 
     # Run partition validation for the synced window
     log.info("Running post-sync integrity validation...")
@@ -473,7 +530,7 @@ def run_sync(full_sync: bool = False, validate_only: bool = False) -> SyncMetric
     turso.commit()
 
     report = metrics.report()
-    log.info(f"Sync metrics: {json.dumps(report, indent=2)}")
+    log.info(f"Sync completed. Metrics: {json.dumps(report, indent=2)}")
     return metrics
 
 
