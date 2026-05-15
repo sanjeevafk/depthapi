@@ -156,9 +156,9 @@ def compute_partition_hash(rows: list[dict]) -> str:
 def load_sync_cursor(turso: libsql.Connection) -> tuple[datetime, str | None, str | None]:
     """Load last sync state from Turso sync_state table."""
     try:
-        # Ensure columns exist for keyset resumption
-        turso.execute("ALTER TABLE sync_state ADD COLUMN last_created_at TEXT").fetchall()
-        turso.execute("ALTER TABLE sync_state ADD COLUMN last_id TEXT").fetchall()
+        # Ensure columns exist for keyset resumption (outside transaction)
+        turso.execute("ALTER TABLE sync_state ADD COLUMN last_created_at TEXT")
+        turso.execute("ALTER TABLE sync_state ADD COLUMN last_id TEXT")
     except Exception:
         pass # Columns likely exist
 
@@ -196,9 +196,9 @@ def save_sync_cursor(
         ON CONFLICT(id) DO UPDATE SET
             last_synced_at = excluded.last_synced_at,
             last_run_at    = excluded.last_run_at,
-            rows_processed = rows_processed + excluded.rows_processed,
-            rows_failed    = rows_failed    + excluded.rows_failed,
-            checksum_mismatches = checksum_mismatches + excluded.checksum_mismatches,
+            rows_processed = sync_state.rows_processed + excluded.rows_processed,
+            rows_failed    = sync_state.rows_failed    + excluded.rows_failed,
+            checksum_mismatches = sync_state.checksum_mismatches + excluded.checksum_mismatches,
             last_created_at = excluded.last_created_at,
             last_id = excluded.last_id
         """,
@@ -212,7 +212,6 @@ def save_sync_cursor(
             last_id,
         ),
     )
-    turso.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -259,9 +258,7 @@ def upsert_batch(
     metrics: SyncMetrics,
 ) -> None:
     """Batch UPSERT rows into Turso with integrity hash computation."""
-    turso.execute("BEGIN")
-    try:
-        for row in rows:
+    for row in rows:
             metrics.rows_processed += 1
 
             # Determine if this is a tombstone (soft delete propagation)
@@ -356,14 +353,6 @@ def upsert_batch(
             else:
                 metrics.rows_upserted += 1
 
-        turso.execute("COMMIT")
-
-    except Exception as e:
-        turso.execute("ROLLBACK")
-        log.error(f"Batch UPSERT failed, rolled back: {e}")
-        metrics.rows_failed += len(rows)
-        raise
-
 
 def validate_partition(
     supabase: Client,
@@ -441,11 +430,26 @@ def purge_acknowledged_tombstones(turso: libsql.Connection) -> int:
 # Main orchestrator
 # ---------------------------------------------------------------------------
 
+def get_turso_connection() -> libsql.Connection:
+    """Create a persistent connection to Turso."""
+    url = os.getenv("TURSO_DATABASE_URL")
+    token = os.getenv("TURSO_AUTH_TOKEN")
+    if not url or not token:
+        raise ValueError("Missing TURSO_DATABASE_URL or TURSO_AUTH_TOKEN")
+    
+    # We use isolation_level=None to disable implicit transactions (Autocommit mode)
+    # This allows us to use explicit BEGIN/COMMIT blocks for reliability.
+    return libsql.connect(url, auth_token=token, isolation_level=None)
+
+
 def run_sync(full_sync: bool = False, validate_only: bool = False) -> SyncMetrics:
     metrics = SyncMetrics()
 
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    turso = libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN)
+    # autocommit=True: libsql-experimental is always autocommit at the protocol
+    # level; this flag makes it explicit and prevents the driver from issuing
+    # implicit BEGIN statements that would cause "nested transaction" errors.
+    turso = libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN, autocommit=True)
 
     # Load sync cursor
     if full_sync:
@@ -497,28 +501,46 @@ def run_sync(full_sync: bool = False, validate_only: bool = False) -> SyncMetric
             log.info(f"Sync complete. Total processed: {metrics.rows_processed}")
             break
 
+        # --- Phase 1: Write the data rows (autocommit; each execute is atomic) ---
+        batch_ok = False
         try:
             upsert_batch(turso, page, metrics)
-            # Update cursors for keyset pagination
-            last_created_at = page[-1]["created_at"]
-            last_id = page[-1]["id"]
-            
-            # Per-batch checkpointing (allow pausing/resuming)
-            save_sync_cursor(turso, since, metrics, last_created_at, last_id)
-            metrics.rows_processed = 0 # reset for cumulative storage in sync_state
-            
+            batch_ok = True
         except Exception as e:
             error_streak += 1
-            # Adaptive batch size: shrink on errors
             batch_size = max(BATCH_SIZE_MIN, batch_size // 2)
-            log.warning(f"Reduced batch size to {batch_size} after error: {e}")
+            log.warning(f"Batch upsert failed (size→{batch_size}): {e}")
+            time.sleep(1)
 
-        # Adaptive batch size: grow on success streak
+        if not batch_ok:
+            continue
+
+        # --- Phase 2: Advance cursor ALWAYS on success (separate from checkpoint) ---
+        last_created_at = page[-1]["created_at"]
+        last_id = page[-1]["id"]
+        error_streak = 0
+        metrics.rows_processed += len(page)
+
+        log.info(
+            f"Batch OK — upserted={metrics.rows_upserted} "
+            f"cursor={last_created_at}"
+        )
+
+        # --- Phase 3: Checkpoint (non-fatal; cursor already advanced in memory) ---
+        try:
+            save_sync_cursor(turso, since, metrics, last_created_at, last_id)
+        except Exception as e:
+            log.warning(f"Checkpoint save failed (non-fatal): {e}")
+
+        # Adaptive batch sizing
         if error_streak == 0 and batch_size < BATCH_SIZE_MAX:
             batch_size = min(BATCH_SIZE_MAX, int(batch_size * 1.5))
 
     # Save final cursor
-    save_sync_cursor(turso, now, metrics, last_created_at, last_id)
+    try:
+        save_sync_cursor(turso, now, metrics, last_created_at, last_id)
+    except Exception as e:
+        log.warning(f"Final checkpoint save failed: {e}")
 
     # Run partition validation for the synced window
     log.info("Running post-sync integrity validation...")
@@ -526,8 +548,6 @@ def run_sync(full_sync: bool = False, validate_only: bool = False) -> SyncMetric
 
     # Purge watermark-confirmed tombstones
     purge_acknowledged_tombstones(turso)
-
-    turso.commit()
 
     report = metrics.report()
     log.info(f"Sync completed. Metrics: {json.dumps(report, indent=2)}")
