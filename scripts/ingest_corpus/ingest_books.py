@@ -18,7 +18,6 @@ import argparse
 import concurrent.futures
 import multiprocessing
 import os
-import re
 import sys
 import tempfile
 import time
@@ -37,6 +36,7 @@ from scripts.ingest_corpus.base_ingestor import (
     make_min_word_validator,
 )
 from scripts.ingest_corpus.semantic_chunker import HierarchicalSemanticChunker
+from api.services.rag.utils import get_conversion_quality_report
 
 # opendataloader_pdf is imported lazily inside pdf_to_markdown() so this
 # module remains importable in environments without the PDF library.
@@ -104,42 +104,7 @@ def pdf_to_markdown(pdf_path: Path, output_dir: Path) -> str | None:
         return None
 
 
-# ─── Conversion quality helpers ───────────────────────────────────────────────
-_IMG_PATTERN = re.compile(r"!\[.*?\]\(.*?\)|\[Figure\]|\[Image\]", re.IGNORECASE)
-_CODE_PATTERN = re.compile(r"```[\s\S]*?```")
-
-
-def image_to_text_ratio(md_text: str) -> float:
-    """
-    Estimate the fraction of lines that are image placeholders vs. text.
-    Returns 0.0 (pure text) .. 1.0 (all images).
-    """
-    lines = [l for l in md_text.splitlines() if l.strip()]
-    if not lines:
-        return 1.0
-    image_lines = sum(1 for l in lines if _IMG_PATTERN.search(l))
-    return image_lines / len(lines)
-
-
-def conversion_quality_report(md_text: str, book_name: str) -> dict:
-    """Return a dict of quality signals for a converted markdown document."""
-    lines = md_text.splitlines()
-    non_empty = [l for l in lines if l.strip()]
-    headings = [l for l in non_empty if l.startswith("#")]
-    code_blocks = _CODE_PATTERN.findall(md_text)
-    img_ratio = image_to_text_ratio(md_text)
-    return {
-        "book": book_name,
-        "total_lines": len(lines),
-        "heading_count": len(headings),
-        "code_block_count": len(code_blocks),
-        "image_ratio": round(img_ratio, 3),
-        "status": (
-            "healthy" if img_ratio < 0.25 and len(headings) > 5
-            else "degraded" if img_ratio < 0.5
-            else "failed"
-        ),
-    }
+# ─── Conversion quality helpers (Moved to api.services.rag.utils) ────────────────
 
 
 def print_histogram(ratios: list[tuple[str, float]], threshold: float) -> None:
@@ -192,7 +157,7 @@ def _convert_pdf_worker(args: tuple) -> dict:
     Returns:
         dict with keys: book_name, tags, md_text (str|None), report (dict|None), error (str|None)
     """
-    pdf_path_str, book_name, tmp_dir_str, tags = args
+    pdf_path_str, book_name, tmp_dir_str, tags, rel_path = args
     pdf_path = Path(pdf_path_str)
     # Per-worker subdirectory to prevent concurrent .md filename collisions
     worker_tmp = Path(tmp_dir_str) / f"w{os.getpid()}_{book_name[:24]}"
@@ -201,16 +166,33 @@ def _convert_pdf_worker(args: tuple) -> dict:
     try:
         md_text = pdf_to_markdown(pdf_path, worker_tmp)
     except Exception as exc:
-        return {"book_name": book_name, "tags": tags,
+        return {"book_name": book_name, "tags": tags, "rel_path": rel_path,
                 "md_text": None, "report": None, "error": str(exc)}
 
     if not md_text:
-        return {"book_name": book_name, "tags": tags,
+        return {"book_name": book_name, "tags": tags, "rel_path": rel_path,
                 "md_text": None, "report": None, "error": "empty output"}
 
-    report = conversion_quality_report(md_text, book_name)
-    return {"book_name": book_name, "tags": tags,
+    report = get_conversion_quality_report(md_text)
+    report["book"] = book_name  # Maintain compatibility with local reporting format
+    report["image_ratio"] = report["image_density"]
+    # Re-calculate status using local logic for now
+    report["status"] = (
+        "healthy" if report["image_ratio"] < 0.25 else "degraded" if report["image_ratio"] < 0.5 else "failed"
+    )
+    # Estimate heading count (not in utils yet)
+    report["heading_count"] = len([line for line in md_text.splitlines() if line.strip().startswith("#")])
+    report["code_block_count"] = md_text.count("```") // 2
+    return {"book_name": book_name, "tags": tags, "rel_path": rel_path,
             "md_text": md_text, "report": report, "error": None}
+
+
+def _resolve_source_url(book_name: str, rel_path: str) -> str:
+    """Resolve the canonical source URL for a given book."""
+    if "NotesForProfessionals" in book_name:
+        slug = book_name.replace("NotesForProfessionals", "").lower()
+        return f"https://goalkicker.com/books#{slug}"
+    return f"https://github.com/sanjeevafk/CS-and-Programming-Books/blob/main/{rel_path}"
 
 
 def run(
@@ -244,7 +226,7 @@ def run(
     img_ratios: list[tuple[str, float]] = []
 
     # ── Build work list ─────────────────────────────────────────────────────
-    work_items: list[tuple[str, str, list[str]]] = []
+    work_items: list[tuple[str, str, list[str], str]] = []
     for rel_path, tags in P0_P1_BOOKS:
         pdf_path = BOOKS_ROOT / rel_path
         if not pdf_path.exists():
@@ -253,7 +235,7 @@ def run(
         if dry_run and not histogram:
             log.info(f"  [dry-run] would convert {pdf_path}")
             continue
-        work_items.append((str(pdf_path), pdf_path.stem, tags))
+        work_items.append((str(pdf_path), pdf_path.stem, tags, rel_path))
 
     if not work_items:
         if not dry_run:
@@ -276,8 +258,8 @@ def run(
         # Use "spawn" if opendataloader-pdf's JVM behaves unexpectedly.
         mp_ctx = multiprocessing.get_context("fork")
         worker_args = [
-            (pdf_str, book_name, str(tmp_path), tags)
-            for pdf_str, book_name, tags in work_items
+            (pdf_str, book_name, str(tmp_path), tags, rel_path)
+            for pdf_str, book_name, tags, rel_path in work_items
         ]
 
         conversion_results: list[dict] = []
@@ -339,9 +321,9 @@ def run(
             book_name = result["book_name"]
             tags      = result["tags"]
             md_text   = result["md_text"]
+            rel_path  = result["rel_path"]
 
-            slug = book_name.replace("NotesForProfessionals", "").lower()
-            source_url = f"https://goalkicker.com/books#{slug}"
+            source_url = _resolve_source_url(book_name, rel_path)
             doc_id = make_doc_id(book_name, source_url)
 
             chunks = _CHUNKER.chunk_document(
