@@ -17,7 +17,7 @@ from fastapi import Request
 from fastapi.responses import StreamingResponse
 
 from api.logging_config import logger, log_sampled_success
-from monitoring import capture_telemetry_event
+from api.monitoring import capture_telemetry_event
 from api.services.messaging.response_orchestrator import ResponseOrchestrator
 from api.services.messaging.streaming import SSE_RESPONSE_HEADERS
 from api.services.messaging.streaming_orchestrator import (
@@ -373,7 +373,7 @@ def build_message_stream_response(
                 )
                 return
 
-            response_truncated = bool(timed_out and not aborted)
+            response_truncated = timed_out and not aborted
             if response_truncated:
                 cutoff_message = "\n\n[Response truncated to stay within serverless limits. Retry to continue.]"
                 full_content += cutoff_message

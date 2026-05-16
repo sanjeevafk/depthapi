@@ -49,3 +49,4 @@ backups/
 output/
 DepthAPI_Infographic.html
 scripts/turso/.venv_sync/
+api/.coverage

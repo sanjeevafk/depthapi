@@ -8,7 +8,7 @@ from typing import Any, AsyncGenerator, Callable
 
 from fastapi import Request
 from fastapi.responses import StreamingResponse
-from monitoring import capture_telemetry_event
+from api.monitoring import capture_telemetry_event
 
 import api.services.infra.cache as cache_module
 from api.services.infra.analytics import build_llm_request_payload, record_llm_request
@@ -33,9 +33,9 @@ def resolve_client_ip(request: Request, *, trusted_proxies: set[str]) -> str:
         forwarded_chain = [part.strip() for part in forwarded_for.split(",") if part.strip()]
         forwarded_ip = forwarded_chain[0] if forwarded_chain else None
         real_ip = (request.headers.get("x-real-ip") or "").strip() or None
-        return str(forwarded_ip or real_ip or peer_host or "unknown")
+        return forwarded_ip or real_ip or peer_host or "unknown"
 
-    return str(peer_host or "unknown")
+    return peer_host or "unknown"
 
 
 async def capture_telemetry_async(event: str, **payload: Any) -> None:
@@ -138,7 +138,7 @@ async def run_fallback_generation(
         ),
         timeout=fallback_timeout_seconds,
     )
-    return str(result)
+    return result
 
 
 async def drain_stream_chunks(
@@ -362,7 +362,7 @@ async def finalize_stream_side_effects(
         stream_duration_ms=stream_duration_ms,
         token_usage=token_usage,
         estimated_cost_usd=estimated_cost_usd,
-        retry=bool(regenerate),
+        retry=regenerate,
         first_event_ms=round(first_event_ms, 2) if first_event_ms is not None else None,
         first_token_ms=round(first_token_ms, 2) if first_token_ms is not None else None,
         avg_chunk_interval_ms=round(avg_chunk_interval_ms, 2) if avg_chunk_interval_ms is not None else None,
@@ -397,7 +397,7 @@ async def finalize_stream_side_effects(
             user_id_hash=user_id_hash,
             mode=selected_mode,
             prompt_mode=prompt_mode,
-            regenerate=bool(regenerate),
+            regenerate=regenerate,
             status=status,
             duration_ms=round(total_ms, 2),
             fallback_used=fallback_used,
@@ -418,7 +418,7 @@ async def finalize_stream_side_effects(
     payload = build_llm_request_payload(
         request_id=request_id,
         user_id=safe_user_id,
-        conversation_id=str(conversation_id or "") or None,
+        conversation_id=(conversation_id or "") or None,
         model_alias=str(telemetry_sink.get("model_alias") or selected_mode),
         model_name=telemetry_sink.get("model"),
         provider=telemetry_sink.get("provider"),
