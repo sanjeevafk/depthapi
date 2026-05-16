@@ -121,6 +121,8 @@ async def technical_mode_handler(
         )
 
     prefetched_search_context = kwargs.pop("_search_context", None)
+    rag_context = kwargs.pop("_rag_context", None)
+    
     search_context = (
         _truncate_search_context(prefetched_search_context)
         if isinstance(prefetched_search_context, str)
@@ -136,6 +138,12 @@ async def technical_mode_handler(
             diagram_type=diagram_type,
         )
         prompt = TECHNICAL_MINIMAL_PROMPT
+    
+    # 1. Append RAG context if available
+    if rag_context:
+        prompt = _append_search_context(prompt, f"--- RAG CONTEXT ---\n{rag_context}\n--- END RAG CONTEXT ---")
+        
+    # 2. Append Web Search context
     prompt = _append_search_context(prompt, search_context)
 
     fallback_triggered = False

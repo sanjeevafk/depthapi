@@ -159,6 +159,21 @@ def build_technical_prompt(topic: str, intent: str, depth: str, diagram_type: st
 
 
 async def technical_mode_handler(topic: str, **kwargs: Any) -> str:
+    # 1. RAG Retrieval
+    rag_context = ""
+    try:
+        rag_results = await retrieve_rag_context(
+            query=topic,
+            api_key_id=str(kwargs.get("user_id") or "anonymous"),
+            limit=int(os.getenv("RAG_TOP_K", "5")),
+            collection_id=kwargs.get("collection_id"),
+            use_trusted_corpus=kwargs.get("use_trusted_corpus", True),
+            query_mode="technical",
+        )
+        rag_context = format_rag_context(rag_results)
+    except Exception as exc:
+        logger.error(f"technical_mode_rag_failed: {str(exc)}", request_id=kwargs.get("request_id"))
+
     return await technical_mode_handler_impl(
         topic,
         build_technical_prompt_fn=build_technical_prompt,
@@ -168,6 +183,7 @@ async def technical_mode_handler(topic: str, **kwargs: Any) -> str:
         load_search_context_fn=search_service.load_search_context,
         route_aliases_fn=_model_router.route_aliases,
         call_model_fn=call_model,
+        _rag_context=rag_context,
         **kwargs,
     )
 
@@ -324,14 +340,19 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
 
     # --- Learn mode ---
     # 1. RAG Retrieval
-    rag_results = await retrieve_rag_context(
-        query=topic,
-        api_key_id=str(kwargs.get("user_id") or "anonymous"),
-        limit=int(os.getenv("RAG_TOP_K", "5")),
-        collection_id=kwargs.get("collection_id"),
-        use_trusted_corpus=kwargs.get("use_trusted_corpus", True),
-    )
-    rag_context = format_rag_context(rag_results)
+    rag_context = ""
+    try:
+        rag_results = await retrieve_rag_context(
+            query=topic,
+            api_key_id=str(kwargs.get("user_id") or "anonymous"),
+            limit=int(os.getenv("RAG_TOP_K", "5")),
+            collection_id=kwargs.get("collection_id"),
+            use_trusted_corpus=kwargs.get("use_trusted_corpus", True),
+            query_mode="conceptual",
+        )
+        rag_context = format_rag_context(rag_results)
+    except Exception as exc:
+        logger.error(f"learn_mode_rag_failed: {str(exc)}", request_id=kwargs.get("request_id"))
     
     # 2. Web Search
     search_context = await search_service.load_search_context(topic, mode=LEARNING_MODE)
