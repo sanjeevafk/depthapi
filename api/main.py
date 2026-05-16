@@ -13,7 +13,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
-from routers import (
+from api.routers import (
     query,
     ingest,
     export,
@@ -40,7 +40,7 @@ from api.logging_config import (
     log_sampled_success,
 )
 from api.config import get_settings
-from monitoring import init_sentry, capture_exception, continue_trace_from_headers, set_request_context
+from api.monitoring import init_sentry, capture_exception, continue_trace_from_headers, set_request_context
 
 
 @asynccontextmanager
@@ -50,21 +50,22 @@ async def lifespan(app: FastAPI):
     init_sentry(get_settings())
     
     config_state = get_provider_config_state()
-    issues = config_state.get("issues", [])
-    for issue in issues:
-        if not isinstance(issue, dict):
-            continue
-        level = str(issue.get("severity", "warning"))
-        payload = {
-            "severity": level,
-            "issue_code": issue.get("code"),
-            "message": issue.get("message"),
-            "chat_enabled": bool(config_state.get("chat_enabled", False)),
-        }
-        if level == "error":
-            logger.error("provider_config_validation", **payload)
-        else:
-            logger.warning("provider_config_validation", **payload)
+    issues = config_state.get("issues")
+    if isinstance(issues, list):
+        for issue in issues:
+            if not isinstance(issue, dict):
+                continue
+            level = str(issue.get("severity", "warning"))
+            payload = {
+                "severity": level,
+                "issue_code": issue.get("code"),
+                "message": issue.get("message"),
+                "chat_enabled": bool(config_state.get("chat_enabled", False)),
+            }
+            if level == "error":
+                logger.error("provider_config_validation", **payload)
+            else:
+                logger.warning("provider_config_validation", **payload)
     
     logger.info("startup")
     await validate_embedding_dimension_or_raise()
@@ -83,7 +84,7 @@ settings = get_settings()
 limiter = Limiter(
     key_func=get_remote_address,
     default_limits=(
-        [f"{max(int(settings.slowapi_default_limit_per_minute or 120), 1)}/minute"]
+        [f"{max(settings.slowapi_default_limit_per_minute or 120, 1)}/minute"]
         if settings.slowapi_enabled
         else []
     ),
