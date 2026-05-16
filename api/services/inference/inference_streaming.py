@@ -80,10 +80,32 @@ async def generate_stream_explanation(
                 diagram_type=diagram_type,
             )
 
+        # 1. RAG Retrieval
+        rag_context = ""
+        try:
+            rag_results = await retrieve_rag_context(
+                query=topic,
+                api_key_id=str(kwargs.get("user_id") or "anonymous"),
+                limit=int(os.getenv("RAG_TOP_K", "5")),
+                collection_id=kwargs.get("collection_id"),
+                use_trusted_corpus=kwargs.get("use_trusted_corpus", True),
+                query_mode="technical",
+            )
+            rag_context = format_rag_context(rag_results)
+        except Exception as exc:
+            logger.error(f"technical_stream_rag_failed: {str(exc)}", request_id=kwargs.get("request_id"))
+
+        # 2. Web Search
         search_context = await load_search_context_fn(topic, mode="technical")
+        
         prompt = build_technical_prompt_fn(topic, intent, depth, diagram_type)
         if not prompt or not prompt.strip():
             prompt = TECHNICAL_MINIMAL_PROMPT
+            
+        # Append RAG context
+        if rag_context:
+            prompt = _append_search_context(prompt, f"--- RAG CONTEXT ---\n{rag_context}\n--- END RAG CONTEXT ---")
+            
         prompt = _append_search_context(prompt, search_context)
         messages = build_messages_fn(
             prompt,
@@ -197,13 +219,19 @@ async def generate_stream_explanation(
         prompt = _append_search_context(prompt, search_context)
     else:
         # 1. RAG Retrieval
-        rag_results = await retrieve_rag_context(
-            query=topic,
-            api_key_id=str(kwargs.get("user_id") or "anonymous"),
-            limit=int(os.getenv("RAG_TOP_K", "5")),
-            collection_id=kwargs.get("collection_id")
-        )
-        rag_context = format_rag_context(rag_results)
+        rag_context = ""
+        try:
+            rag_results = await retrieve_rag_context(
+                query=topic,
+                api_key_id=str(kwargs.get("user_id") or "anonymous"),
+                limit=int(os.getenv("RAG_TOP_K", "5")),
+                collection_id=kwargs.get("collection_id"),
+                use_trusted_corpus=kwargs.get("use_trusted_corpus", True),
+                query_mode="conceptual",
+            )
+            rag_context = format_rag_context(rag_results)
+        except Exception as exc:
+            logger.error(f"learn_stream_rag_failed: {str(exc)}", request_id=kwargs.get("request_id"))
 
         # 2. Web Search
         search_context = await load_search_context_fn(topic, mode="learn")
