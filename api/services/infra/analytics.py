@@ -5,7 +5,7 @@ from typing import Any
 
 from api.auth import get_supabase_admin
 from api.logging_config import logger
-from monitoring import redact_pii
+from api.monitoring import redact_pii
 
 
 def _parse_iso(value: str | None) -> datetime | None:

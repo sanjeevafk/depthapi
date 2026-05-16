@@ -9,7 +9,7 @@ from typing import Any, Optional
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
 
-from monitoring import capture_telemetry_event
+from api.monitoring import capture_telemetry_event
 from api.services.conversation.conversation_lock_manager import ConversationLockManager
 from api.services.messaging.message_dispatcher import MessageDispatcher
 from api.services.security.request_validator import RequestValidator
@@ -59,9 +59,9 @@ def resolve_client_ip(request: Request, *, trusted_proxies: set[str]) -> str:
         forwarded_chain = [part.strip() for part in forwarded_for.split(",") if part.strip()]
         forwarded_ip = forwarded_chain[0] if forwarded_chain else None
         real_ip = (request.headers.get("x-real-ip") or "").strip() or None
-        return str(forwarded_ip or real_ip or peer_host or "unknown")
+        return forwarded_ip or real_ip or peer_host or "unknown"
 
-    return str(peer_host or "unknown")
+    return peer_host or "unknown"
 
 
 async def ingress_dedupe_check(message_id: str, ttl_seconds: float = 3.0) -> bool:
@@ -134,7 +134,7 @@ def require_uuid(value: Optional[str], field_name: str) -> str:
 def validate_message_boundary(payload: Any) -> tuple[str, str | None]:
     result = _request_validator.validate_message_request(payload)
     if not result.ok:
-        raise bad_request(str(result.error_message or "Invalid request payload"))
+        raise bad_request(result.error_message or "Invalid request payload")
     return result.content, result.normalized_mode
 
 
