@@ -27,7 +27,7 @@ class SupabaseHTTPClient:
             "Content-Type": "application/json",
             "Prefer": "return=representation"
         }
-        self.timeout = httpx.Timeout(30.0, connect=5.0)
+        self.timeout = httpx.Timeout(90.0, connect=5.0)
 
     def rpc(self, function_name: str, params: Dict[str, Any]) -> "SupabaseHTTPRPC":
         return SupabaseHTTPRPC(self, function_name, params)

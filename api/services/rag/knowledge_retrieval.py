@@ -45,6 +45,8 @@ class RetrievalService:
         neighbor_window: int = 1,
         min_similarity: float = 0.75,
         use_trusted_corpus: bool = True,
+        collection_id: str | None = None,
+        query_mode: str = "conceptual",
     ) -> List[Dict[str, Any]]:
         """Perform hybrid search, expand context, and return snippets with citations."""
         if not query or not str(query).strip():
@@ -75,6 +77,8 @@ class RetrievalService:
                         api_key_id=api_key_id,
                         limit=limit,
                         min_similarity=min_similarity,
+                        collection_id=collection_id,
+                        query_mode=query_mode,
                     )
                 )
             if trusted_db and use_trusted_corpus:
@@ -87,6 +91,7 @@ class RetrievalService:
                         api_key_id=api_key_id,
                         limit=limit,
                         min_similarity=min_similarity,
+                        query_mode=query_mode,
                     )
                 )
 
@@ -167,8 +172,24 @@ class RetrievalService:
             logger.warning("context_expansion_failed", chunk_id=candidate["chunk_id"], error=str(exc))
             return candidate["content"]
 
+    def _get_text_shingles(self, text: str, n: int = 3) -> set:
+        """Convert text into a set of n-gram shingles for similarity comparison."""
+        tokens = text.lower().split()
+        if len(tokens) < n:
+            return set(tokens)
+        return {" ".join(tokens[i:i+n]) for i in range(len(tokens)-n+1)}
+
+    def _calculate_jaccard(self, set1: set, set2: set) -> float:
+        """Calculate Jaccard similarity between two shingle sets."""
+        if not set1 or not set2:
+            return 0.0
+        intersection = len(set1.intersection(set2))
+        union = len(set1.union(set2))
+        return intersection / union
+
     async def _passthrough_rerank(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Rerank candidates with a cross-encoder, falling back to RRF ordering."""
+        """Rerank candidates with a cross-encoder, applying diversity filtering."""
+        # 1. ID-based deduplication
         deduped: Dict[str, Dict[str, Any]] = {}
         for candidate in candidates:
             chunk_id = candidate.get("chunk_id")
@@ -177,16 +198,39 @@ class RetrievalService:
             existing = deduped.get(chunk_id)
             if existing is None or candidate.get("rrf_score", 0) > existing.get("rrf_score", 0):
                 deduped[chunk_id] = candidate
-        ordered = sorted(deduped.values(), key=lambda x: x.get("rrf_score", 0), reverse=True)
-        if not query or len(ordered) <= 1:
-            return ordered
+        
+        # 2. Structural Diversity Filter (Jaccard Shingling)
+        # We process in order of RRF score to keep the best representatives of a template
+        initial_ordered = sorted(deduped.values(), key=lambda x: x.get("rrf_score", 0), reverse=True)
+        diverse_results: List[Dict[str, Any]] = []
+        seen_shingles: List[set] = []
+        
+        for cand in initial_ordered:
+            cand_content = cand.get("content", "")
+            cand_shingles = self._get_text_shingles(cand_content)
+            
+            is_redundant = False
+            for prev_shingles in seen_shingles:
+                # 0.75 threshold captures near-identical documentation templates (P2 Hardening)
+                if self._calculate_jaccard(cand_shingles, prev_shingles) > 0.75:
+                    is_redundant = True
+                    break
+            
+            if not is_redundant:
+                diverse_results.append(cand)
+                seen_shingles.append(cand_shingles)
+            else:
+                logger.debug("retrieval_diversity_suppressed", chunk_id=cand.get("chunk_id"))
+
+        if not query or len(diverse_results) <= 1:
+            return diverse_results
 
         try:
             reranker = get_reranker_service()
-            return await reranker.rerank(query, ordered, top_n=len(ordered))
+            return await reranker.rerank(query, diverse_results, top_n=len(diverse_results))
         except Exception as exc:
             logger.warning("rerank_failed_fallback", error=str(exc))
-            return ordered
+            return diverse_results
 
     async def _search_candidates(
         self,
@@ -197,19 +241,72 @@ class RetrievalService:
         api_key_id: str,
         limit: int,
         min_similarity: float,
+        collection_id: str | None = None,
+        query_mode: str = "conceptual",
     ) -> List[Dict[str, Any]]:
-        rpc_name = "hybrid_search_trusted_v4" if tier == "trusted" else "hybrid_search_v4"
-        payload: dict[str, Any] = {
-            "query_text": query,
-            "query_embedding": query_vector,
-            "final_count": limit * 2,
-            "min_similarity": min_similarity,
-        }
-        if tier != "trusted":
-            payload["target_api_key_id"] = api_key_id
+        if tier == "trusted":
+            # RPC v5+ supports dual-tsvector and query_mode
+            rpc_name = "hybrid_search_trusted_v5"
+            payload: dict[str, Any] = {
+                "query_text": query,
+                "query_embedding": query_vector,
+                "query_mode": query_mode,
+                "final_count": limit * 2,
+                "min_similarity": min_similarity,
+            }
+        else:
+            # RPC v5+ supports dual-tsvector, query_mode, and collection filtering
+            rpc_name = "hybrid_search_v5"
+            # P0 FIX: Convert 'anonymous' string to valid UUID for Postgres
+            target_api_key_id = api_key_id if api_key_id != "anonymous" else "00000000-0000-0000-0000-000000000000"
+            payload = {
+                "query_text": query,
+                "query_embedding": query_vector,
+                "target_api_key_id": target_api_key_id,
+                "query_mode": query_mode,
+                "final_count": limit * 2,
+                "min_similarity": min_similarity,
+            }
+            if collection_id:
+                # v5 update 202605160001 added target_collection_id support
+                payload["target_collection_id"] = collection_id
 
-        search_res = await db.rpc(rpc_name, payload).execute()
-        candidates = search_res.data or []
+        try:
+            search_res = await db.rpc(rpc_name, payload).execute()
+            candidates = search_res.data or []
+        except Exception as exc:
+            err_msg = str(exc).lower()
+            # Fallback 1: Parameter mismatch (target_collection_id)
+            if "target_collection_id" in err_msg and collection_id:
+                logger.warning("rpc_param_unsupported", param="target_collection_id", rpc=rpc_name)
+                del payload["target_collection_id"]
+                search_res = await db.rpc(rpc_name, payload).execute()
+                candidates = search_res.data or []
+            # Fallback 2: Function not found (v5 vs v4)
+            elif "not found" in err_msg or "does not exist" in err_msg:
+                fallback_rpc = "hybrid_search_trusted_v4" if tier == "trusted" else "hybrid_search_v4"
+                logger.warning("rpc_version_unsupported", current=rpc_name, fallback=fallback_rpc)
+                # Filter payload for v4 (no query_mode or target_collection_id)
+                v4_payload = {
+                    "query_text": query,
+                    "query_embedding": query_vector,
+                    "final_count": limit * 2,
+                    "min_similarity": min_similarity,
+                }
+                if tier != "trusted":
+                    # P0 FIX: Convert 'anonymous' for v4 fallback
+                    v4_payload["target_api_key_id"] = api_key_id if api_key_id != "anonymous" else "00000000-0000-0000-0000-000000000000"
+                
+                search_res = await db.rpc(fallback_rpc, v4_payload).execute()
+                candidates = search_res.data or []
+            else:
+                raise exc
+        
+        # Defensive check: Ensure candidates is a list before iteration
+        if not isinstance(candidates, list):
+            print(f"DEBUG: Tier {tier} returned {type(candidates).__name__}: {candidates}")
+            return []
+
         for candidate in candidates:
             candidate["source_tier"] = tier
         return candidates
