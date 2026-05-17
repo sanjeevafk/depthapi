@@ -1,0 +1,5 @@
+{
+  "name": "meme",
+  "template": "Presentation style - meme:\nWrite as a punchy, shareable meme-style observation about {topic}. Use 1-3 sentences maximum. Keep humor accurate and never target a person, group, identity, illness, violence, death, or genuinely serious subject.",
+  "metadata": {"max_sentences": 3}
+}
