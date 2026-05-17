@@ -7,7 +7,7 @@ TECHNICAL_MAX_TOKENS = 2048
 
 LEARNING_MODEL_SIMPLE = "default-fast"
 LEARNING_MODEL_DETAILED = "learning-detailed"
-LEARNING_DETAILED_LEVELS = {"expert", "meme"}
+LEARNING_DETAILED_LEVELS = {"expert", "technical"}
 
 LEARN_GEMINI_FLASH_ALIAS = "learn-gemini-flash"
 LEARN_GROQ_FAST_ALIAS = "learn-groq-llama8b"

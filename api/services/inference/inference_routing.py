@@ -65,23 +65,23 @@ def extract_features(
     if not resolved_intent or not resolved_depth:
         try:
             classification = _classifier_shim.detect_intent_and_depth(query)
-            resolved_intent = resolved_intent or classification.get("intent", "explain")
-            resolved_depth = resolved_depth or classification.get("depth", "medium")
+            resolved_intent = resolved_intent or classification.get("task") or classification.get("intent", "explain")
+            resolved_depth = resolved_depth or classification.get("depth", "accessible")
         except Exception as exc:
             logger.debug("intent_depth_classification_failed", error=str(exc))
             resolved_intent = resolved_intent or "explain"
-            resolved_depth = resolved_depth or "medium"
+            resolved_depth = resolved_depth or "accessible"
 
     complexity = 0.35
     reasoning = 0.30
     explanation = 0.45
     latency_priority = 0.50
 
-    if resolved_depth == "deep":
+    if resolved_depth in {"technical", "expert", "deep"}:
         complexity += 0.40
         reasoning += 0.25
         latency_priority -= 0.25
-    elif resolved_depth == "shallow":
+    elif resolved_depth in {"simple", "shallow"}:
         complexity -= 0.10
         latency_priority += 0.30
         explanation += 0.08
@@ -304,11 +304,11 @@ def _technical_route(
     is_pro: bool,
     search_api_used: bool,
 ) -> tuple[str, str]:
-    features = extract_features(query, mode=TECHNICAL_MODE, level="technical_depth", intent=intent, depth=depth)
+    features = extract_features(query, mode=TECHNICAL_MODE, level="technical", intent=intent, depth=depth)
     aliases = route_model_aliases(
         query,
         mode=TECHNICAL_MODE,
-        level="technical_depth",
+        level="technical",
         intent=intent,
         depth=depth,
         is_pro=is_pro,
