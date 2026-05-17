@@ -500,6 +500,14 @@ class DummyRedis:
         return True
 
 
+class AwaitableResponse(SimpleNamespace):
+    def __await__(self):
+        async def _wrap():
+            return self
+
+        return _wrap().__await__()
+
+
 class FakeSupabaseQuery:
     def __init__(self, supabase, table):
         self.supabase = supabase
@@ -532,6 +540,9 @@ class FakeSupabaseQuery:
     def lte(self, *_args, **_kwargs):
         return self
 
+    def is_(self, *_args, **_kwargs):
+        return self
+
     def order(self, *_args, **_kwargs):
         return self
 
@@ -546,8 +557,8 @@ class FakeSupabaseQuery:
 
     def execute(self):
         if self._response is not None:
-            return SimpleNamespace(data=self._response)
-        return SimpleNamespace(data=self.supabase.responses.get(self.table, []))
+            return AwaitableResponse(data=self._response)
+        return AwaitableResponse(data=self.supabase.responses.get(self.table, []))
 
 
 class FakeSupabase:

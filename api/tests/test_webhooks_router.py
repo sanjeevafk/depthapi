@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 import pytest
 from standardwebhooks import Webhook
 
-import routers.payments as payments_module
-import routers.webhooks as webhooks_module
+import api.routers.payments as payments_module
+import api.routers.webhooks as webhooks_module
 
 
 def _whsec(label: str = "test") -> str:

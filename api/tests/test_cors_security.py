@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 import api.main as api_main
-import routers.query as query_module
+import api.routers.query as query_module
 from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
 
 
@@ -69,6 +69,7 @@ async def test_health_and_query_still_work_with_cors_patch(app_client, monkeypat
     monkeypatch.setattr(query_module, "cache_set", fake_cache_set)
     monkeypatch.setattr(query_module, "generate_explanation", fake_generate_explanation)
     monkeypatch.setattr(query_module, "save_to_history", fake_save_to_history)
+    monkeypatch.setattr(query_module, "get_provider_config_state", lambda: {"chat_enabled": True})
     async def fake_key():
         return ApiKeyRecord(
             id="test-key-uuid-1234",
@@ -85,7 +86,7 @@ async def test_health_and_query_still_work_with_cors_patch(app_client, monkeypat
 
     query_resp = await app_client.post(
         "/api/query",
-        json={"topic": "CORS hardening", "levels": ["simple"], "mode": "learn"},
+        json={"topic": "CORS hardening", "prompt_spec": {"depth": "simple"}, "mode": "learn"},
     )
     assert query_resp.status_code == 200
     payload = query_resp.json()

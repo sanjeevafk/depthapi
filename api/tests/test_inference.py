@@ -401,7 +401,7 @@ async def test_technical_mode_handler_uses_safe_defaults_when_classification_fai
     result = await inference_module.technical_mode_handler("topic")
 
     assert result == "valid technical response"
-    assert captured["build_args"] == ("topic", "unknown", "shallow", "generic")
+    assert captured["build_args"] == ("topic", "explain", "technical", "generic")
 
 
 @pytest.mark.asyncio
