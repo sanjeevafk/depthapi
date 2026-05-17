@@ -129,7 +129,10 @@ class FilesystemRAGStore:
             return
 
         paths = self._get_ns_paths(namespace)
-        if not paths["chunks"].exists() or not paths["vectors"].exists():
+        if paths["chunks"].exists() and (not paths["vectors"].exists() or not paths["bm25"].exists()):
+            self._bootstrap_indices_from_chunks(namespace)
+
+        if not paths["chunks"].exists() or not paths["vectors"].exists() or not paths["bm25"].exists():
             logger.warning("rag_namespace_not_found", namespace=namespace)
             return
 
@@ -148,6 +151,72 @@ class FilesystemRAGStore:
             "index": index,
             "bm25": bm25
         }
+
+    def _bootstrap_indices_from_chunks(self, namespace: str) -> None:
+        paths = self._get_ns_paths(namespace)
+        if not paths["chunks"].exists():
+            return
+
+        with FileLock(str(paths["lock"])):
+            with open(paths["chunks"], "r", encoding="utf-8") as f:
+                chunks = json.load(f)
+
+            if not isinstance(chunks, list) or not chunks:
+                logger.warning("rag_bootstrap_empty_chunks", namespace=namespace)
+                return
+
+            embeddings: list[list[float]] = []
+            normalized_chunks: list[dict[str, Any]] = []
+            for idx, chunk in enumerate(chunks):
+                embedding = chunk.get("embedding")
+                content = chunk.get("content")
+                if not isinstance(embedding, list) or not embedding or not isinstance(content, str) or not content.strip():
+                    continue
+                embeddings.append([float(value) for value in embedding])
+                normalized_chunks.append(
+                    {
+                        "id": chunk.get("id") or hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                        "content": content,
+                        "source_name": chunk.get("source_name", "Unknown"),
+                        "source_url": chunk.get("source_url"),
+                        "chunk_order": int(chunk.get("chunk_order", idx) or idx),
+                        "token_count": int(chunk.get("token_count", 0) or 0),
+                    }
+                )
+
+            if not embeddings or not normalized_chunks:
+                logger.warning("rag_bootstrap_missing_embeddings", namespace=namespace)
+                return
+
+            dim = len(embeddings[0])
+            index = faiss.IndexHNSWFlat(dim, 32)
+            index.hnsw.efConstruction = 200
+            vectors = np.array(embeddings).astype("float32")
+            index.add(vectors)
+
+            tokenized_corpus = [c["content"].lower().split() for c in normalized_chunks]
+            bm25 = BM25Okapi(tokenized_corpus)
+
+            faiss.write_index(index, str(paths["vectors"]))
+            with open(paths["bm25"], "wb") as f:
+                pickle.dump(bm25, f)
+            with open(paths["manifest"], "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "total_chunks": len(normalized_chunks),
+                        "last_updated": Path(paths["chunks"]).stat().st_mtime,
+                        "dim": dim,
+                        "bootstrapped_from_chunks": True,
+                    },
+                    f,
+                )
+
+            logger.info(
+                "rag_bootstrap_completed",
+                namespace=namespace,
+                total_chunks=len(normalized_chunks),
+                dim=dim,
+            )
 
     async def retrieve(
         self,
