@@ -14,7 +14,8 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from api.config import get_settings
 from api.logging_config import anonymize_user_id, logger, log_sampled_success
-from api.prompts import build_prompt
+from api.prompts import build_prompt, build_prompt_with_trace
+from api.prompt_engine import PromptSpec
 from api.services.inference.inference_classifier import IntentClassifier
 from api.services.inference.inference_message_builder import (
     build_messages,
@@ -25,6 +26,7 @@ from api.services.inference.inference_routing import (
     _effective_alias_chain,
     _technical_route,
     extract_features,
+    route_model_aliases,
 )
 from api.services.inference.inference_search import (
     _append_rag_context,
@@ -52,6 +54,7 @@ from api.services.inference.inference_technical import (
     is_low_quality as is_low_quality_impl,
     technical_mode_handler as technical_mode_handler_impl,
 )
+from api.services.inference.inference_constants import TECHNICAL_MINIMAL_PROMPT, TECHNICAL_TEMPERATURE
 from api.services.conversation.intent import (
     detect_diagram_type as detect_diagram_type_base,
     detect_intent_and_depth as detect_intent_and_depth_base,
@@ -71,6 +74,7 @@ _intent_classifier = IntentClassifier()
 _model_router = ModelRouter()
 _prompt_orchestrator = PromptOrchestrator()
 _response_builder = ResponseBuilder()
+VALID_PROMPT_DEPTHS = {"simple", "accessible", "technical", "expert"}
 
 
 class _SearchServiceShim:
@@ -108,20 +112,79 @@ search_service = _SearchServiceShim()
 
 
 
-async def _classify_intent(query: str) -> dict[str, str]:
-    """Async-first classification: hybrid (regex + SLM). Falls back to regex on error."""
+async def _classify_intent(query: str) -> dict[str, Any]:
+    """Async-first prompt-axis classification. Falls back to regex on error."""
     try:
         return await _intent_classifier.classify_async(query)
     except Exception:
         return detect_intent_and_depth_base(query)
 
 
+async def _classify_prompt_spec(query: str) -> PromptSpec:
+    try:
+        return await _intent_classifier.classify_prompt_spec(query)
+    except Exception:
+        fallback = detect_intent_and_depth_base(query)
+        return PromptSpec(
+            topic=query,
+            depth=_canonical_depth(str(fallback.get("depth", "accessible"))),
+            task=str(fallback.get("intent", "explain")),
+            reasoning="direct",
+            style="normal",
+        )
+
+
 def detect_intent_and_depth(query: str) -> dict[str, str]:
-    """Sync shim kept for legacy call sites that cannot be made async."""
+    """Sync shim kept for call sites that cannot be made async yet."""
     try:
         return _intent_classifier.detect_intent_and_depth(query)
     except Exception:
         return detect_intent_and_depth_base(query)
+
+
+def _canonical_depth(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    mapping = {
+        "shallow": "simple",
+        "medium": "accessible",
+        "deep": "technical",
+        "meme": "accessible",
+    }
+    normalized = mapping.get(normalized, normalized)
+    return normalized if normalized in {"simple", "accessible", "technical", "expert"} else "accessible"
+
+
+def _spec_for_request(
+    topic: str,
+    classified_spec: PromptSpec,
+    *,
+    level: str | None,
+    mode: str,
+    search_context: str = "",
+    diagram_type: str | None = None,
+) -> tuple[PromptSpec, str | None]:
+    depth = _canonical_depth(level) if level else classified_spec.depth
+    style = classified_spec.style
+    if (level or "").strip().lower() == "meme":
+        style = "meme"
+    reasoning = "socratic" if mode == SOCRATIC_MODE else classified_spec.reasoning
+    capabilities = set(classified_spec.capabilities)
+    if search_context:
+        capabilities.discard("requires_search")
+        capabilities.discard("requires_citations")
+    if diagram_type is None:
+        capabilities.discard("requires_diagram")
+    return (
+        PromptSpec(
+            topic=topic,
+            depth=depth,
+            task=classified_spec.task,
+            reasoning=reasoning,
+            style=style,
+            capabilities=frozenset(capabilities),
+        ),
+        diagram_type,
+    )
 
 
 def detect_diagram_type(query: str) -> str | None:
@@ -301,19 +364,38 @@ async def call_model(model: str | None, prompt: str, max_tokens: int = 300, **kw
 
 async def generate_explanation(topic: str, level: str, model: str | None = None, **kwargs: Any) -> str:
     mode = normalize_mode(kwargs.get("mode", LEARNING_MODE))
+    explicit_prompt_spec = kwargs.get("prompt_spec")
+    if explicit_prompt_spec is not None and not isinstance(explicit_prompt_spec, PromptSpec):
+        explicit_prompt_spec = None
+    if (level or "").strip().lower() not in VALID_PROMPT_DEPTHS:
+        raise ValueError(f"Unknown prompt depth '{level}'. Valid depths: {sorted(VALID_PROMPT_DEPTHS)}")
 
     if mode == TECHNICAL_MODE:
         return await technical_mode_handler(topic, **kwargs)
 
-    # --- Classify intent once; thread results to routing & feature extraction ---
-    classification = await _classify_intent(topic)
-    intent  = classification.get("intent", "explain")
-    depth   = classification.get("depth", "medium")
+    # --- Classify once into canonical prompt axes; thread scalar task/depth
+    # fields where routing still expects them.
+    classified_spec = explicit_prompt_spec or await _classify_prompt_spec(topic)
+    intent = classified_spec.task
+    depth = classified_spec.depth
 
     if mode == SOCRATIC_MODE:
         search_context = await search_service.load_search_context(topic, mode=SOCRATIC_MODE)
-        prompt = build_prompt("socratic", topic, conversation_context=kwargs.get("conversation_context", ""))
-        prompt = _append_search_context(prompt, search_context)
+        prompt_spec, _ = _spec_for_request(
+            topic,
+            classified_spec,
+            level=level,
+            mode=SOCRATIC_MODE,
+            search_context=search_context,
+        )
+        prompt_build = build_prompt_with_trace(
+            prompt_spec,
+            conversation_context=kwargs.get("conversation_context", ""),
+            search_context=search_context,
+        )
+        prompt = prompt_build.prompt
+        if isinstance(kwargs.get("telemetry_sink"), dict):
+            kwargs["telemetry_sink"]["prompt_trace"] = prompt_build.trace.to_dict()
         routed_aliases = _model_router.route_aliases(
             topic,
             intent=intent,
@@ -358,9 +440,18 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
     search_context = await search_service.load_search_context(topic, mode=LEARNING_MODE)
     
     # 3. Assemble Prompt
-    prompt = build_prompt(level, topic)
-    prompt = _append_rag_context(prompt, rag_context)
-    prompt = _append_search_context(prompt, search_context)
+    combined_context = "\n\n".join(part for part in (rag_context, search_context) if part)
+    prompt_spec, _ = _spec_for_request(
+        topic,
+        classified_spec,
+        level=level,
+        mode=LEARNING_MODE,
+        search_context=combined_context,
+    )
+    prompt_build = build_prompt_with_trace(prompt_spec, search_context=combined_context)
+    prompt = prompt_build.prompt
+    if isinstance(kwargs.get("telemetry_sink"), dict):
+        kwargs["telemetry_sink"]["prompt_trace"] = prompt_build.trace.to_dict()
     length_constraint = _prompt_orchestrator.extract_length_constraint(topic)
     prompt = _prompt_orchestrator.apply_length_constraints(prompt, length_constraint)
     is_large_input = _prompt_orchestrator.is_large_input(topic)
@@ -394,10 +485,23 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
 
 
 async def generate_stream_explanation(topic: str, level: str, model: str | None = None, **kwargs: Any):
+    explicit_prompt_spec = kwargs.get("prompt_spec")
+    if isinstance(explicit_prompt_spec, PromptSpec):
+        kwargs.setdefault("_pre_classified_intent", explicit_prompt_spec.task)
+        kwargs.setdefault("_pre_classified_depth", explicit_prompt_spec.depth)
+        kwargs.setdefault("_pre_classified_reasoning", explicit_prompt_spec.reasoning)
+        kwargs.setdefault("_pre_classified_style", explicit_prompt_spec.style)
+        kwargs.setdefault("_pre_classified_capabilities", list(explicit_prompt_spec.capabilities))
+    if (level or "").strip().lower() not in VALID_PROMPT_DEPTHS:
+        raise ValueError(f"Unknown prompt depth '{level}'. Valid depths: {sorted(VALID_PROMPT_DEPTHS)}")
     # Pre-classify once so streaming path doesn't re-classify internally
-    classification = await _classify_intent(topic)
-    kwargs.setdefault("_pre_classified_intent", classification.get("intent", "explain"))
-    kwargs.setdefault("_pre_classified_depth", classification.get("depth", "medium"))
+    if "_pre_classified_intent" not in kwargs:
+        classification = await _classify_intent(topic)
+        kwargs.setdefault("_pre_classified_intent", classification.get("task") or classification.get("intent", "explain"))
+        kwargs.setdefault("_pre_classified_depth", classification.get("depth", "accessible"))
+        kwargs.setdefault("_pre_classified_reasoning", classification.get("reasoning", "direct"))
+        kwargs.setdefault("_pre_classified_style", classification.get("style", "normal"))
+        kwargs.setdefault("_pre_classified_capabilities", classification.get("capabilities", []))
 
     async for chunk in generate_stream_explanation_impl(
         topic,

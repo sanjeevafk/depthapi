@@ -10,7 +10,8 @@ import structlog
 from openai.types.chat import ChatCompletionMessageParam
 
 from api.config import get_settings
-from api.logging_config import anonymize_user_id, log_sampled_success
+from api.logging_config import anonymize_user_id, logger, log_sampled_success
+from api.prompt_engine import PromptSpec
 from api.services.inference.inference_constants import (
     TECHNICAL_MAX_TOKENS,
     TECHNICAL_MINIMAL_PROMPT,
@@ -61,15 +62,42 @@ async def generate_stream_explanation(
     anonymized_user_id = anonymize_user_id(str(kwargs.get("user_id") or "") or None)
     route_telemetry_sink = kwargs.get("telemetry_sink") if isinstance(kwargs.get("telemetry_sink"), dict) else None
     prompt = ""
+    pre_task = str(kwargs.get("_pre_classified_intent") or "explain")
+    pre_depth = str(kwargs.get("_pre_classified_depth") or "accessible")
+    pre_reasoning = str(kwargs.get("_pre_classified_reasoning") or "direct")
+    pre_style = str(kwargs.get("_pre_classified_style") or "normal")
+    pre_capabilities = set(kwargs.get("_pre_classified_capabilities") or [])
+
+    def _canonical_depth(value: str | None) -> str:
+        normalized = (value or "").strip().lower()
+        mapping = {"shallow": "simple", "medium": "accessible", "deep": "technical", "meme": "accessible"}
+        normalized = mapping.get(normalized, normalized)
+        return normalized if normalized in {"simple", "accessible", "technical", "expert"} else "accessible"
+
+    def _request_spec(*, search_context: str = "", reasoning: str | None = None) -> PromptSpec:
+        capabilities = set(pre_capabilities)
+        if search_context:
+            capabilities.discard("requires_search")
+            capabilities.discard("requires_citations")
+        capabilities.discard("requires_diagram")
+        selected_style = "meme" if (level or "").strip().lower() == "meme" else pre_style
+        return PromptSpec(
+            topic=topic,
+            depth=_canonical_depth(level) if level else _canonical_depth(pre_depth),
+            task=pre_task,
+            reasoning=reasoning or pre_reasoning,
+            style=selected_style,
+            capabilities=frozenset(capabilities),
+        )
 
     if mode == "technical":
-        intent = "unknown"
-        depth = "shallow"
+        intent = "explain"
+        depth = "technical"
         diagram_type = "generic"
         try:
             classification = detect_intent_and_depth_fn(topic)
-            intent = classification["intent"]
-            depth = classification["depth"]
+            intent = str(classification.get("task") or classification.get("intent", "explain"))
+            depth = str(classification.get("depth", "technical"))
             diagram_type = detect_diagram_type_fn(topic)
         except Exception as exc:
             _tech_logger.warning(
@@ -212,11 +240,10 @@ async def generate_stream_explanation(
     if mode == "socratic":
         search_context = await load_search_context_fn(topic, mode="socratic")
         prompt = build_prompt_fn(
-            "socratic",
-            topic,
+            _request_spec(search_context=search_context, reasoning="socratic"),
             conversation_context=kwargs.get("conversation_context", ""),
+            search_context=search_context,
         )
-        prompt = _append_search_context(prompt, search_context)
     else:
         # 1. RAG Retrieval
         rag_context = ""
@@ -237,9 +264,8 @@ async def generate_stream_explanation(
         search_context = await load_search_context_fn(topic, mode="learn")
         
         # 3. Assemble Prompt
-        prompt = build_prompt_fn(level, topic)
-        prompt = _append_rag_context(prompt, rag_context)
-        prompt = _append_search_context(prompt, search_context)
+        combined_context = "\n\n".join(part for part in (rag_context, search_context) if part)
+        prompt = build_prompt_fn(_request_spec(search_context=combined_context), search_context=combined_context)
         length_constraint = prompt_orchestrator.extract_length_constraint(topic)
         prompt = prompt_orchestrator.apply_length_constraints(prompt, length_constraint)
 
