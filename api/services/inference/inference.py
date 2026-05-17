@@ -323,6 +323,7 @@ async def call_model(model: str | None, prompt: str, max_tokens: int = 300, **kw
             max_tokens=max_tokens,
             temperature=kwargs.get("temperature", 0.7),
             request_id=request_id,
+            telemetry_sink=telemetry_sink,
         )
         model_inference_ms = round((time.perf_counter() - model_start) * 1000, 2)
         usage = _extract_usage_dict(getattr(result, "usage", None))
