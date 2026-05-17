@@ -1,0 +1,4 @@
+{
+  "name": "diagram",
+  "template": "Runtime context - diagram:\n{diagram_instruction}"
+}

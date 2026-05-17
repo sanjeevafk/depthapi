@@ -1,0 +1,4 @@
+{
+  "name": "search_context",
+  "template": "Runtime context - search:\nExternal web context and retrieved knowledge may be incomplete. Use this context only when relevant, do not fabricate details, and cite only sources present here:\n{search_context}"
+}

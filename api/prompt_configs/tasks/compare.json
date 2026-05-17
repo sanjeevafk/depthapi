@@ -1,0 +1,5 @@
+{
+  "name": "compare",
+  "template": "Task template - compare:\nTopic: {topic}\nCompare the options or concepts explicitly. Structure the answer with: Option A, Option B, Key differences, Recommendation. Every tradeoff must be specific and actionable.",
+  "metadata": {"output": "markdown"}
+}
