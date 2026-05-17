@@ -1,27 +1,36 @@
--- History upsert helper and unique index for conflict target
+-- History upsert helper and unique index for canonical PromptSpec history.
 -- Safe to run multiple times.
 
-CREATE UNIQUE INDEX IF NOT EXISTS history_user_topic_mode_idx
-    ON history (user_id, topic, mode);
+ALTER TABLE public.history
+    ADD COLUMN IF NOT EXISTS prompt_specs jsonb NOT NULL DEFAULT '[]'::jsonb;
 
-CREATE OR REPLACE FUNCTION upsert_history(
+ALTER TABLE public.history
+    DROP COLUMN IF EXISTS levels,
+    DROP COLUMN IF EXISTS mode;
+
+DROP INDEX IF EXISTS public.history_user_topic_mode_idx;
+
+CREATE UNIQUE INDEX IF NOT EXISTS history_user_topic_idx
+    ON public.history (user_id, topic);
+
+CREATE OR REPLACE FUNCTION public.upsert_history(
     p_user_id uuid,
     p_topic text,
-    p_mode text,
-    p_levels text[]
+    p_prompt_specs jsonb DEFAULT '[]'::jsonb
 ) RETURNS void
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    INSERT INTO history (user_id, topic, mode, levels)
-    VALUES (p_user_id, p_topic, p_mode, p_levels)
-    ON CONFLICT (user_id, topic, mode)
+    INSERT INTO public.history (user_id, topic, prompt_specs)
+    VALUES (p_user_id, p_topic, COALESCE(p_prompt_specs, '[]'::jsonb))
+    ON CONFLICT (user_id, topic)
     DO UPDATE
-        SET levels = (
-            SELECT ARRAY(
-                SELECT DISTINCT UNNEST(COALESCE(history.levels, '{}'::text[]) || COALESCE(EXCLUDED.levels, '{}'::text[]))
-            )
-        ),
-        mode = EXCLUDED.mode;
+        SET prompt_specs = (
+            SELECT COALESCE(jsonb_agg(DISTINCT spec), '[]'::jsonb)
+            FROM jsonb_array_elements(
+                COALESCE(public.history.prompt_specs, '[]'::jsonb)
+                || COALESCE(EXCLUDED.prompt_specs, '[]'::jsonb)
+            ) AS spec
+        );
 END;
 $$;
