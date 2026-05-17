@@ -221,6 +221,9 @@ def build_query_stream_response(
                 user_id=user_id_raw,
                 collection_id=req.collection_id,
                 use_trusted_corpus=req.use_trusted_corpus,
+                prompt_spec=getattr(req, "prompt_spec", None).to_prompt_spec(topic)
+                if getattr(req, "prompt_spec", None)
+                else None,
                 telemetry_sink=telemetry_sink,
             )
             stream_iter = _stream_chunks(stream)
@@ -296,6 +299,9 @@ def build_query_stream_response(
                             user_id=user_id_raw,
                             collection_id=req.collection_id,
                             use_trusted_corpus=req.use_trusted_corpus,
+                            prompt_spec=getattr(req, "prompt_spec", None).to_prompt_spec(topic)
+                            if getattr(req, "prompt_spec", None)
+                            else None,
                             telemetry_sink=telemetry_sink,
                         ),
                         timeout=fallback_timeout,
@@ -373,6 +379,9 @@ def build_query_stream_response(
                             user_id=user_id_raw,
                             collection_id=req.collection_id,
                             use_trusted_corpus=req.use_trusted_corpus,
+                            prompt_spec=getattr(req, "prompt_spec", None).to_prompt_spec(topic)
+                            if getattr(req, "prompt_spec", None)
+                            else None,
                             telemetry_sink=telemetry_sink,
                         ),
                         timeout=fallback_timeout,

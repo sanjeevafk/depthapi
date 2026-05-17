@@ -4,18 +4,20 @@ from typing import Any, Dict, List, Optional, cast
 from api.logging_config import logger, anonymize_user_id, anonymize_text
 from api.auth import ensure_user_exists, get_supabase_admin
 from api.repositories.history_repository import HistoryRepository
-from api.utils import normalize_mode
 
 
 class ChatRepository:
     """Repository for managing chat history, conversations, and messages."""
 
     @staticmethod
-    async def save_to_history(user: Any, topic: str, levels: list[str], mode: str) -> None:
+    async def save_to_history(
+        user: Any,
+        topic: str,
+        prompt_specs: list[dict[str, Any]],
+    ) -> None:
         """Persist a query to the user's history."""
         user_id_hash = anonymize_user_id(str(getattr(user, "id", "") or ""))
         topic_hash = anonymize_text(topic)
-        normalized_mode = normalize_mode(mode)
 
         try:
             await ensure_user_exists(user)
@@ -29,7 +31,7 @@ class ChatRepository:
             )
             return
 
-        upserted = await HistoryRepository.upsert_history(user, topic, levels, mode)
+        upserted = await HistoryRepository.upsert_history(user, topic, prompt_specs)
         if upserted:
             return
 
@@ -41,10 +43,9 @@ class ChatRepository:
         try:
             existing = await (
                 supabase.table("history")
-                .select("id, levels")
+                .select("id, prompt_specs")
                 .eq("user_id", user.id)
                 .eq("topic", topic)
-                .eq("mode", normalized_mode)
                 .execute()
             )
         except Exception as exc:
@@ -62,11 +63,13 @@ class ChatRepository:
             data = getattr(existing, "data", None)
             if isinstance(data, list) and data and isinstance(data[0], dict):
                 item_id = data[0].get("id")
-                existing_levels = set(data[0].get("levels") or [])
-                new_levels = list(existing_levels.union(set(levels)))
+                existing_specs = data[0].get("prompt_specs") or []
+                merged_specs = existing_specs + [
+                    spec for spec in prompt_specs if spec not in existing_specs
+                ]
                 await (
                     supabase.table("history")
-                    .update({"levels": new_levels, "mode": normalized_mode})
+                    .update({"prompt_specs": merged_specs})
                     .eq("id", item_id)
                     .execute()
                 )
@@ -74,7 +77,6 @@ class ChatRepository:
                     "save_to_history_updated",
                     user_id_hash=user_id_hash,
                     topic_hash=topic_hash,
-                    mode=normalized_mode,
                 )
             else:
                 await (
@@ -82,8 +84,7 @@ class ChatRepository:
                     .insert({
                         "user_id": user.id,
                         "topic": topic,
-                        "levels": levels,
-                        "mode": normalized_mode,
+                        "prompt_specs": prompt_specs,
                     })
                     .execute()
                 )
@@ -91,7 +92,6 @@ class ChatRepository:
                     "save_to_history_inserted",
                     user_id_hash=user_id_hash,
                     topic_hash=topic_hash,
-                    mode=normalized_mode,
                 )
         except Exception as exc:
             logger.error(
@@ -100,7 +100,6 @@ class ChatRepository:
                 error_type=type(exc).__name__,
                 user_id_hash=user_id_hash,
                 topic_hash=topic_hash,
-                mode=normalized_mode,
                 sampled=False,
             )
 
