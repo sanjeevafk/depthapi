@@ -2,7 +2,7 @@ import re
 from typing import Literal
 
 IntentType = Literal["explain", "compare", "brainstorm"]
-DepthType = Literal["shallow", "medium", "deep"]
+DepthType = Literal["simple", "accessible", "technical", "expert"]
 
 # Intent patterns - first match wins, order is priority
 INTENT_PATTERNS: list[tuple[IntentType, list[str]]] = [
@@ -36,7 +36,7 @@ INTENT_PATTERNS: list[tuple[IntentType, list[str]]] = [
 # Depth patterns - first match wins, order is priority
 DEPTH_PATTERNS: list[tuple[DepthType, list[str]]] = [
     (
-        "deep",
+        "technical",
         [
             r"\bin depth\b",
             r"\bdeep dive\b",
@@ -51,7 +51,7 @@ DEPTH_PATTERNS: list[tuple[DepthType, list[str]]] = [
         ],
     ),
     (
-        "shallow",
+        "simple",
         [
             r"\bwhat is\b",
             r"\bdefine\b",
@@ -61,7 +61,7 @@ DEPTH_PATTERNS: list[tuple[DepthType, list[str]]] = [
             r"\bsummary\b",
         ],
     ),
-    ("medium", []),
+    ("accessible", []),
 ]
 
 
@@ -69,7 +69,7 @@ def detect_intent_and_depth(query: str) -> dict:
     """
     Deterministic heuristic classifier. No LLM. <1ms.
     Intent and depth are detected independently so combinations
-    like "compare in depth" return {"intent": "compare", "depth": "deep"}.
+    like "compare in depth" return {"intent": "compare", "depth": "technical"}.
     Returns: {"intent": IntentType, "depth": DepthType}
     """
     lowered = query.lower().strip()
@@ -80,7 +80,7 @@ def detect_intent_and_depth(query: str) -> dict:
             intent = intent_name
             break
 
-    depth: DepthType = "medium"
+    depth: DepthType = "accessible"
     for depth_name, patterns in DEPTH_PATTERNS:
         if any(re.search(pattern, lowered) for pattern in patterns):
             depth = depth_name

@@ -14,8 +14,18 @@ import logging
 
 from api.services.conversation.intent import detect_diagram_type, detect_intent_and_depth
 from api.services.inference.llm_intent_classifier import classify_intent
+from api.prompt_engine import PromptSpec
 
 _logger = logging.getLogger(__name__)
+
+
+def _canonical_depth(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    return {
+        "shallow": "simple",
+        "medium": "accessible",
+        "deep": "technical",
+    }.get(normalized, normalized or "accessible")
 
 
 def _sync_classify(query: str) -> dict[str, str]:
@@ -50,7 +60,7 @@ class IntentClassifier:
     """Facade over the hybrid intent classifier.
 
     Async callers should use classify_async() directly.
-    Sync callers (legacy integration points) use detect_intent_and_depth()
+    Sync callers use detect_intent_and_depth()
     which transparently routes to the regex fast path.
     """
 
@@ -59,22 +69,31 @@ class IntentClassifier:
         result = await classify_intent(query)
         return result.to_dict()
 
+    async def classify_prompt_spec(self, query: str) -> PromptSpec:
+        """Classify the query into the canonical prompt-engine contract."""
+        result = await classify_intent(query)
+        return result.to_prompt_spec(query)
+
     def detect_intent(self, query: str, context: dict | None = None) -> tuple[str, float]:
         _ = context
         result = _sync_classify(query)
-        intent = str(result.get("intent", "explain"))
+        intent = str(result.get("task") or result.get("intent", "explain"))
         confidence = float(result.get("confidence", 0.5))
         return intent, confidence
 
     def detect_depth(self, query: str) -> str:
         result = _sync_classify(query)
-        return str(result.get("depth", "medium"))
+        return _canonical_depth(str(result.get("depth", "accessible")))
 
     def detect_intent_and_depth(self, query: str) -> dict[str, str]:
         result = _sync_classify(query)
         return {
-            "intent": str(result.get("intent", "explain")),
-            "depth":  str(result.get("depth", "medium")),
+            "task": str(result.get("task") or result.get("intent", "explain")),
+            "intent": str(result.get("task") or result.get("intent", "explain")),
+            "depth":  _canonical_depth(str(result.get("depth", "accessible"))),
+            "reasoning": str(result.get("reasoning", "direct")),
+            "style": str(result.get("style", "normal")),
+            "capabilities": result.get("capabilities", []),
         }
 
     def detect_diagram_type(self, query: str) -> str | None:
