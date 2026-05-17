@@ -23,7 +23,7 @@ os.environ["GEMINI_API_KEY"] = "mock_key"
 os.environ["REDIS_URL"] = "redis://localhost:6379"
 
 from api.services.inference.inference import generate_explanation
-from api.utils import FREE_LEVELS
+from api.utils import PROMPT_DEPTHS
 
 async def run_depth_tests(topic: str):
     print(f"[START] Running Depth Verification for topic: '{topic}'\n")
@@ -38,7 +38,7 @@ async def run_depth_tests(topic: str):
                     mock_rag.return_value = []
                     mock_search.return_value = ""
                     
-                    for level in FREE_LEVELS:
+                    for level in PROMPT_DEPTHS:
                         # Prepare fake responses
                         mock_content = f"[MOCK {level.upper()}] Explanation of {topic}."
                         

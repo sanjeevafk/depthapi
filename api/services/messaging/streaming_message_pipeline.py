@@ -381,6 +381,18 @@ class StreamingMessagePipeline:
                 assistant_client_id=assistant_client_id,
                 selected_mode=selected_mode,
                 prompt_mode=prompt_mode,
+                prompt_spec=(
+                    {
+                        "topic": req.prompt_spec.to_prompt_spec(content).topic,
+                        "depth": req.prompt_spec.to_prompt_spec(content).depth,
+                        "task": req.prompt_spec.to_prompt_spec(content).task,
+                        "reasoning": req.prompt_spec.to_prompt_spec(content).reasoning,
+                        "style": req.prompt_spec.to_prompt_spec(content).style,
+                        "capabilities": sorted(req.prompt_spec.to_prompt_spec(content).capabilities),
+                    }
+                    if getattr(req, "prompt_spec", None)
+                    else None
+                ),
                 content=content,
                 regenerate=bool(req.regenerate),
             )

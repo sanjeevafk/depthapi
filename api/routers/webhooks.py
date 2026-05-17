@@ -6,8 +6,8 @@ from fastapi import APIRouter, HTTPException, Request
 
 from api.auth import get_supabase_admin
 from api.config import get_settings
-from routers.payments import dodo_webhook as payments_dodo_webhook
-from routers.payments import process_dodo_webhook_payload
+from api.routers.payments import dodo_webhook as payments_dodo_webhook
+from api.routers.payments import process_dodo_webhook_payload
 
 router = APIRouter(tags=["webhooks"])
 

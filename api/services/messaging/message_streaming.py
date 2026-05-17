@@ -240,6 +240,9 @@ def build_message_stream_response(
                 user_id=user_id,
                 collection_id=getattr(req, "collection_id", None),
                 use_trusted_corpus=bool(getattr(req, "use_trusted_corpus", True)),
+                prompt_spec=getattr(req, "prompt_spec", None).to_prompt_spec(content)
+                if getattr(req, "prompt_spec", None)
+                else None,
                 telemetry_sink=telemetry_sink,
                 conversation_messages=actual_context_messages,
                 conversation_context=actual_socratic_context,
@@ -330,6 +333,9 @@ def build_message_stream_response(
                             user_id=user_id,
                             collection_id=getattr(req, "collection_id", None),
                             use_trusted_corpus=bool(getattr(req, "use_trusted_corpus", True)),
+                            prompt_spec=getattr(req, "prompt_spec", None).to_prompt_spec(content)
+                            if getattr(req, "prompt_spec", None)
+                            else None,
                             telemetry_sink=telemetry_sink,
                             conversation_messages=actual_context_messages,
                             conversation_context=actual_socratic_context,
@@ -444,6 +450,9 @@ def build_message_stream_response(
                             user_id=user_id,
                             collection_id=getattr(req, "collection_id", None),
                             use_trusted_corpus=bool(getattr(req, "use_trusted_corpus", True)),
+                            prompt_spec=getattr(req, "prompt_spec", None).to_prompt_spec(content)
+                            if getattr(req, "prompt_spec", None)
+                            else None,
                             telemetry_sink=telemetry_sink,
                                 conversation_messages=actual_context_messages,
                                 conversation_context=actual_socratic_context,

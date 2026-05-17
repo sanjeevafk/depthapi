@@ -8,8 +8,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from api.shared_types import PromptSpecRequest
 from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
-from api.services.messaging.query_helpers import normalize_levels, cache_key
+from api.services.messaging.query_helpers import cache_key
 from api.config import get_stream_config
 from api.logging_config import anonymize_text, anonymize_user_id, logger, log_sampled_success
 from api.services.infra.cache import cache_get, cache_get_many, cache_set, cache_set_many, check_idempotency_and_cache
@@ -25,7 +26,6 @@ from api.services.messaging.query_streaming import (
 from api.services.security.idempotency import query_stream_idempotency_key, compute_retry_after_ms
 from api.utils import (
     DEFAULT_CHAT_MODE,
-    FREE_LEVELS,
     TECHNICAL_MODE,
     SUPPORTED_CHAT_MODES,
     normalize_mode,
@@ -37,8 +37,7 @@ router = APIRouter(tags=["query"])
 
 class QueryRequest(BaseModel):
     topic: str = Field(..., min_length=1, max_length=200)
-    levels: list[str] = Field(default=FREE_LEVELS)
-    premium: bool = False
+    prompt_spec: PromptSpecRequest
     mode: str = DEFAULT_CHAT_MODE
     collection_id: str | None = None
     use_trusted_corpus: bool = True
@@ -54,11 +53,27 @@ class QueryResponse(BaseModel):
     cached: bool = False
 
 
-async def save_to_history(api_key_id: str, topic: str, levels: list[str], mode: str) -> None:
+def _history_prompt_specs(_topic: str, _levels: list[str], explicit_spec: Any) -> list[dict[str, Any]]:
+    return [
+        {
+            "topic": explicit_spec.topic,
+            "depth": explicit_spec.depth,
+            "task": explicit_spec.task,
+            "reasoning": explicit_spec.reasoning,
+            "style": explicit_spec.style,
+            "capabilities": sorted(explicit_spec.capabilities),
+        }
+    ]
+
+
+async def save_to_history(
+    api_key_id: str,
+    topic: str,
+    prompt_specs: list[dict[str, Any]],
+) -> None:
     """Persist query history scoped to the API key project. Best-effort; never raises."""
     from api.auth import get_supabase_admin
 
-    normalized_mode = normalize_mode(mode)
     topic_hash = anonymize_text(topic)
     key_hash = anonymize_user_id(api_key_id)
 
@@ -70,27 +85,32 @@ async def save_to_history(api_key_id: str, topic: str, levels: list[str], mode: 
     try:
         existing = await (
             supabase.table("history")
-            .select("id, levels")
+                .select("id, prompt_specs")
             .eq("user_id", api_key_id)
             .eq("topic", topic)
-            .eq("mode", normalized_mode)
             .execute()
         )
         data = getattr(existing, "data", None)
         if isinstance(data, list) and data and isinstance(data[0], dict):
             item_id = data[0].get("id")
-            existing_levels = set(data[0].get("levels") or [])
-            new_levels = list(existing_levels.union(set(levels)))
+            existing_specs = data[0].get("prompt_specs") or []
+            merged_specs = existing_specs + [
+                spec for spec in prompt_specs if spec not in existing_specs
+            ]
             await (
                 supabase.table("history")
-                .update({"levels": new_levels, "mode": normalized_mode})
+                .update({"prompt_specs": merged_specs})
                 .eq("id", item_id)
                 .execute()
             )
         else:
             await (
                 supabase.table("history")
-                .insert({"user_id": api_key_id, "topic": topic, "levels": levels, "mode": normalized_mode})
+                .insert({
+                    "user_id": api_key_id,
+                    "topic": topic,
+                    "prompt_specs": prompt_specs,
+                })
                 .execute()
             )
     except Exception as exc:
@@ -100,7 +120,6 @@ async def save_to_history(api_key_id: str, topic: str, levels: list[str], mode: 
             error_type=type(exc).__name__,
             key_hash=key_hash,
             topic_hash=topic_hash,
-            mode=normalized_mode,
             sampled=False,
         )
 
@@ -126,14 +145,11 @@ async def query_topic(
         raise LLMUnavailable("Chat is disabled because no LLM providers are configured correctly.")
 
     is_pro = api_key.is_pro
-    req.premium = is_pro
     if mode == TECHNICAL_MODE and not is_pro:
         raise HTTPException(status_code=403, detail="Technical mode requires a Pro or Enterprise plan.")
 
-    allowed_levels = FREE_LEVELS
-    levels = [level for level in normalize_levels(req.levels) if level in allowed_levels]
-    if not levels:
-        levels = ["technical"]
+    explicit_spec = req.prompt_spec.to_prompt_spec(topic)
+    levels = [explicit_spec.depth]
 
     user_id_hash = anonymize_user_id(api_key.id)
     estimated_tokens = estimate_tokens_for_text(topic, output_buffer=900 * max(len(levels), 1))
@@ -170,7 +186,7 @@ async def query_topic(
         missing_levels = levels
 
     if not missing_levels and not req.bypass_cache:
-        await save_to_history(api_key.id, topic, levels, mode)
+        await save_to_history(api_key.id, topic, _history_prompt_specs(topic, levels, explicit_spec))
         return QueryResponse(topic=topic, explanations=explanations, cached=True)
 
     level_telemetry = {level: {} for level in missing_levels}
@@ -185,6 +201,7 @@ async def query_topic(
             user_id=api_key.id,
             collection_id=req.collection_id,
             use_trusted_corpus=req.use_trusted_corpus,
+            prompt_spec=explicit_spec,
             telemetry_sink=level_telemetry[level],
         )
         for level in missing_levels
@@ -215,7 +232,7 @@ async def query_topic(
     if cache_updates:
         await cache_set_many(cache_updates)
 
-    await save_to_history(api_key.id, topic, levels, mode)
+    await save_to_history(api_key.id, topic, _history_prompt_specs(topic, levels, explicit_spec))
 
     token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     estimated_cost_usd = 0.0
@@ -281,12 +298,11 @@ async def query_topic_stream(
         raise LLMUnavailable("Chat is disabled because no LLM providers are configured correctly.")
 
     is_pro = api_key.is_pro
-    req.premium = is_pro
     if mode == TECHNICAL_MODE and not is_pro:
         raise HTTPException(status_code=403, detail="Technical mode requires a Pro or Enterprise plan.")
 
-    allowed_levels = FREE_LEVELS
-    normalized_levels = [level for level in normalize_levels(req.levels) if level in allowed_levels]
+    explicit_spec = req.prompt_spec.to_prompt_spec(topic)
+    normalized_levels = [explicit_spec.depth]
     level = normalized_levels[0] if normalized_levels else "technical"
 
     user_id_hash = anonymize_user_id(api_key.id)
@@ -399,7 +415,11 @@ async def query_topic_stream(
         cache_key_value=cache_key(topic, level, mode),
         generate_stream_explanation=generate_stream_explanation,
         generate_explanation=generate_explanation,
-        persist_history=lambda _user, t, levels, m: save_to_history(api_key.id, t, levels, m),
+        persist_history=lambda _user, t, levels, _m: save_to_history(
+            api_key.id,
+            t,
+            _history_prompt_specs(t, levels, explicit_spec),
+        ),
         stream_max_seconds=stream_max_seconds,
         stream_start_timeout_seconds=stream_start_timeout_seconds,
         heartbeat_seconds=heartbeat_seconds,

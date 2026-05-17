@@ -4,20 +4,11 @@
     "technical",
     "socratic"
   ],
-  "free_modes": [
-    "learn"
-  ],
   "prompt_modes": [
     "simple",
     "accessible",
     "technical",
-    "expert",
-    "meme"
-  ],
-  "pro_modes": [
-    "technical",
-    "socratic"
+    "expert"
   ],
   "default_mode": "learn"
 }
-
