@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import os
 import random
 from typing import Any, Dict, List, Literal
 
@@ -89,6 +90,10 @@ class SearchManager:
         presence = self._provider_keys_present()
         return [provider for provider, configured in presence.items() if configured]
 
+    def _deterministic_mode_enabled(self) -> bool:
+        value = str(os.getenv("DEPTHAPI_BENCHMARK_MODE", "") or "").strip().lower()
+        return value in {"1", "true", "yes", "on"}
+
     async def get_search_context(self, query: str) -> str:
         normalized_query = self._normalize_query(query)
         if not normalized_query:
@@ -156,6 +161,9 @@ class SearchManager:
         }
 
     def _select_provider(self, query: str, configured_providers: list[ProviderName]) -> ProviderName:
+        if self._deterministic_mode_enabled():
+            return configured_providers[0]
+
         lowered_query = query.lower()
         if "serper" in configured_providers and any(keyword in lowered_query for keyword in self.visual_keywords):
             return "serper" if random.random() < 0.7 else self._weighted_random(configured_providers)

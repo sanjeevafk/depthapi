@@ -29,6 +29,9 @@ import re
 from typing import Literal
 
 from api.prompt_engine import PromptSpec
+from api.services.inference.llm_errors import LLMBadRequest
+from api.services.inference.llm_client import create_chat_completion
+from api.services.infra.cache import cache_get, cache_set
 
 _logger = logging.getLogger(__name__)
 
@@ -332,50 +335,70 @@ def _build_classifier_prompt(query: str) -> str:
     return _CLASSIFIER_PROMPT_TEMPLATE.format(query=escaped)
 
 
+def _extract_json_object(raw: str) -> dict:
+    cleaned = (raw or "").strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        cleaned = cleaned[start : end + 1]
+    return json.loads(cleaned)
+
+
+def _normalize_classifier_payload(data: dict) -> IntentResult:
+    task = data.get("task") or data.get("intent") or "explain"
+    depth = data.get("depth", "accessible")
+    reasoning = data.get("reasoning", "direct")
+    style = data.get("style", "normal")
+    capabilities = data.get("capabilities", [])
+    if task not in ("explain", "compare", "brainstorm", "analyze", "summarize"):
+        task = "explain"
+    if depth not in ("simple", "accessible", "technical", "expert"):
+        depth = "accessible"
+    if reasoning not in ("direct", "socratic", "debate", "guided"):
+        reasoning = "direct"
+    if style not in ("normal", "meme", "concise", "academic"):
+        style = "normal"
+    if not isinstance(capabilities, list):
+        capabilities = []
+    capabilities = [
+        item for item in capabilities
+        if item in {"requires_search", "requires_diagram", "requires_context", "requires_citations"}
+    ]
+    return IntentResult(
+        task=task,
+        depth=depth,
+        reasoning=reasoning,
+        style=style,
+        capabilities=capabilities,
+        source="llm",
+        confidence=0.90,
+    )
+
+
 async def _call_llm_classifier(query: str) -> IntentResult:
     """Call the fast model alias to classify an ambiguous query."""
-    # Import inline to avoid circular dependency at module load time
-    from api.services.model_client import call_model_raw  # type: ignore[import]
-
     prompt = _build_classifier_prompt(query)
     try:
-        raw = await call_model_raw(
-            system=_CLASSIFIER_SYSTEM,
-            user=prompt,
-            model_alias="learn-groq-llama8b",  # fast + cheap
-            max_tokens=32,
-            temperature=0.0,
-        )
-        data = json.loads(raw.strip())
-        task = data.get("task") or data.get("intent") or "explain"
-        depth = data.get("depth", "accessible")
-        reasoning = data.get("reasoning", "direct")
-        style = data.get("style", "normal")
-        capabilities = data.get("capabilities", [])
-        # Validate values fall in allowed set
-        if task not in ("explain", "compare", "brainstorm", "analyze", "summarize"):
-            task = "explain"
-        if depth not in ("simple", "accessible", "technical", "expert"):
-            depth = "accessible"
-        if reasoning not in ("direct", "socratic", "debate", "guided"):
-            reasoning = "direct"
-        if style not in ("normal", "meme", "concise", "academic"):
-            style = "normal"
-        if not isinstance(capabilities, list):
-            capabilities = []
-        capabilities = [
-            item for item in capabilities
-            if item in {"requires_search", "requires_diagram", "requires_context", "requires_citations"}
+        messages = [
+            {"role": "system", "content": _CLASSIFIER_SYSTEM},
+            {"role": "user", "content": prompt},
         ]
-        return IntentResult(
-            task=task,
-            depth=depth,
-            reasoning=reasoning,
-            style=style,
-            capabilities=capabilities,
-            source="llm",
-            confidence=0.90,
-        )
+        request_kwargs = {
+            "model": "learn-groq-llama8b",
+            "messages": messages,
+            "max_tokens": 96,
+            "temperature": 0.0,
+        }
+        try:
+            response = await create_chat_completion(
+                **request_kwargs,
+                response_format={"type": "json_object"},
+            )
+        except LLMBadRequest:
+            response = await create_chat_completion(**request_kwargs)
+        raw = str(response.choices[0].message.content or "").strip()
+        data = _extract_json_object(raw)
+        return _normalize_classifier_payload(data)
     except Exception as exc:
         _logger.warning("llm_intent_classifier_failed error=%s", exc)
         # Graceful degradation: return a safe default
@@ -405,12 +428,13 @@ def _cache_key(query: str) -> str:
 
 async def _read_cache(query: str) -> IntentResult | None:
     try:
-        from api.services.infra.cache import get_cache_client  # type: ignore[import]
-        client = await get_cache_client()
-        raw = await client.get(_cache_key(query))
-        if raw:
-            data = json.loads(raw)
-            return IntentResult(**data)
+        raw = await cache_get(_cache_key(query))
+        if isinstance(raw, dict):
+            data = raw
+            result = IntentResult(**data)
+            if result.source == "llm" and result.confidence < 0.9:
+                return None
+            return result
     except Exception:
         pass
     return None
@@ -418,9 +442,9 @@ async def _read_cache(query: str) -> IntentResult | None:
 
 async def _write_cache(query: str, result: IntentResult) -> None:
     try:
-        from api.services.infra.cache import get_cache_client  # type: ignore[import]
-        client = await get_cache_client()
-        await client.set(_cache_key(query), json.dumps(result.to_dict()), ex=_CACHE_TTL)
+        if result.source == "llm" and result.confidence < 0.9:
+            return
+        await cache_set(_cache_key(query), result.to_dict(), ttl=_CACHE_TTL)
     except Exception:
         pass
 

@@ -1,10 +1,10 @@
-"""
-rag_backend_router.py — Switch between Filesystem and Supabase/pgvector backends.
-"""
+"""Switch between filesystem and Supabase/pgvector RAG backends."""
 
 import os
-from typing import Callable, Optional
+from typing import Optional
 import structlog
+
+from api.config import get_settings
 from api.services.rag.filesystem_rag_store import FilesystemRAGStore
 from api.services.rag.knowledge_retrieval import get_retrieval_service
 
@@ -13,17 +13,30 @@ logger = structlog.get_logger(__name__)
 # Global singleton for filesystem store
 _fs_store: Optional[FilesystemRAGStore] = None
 
+
+def _resolve_backend_name() -> str:
+    configured = str(os.getenv("RAG_BACKEND", "auto") or "auto").strip().lower()
+    if configured in {"filesystem", "pgvector"}:
+        return configured
+
+    settings = get_settings()
+    has_pgvector = bool(getattr(settings, "supabase_url", "") and getattr(settings, "supabase_secret_key", ""))
+    return "pgvector" if has_pgvector else "filesystem"
+
+
 def get_rag_backend():
     global _fs_store
-    backend = os.getenv("RAG_BACKEND", "filesystem")
+    backend = _resolve_backend_name()
     
     if backend == "filesystem":
         if _fs_store is None:
             _fs_store = FilesystemRAGStore(
                 base_path=os.getenv("RAG_DATA_PATH", "data/rag")
             )
+        logger.info("rag_backend_selected", backend=backend, base_path=os.getenv("RAG_DATA_PATH", "data/rag"))
         return _fs_store
     elif backend == "pgvector":
+        logger.info("rag_backend_selected", backend=backend)
         return get_retrieval_service()
     
     raise ValueError(f"Unknown RAG_BACKEND: {backend}")
