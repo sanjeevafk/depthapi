@@ -15,9 +15,8 @@ LEARNING_MODE = "learn"
 TECHNICAL_MODE = "technical"
 SOCRATIC_MODE = "socratic"
 
-FREE_LEVELS = ["simple", "accessible", "technical", "expert", "meme"]
-PREMIUM_LEVELS: list[str] = []
-PROMPT_LEVELS = FREE_LEVELS
+PROMPT_DEPTHS = ["simple", "accessible", "technical", "expert"]
+PROMPT_LEVELS = PROMPT_DEPTHS
 
 MODE_ALIASES = {
     "technical": TECHNICAL_MODE,
@@ -27,8 +26,6 @@ MODE_ALIASES = {
 
 _DEFAULT_CHAT_MODE_DATA = {
     "chat_modes": [LEARNING_MODE, TECHNICAL_MODE, SOCRATIC_MODE],
-    "free_modes": [LEARNING_MODE, SOCRATIC_MODE],
-    "pro_modes": [TECHNICAL_MODE],
     "prompt_modes": PROMPT_LEVELS,
 }
 
@@ -62,7 +59,7 @@ def normalize_mode(mode: str | None) -> str:
 
 def normalize_prompt_level(level: str | None) -> str:
     normalized = (level or "").strip().lower()
-    return normalized if normalized in PROMPT_LEVELS else "technical"
+    return normalized if normalized in PROMPT_LEVELS else "accessible"
 
 
 def sanitize_filename(value: str) -> str:
@@ -124,8 +121,6 @@ def _load_chat_modes():
 
 _CHAT_MODE_DATA = _load_chat_modes()
 CHAT_MODES = _CHAT_MODE_DATA.get("chat_modes") or []
-CHAT_FREE_MODES = _CHAT_MODE_DATA.get("free_modes") or []
-CHAT_PREMIUM_MODES = _CHAT_MODE_DATA.get("pro_modes") or []
 CHAT_PROMPT_MODES = _CHAT_MODE_DATA.get("prompt_modes") or []
 
 SUPPORTED_CHAT_MODES = set(CHAT_MODES)

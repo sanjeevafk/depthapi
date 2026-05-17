@@ -4,11 +4,11 @@ from typing import List, Dict, Any
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
 
+from api.shared_types import PromptSpecRequest
 from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
 from api.auth import get_supabase_admin
 from api.logging_config import anonymize_user_id
 from pydantic import BaseModel
-from api.utils import DEFAULT_CHAT_MODE, SUPPORTED_CHAT_MODES, normalize_mode
 
 logger = structlog.get_logger(__name__)
 
@@ -17,14 +17,12 @@ router = APIRouter(tags=["history"])
 class HistoryItem(BaseModel):
     id: str
     topic: str
-    levels: List[str]
-    mode: str = DEFAULT_CHAT_MODE
+    prompt_specs: List[Dict[str, Any]]
     created_at: datetime
 
 class HistoryCreate(BaseModel):
     topic: str
-    levels: List[str]
-    mode: str = DEFAULT_CHAT_MODE
+    prompt_specs: List[PromptSpecRequest]
 
 @router.get("/history", response_model=List[HistoryItem])
 async def get_history(api_key: ApiKeyRecord = Depends(verify_api_key)):
@@ -43,10 +41,6 @@ async def get_history(api_key: ApiKeyRecord = Depends(verify_api_key)):
             .limit(50)
             .execute()
         )
-        for item in response.data:
-            item_dict: Dict[str, Any] = item  # type: ignore
-            normalized_mode = normalize_mode(item_dict.get("mode"))
-            item_dict["mode"] = normalized_mode if normalized_mode in SUPPORTED_CHAT_MODES else DEFAULT_CHAT_MODE
         return response.data
 
     except Exception as e:
@@ -62,13 +56,21 @@ async def add_history_item(data: HistoryCreate, api_key: ApiKeyRecord = Depends(
         raise HTTPException(status_code=500, detail="Database connection error")
         
     try:
-        normalized_mode = normalize_mode(data.mode)
-        mode = normalized_mode if normalized_mode in SUPPORTED_CHAT_MODES else DEFAULT_CHAT_MODE
+        prompt_specs = [
+            {
+                "topic": spec.to_prompt_spec(data.topic).topic,
+                "depth": spec.to_prompt_spec(data.topic).depth,
+                "task": spec.to_prompt_spec(data.topic).task,
+                "reasoning": spec.to_prompt_spec(data.topic).reasoning,
+                "style": spec.to_prompt_spec(data.topic).style,
+                "capabilities": sorted(spec.to_prompt_spec(data.topic).capabilities),
+            }
+            for spec in data.prompt_specs
+        ]
         response = await supabase.table("history").insert({
                 "user_id": user_id,
                 "topic": data.topic,
-                "levels": data.levels,
-                "mode": mode
+                "prompt_specs": prompt_specs,
             }).execute()
 
         

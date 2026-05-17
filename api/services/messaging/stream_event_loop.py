@@ -438,6 +438,9 @@ class StreamEventLoop:
                 is_pro=self.is_pro,
                 collection_id=self.req.collection_id,
                 use_trusted_corpus=self.req.use_trusted_corpus,
+                prompt_spec=getattr(self.req, "prompt_spec", None).to_prompt_spec(self.content)
+                if getattr(self.req, "prompt_spec", None)
+                else None,
                 telemetry_sink=telemetry_sink,
                 conversation_messages=self.context_messages,
                 conversation_context=self.socratic_context,
@@ -507,6 +510,9 @@ class StreamEventLoop:
                         fallback_timeout_seconds=self.fallback_timeout_seconds,
                         collection_id=self.req.collection_id,
                         use_trusted_corpus=self.req.use_trusted_corpus,
+                        prompt_spec=getattr(self.req, "prompt_spec", None).to_prompt_spec(self.content)
+                        if getattr(self.req, "prompt_spec", None)
+                        else None,
                     )
                 except Exception as exc:
                     logger.error(
@@ -589,6 +595,9 @@ class StreamEventLoop:
                         conversation_context=self.socratic_context,
                         intent_system_prompt=self.intent_system_prompt,
                         fallback_timeout_seconds=self.fallback_timeout_seconds,
+                        prompt_spec=getattr(self.req, "prompt_spec", None).to_prompt_spec(self.content)
+                        if getattr(self.req, "prompt_spec", None)
+                        else None,
                     )
                     full_content = str(fallback_content)
                     for index in range(0, len(full_content), chunk_size):

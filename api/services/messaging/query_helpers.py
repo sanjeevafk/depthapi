@@ -22,12 +22,17 @@ def cache_key(topic: str, level: str, mode: str) -> str:
     return topic_cache_key(topic, level, mode=normalize_mode(mode))
 
 
-async def persist_history_safely(user, topic: str, levels: list[str], mode: str) -> None:
+async def persist_history_safely(
+    user,
+    topic: str,
+    prompt_specs: list[dict],
+    mode: str,
+) -> None:
     """Persist history within a bounded timeout so request lifecycles remain responsive."""
     timeout_seconds = max(float(get_settings().stream_heartbeat_seconds or 1.0), 1.0)
     try:
         await asyncio.wait_for(
-            ChatRepository.save_to_history(user, topic, levels, mode),
+            ChatRepository.save_to_history(user, topic, prompt_specs),
             timeout=min(timeout_seconds, 3.0),
         )
     except asyncio.TimeoutError:
