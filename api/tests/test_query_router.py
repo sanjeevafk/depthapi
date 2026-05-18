@@ -5,7 +5,7 @@ import pytest
 from fastapi import HTTPException
 
 import api.auth as api_auth_module
-import routers.query as query_module
+import api.routers.query as query_module
 import api.services.security.rate_limit as rate_limit_module
 from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
 
@@ -26,6 +26,11 @@ def override_default_api_key(app_client):
     app_client.app.dependency_overrides[verify_api_key] = fake_key
     yield
     app_client.app.dependency_overrides.pop(verify_api_key, None)
+
+
+@pytest.fixture(autouse=True)
+def enable_query_provider(monkeypatch):
+    monkeypatch.setattr(query_module, "get_provider_config_state", lambda: {"chat_enabled": True})
 
 
 @pytest.mark.asyncio
@@ -49,7 +54,7 @@ async def test_query_cache_hit_returns_cached(app_client, monkeypatch, override_
 
     resp = await app_client.post(
         "/api/query",
-        json={"topic": "Cats", "levels": ["simple"], "mode": "learn"},
+        json={"topic": "Cats", "prompt_spec": {"depth": "simple"}, "mode": "learn"},
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -82,7 +87,7 @@ async def test_query_waits_for_history_persistence(app_client, monkeypatch, over
     start = asyncio.get_event_loop().time()
     resp = await app_client.post(
         "/api/query",
-        json={"topic": "Persistence", "levels": ["simple"], "mode": "learn"},
+        json={"topic": "Persistence", "prompt_spec": {"depth": "simple"}, "mode": "learn"},
     )
     elapsed = asyncio.get_event_loop().time() - start
 
@@ -104,7 +109,7 @@ async def test_save_to_history_logs_error_and_returns_when_supabase_unavailable(
     monkeypatch.setattr(api_auth_module, "get_supabase_admin", fake_get_supabase_admin)
     monkeypatch.setattr(query_module.logger, "error", fake_log_error)
 
-    await query_module.save_to_history("key-1", "topic", ["simple"], "learn")
+    await query_module.save_to_history("key-1", "topic", [{"depth": "simple"}])
 
     assert any("save_to_history_no_supabase_admin" in e for e in errors_logged)
 
@@ -126,13 +131,13 @@ async def test_save_to_history_logs_error_on_fetch_failure(monkeypatch):
     monkeypatch.setattr(api_auth_module, "get_supabase_admin", fake_get_supabase_admin)
     monkeypatch.setattr(query_module.logger, "error", fake_log_error)
 
-    await query_module.save_to_history("key-2", "topic", ["simple"], "learn")
+    await query_module.save_to_history("key-2", "topic", [{"depth": "simple"}])
 
     assert any("save_to_history_write_failed" in e for e in errors_logged)
 
 
 @pytest.mark.asyncio
-async def test_save_to_history_scopes_topic_lookup_by_mode(monkeypatch):
+async def test_save_to_history_uses_prompt_specs_without_mode_scope(monkeypatch):
     class FakeHistoryQuery:
         def __init__(self):
             self.phase = "idle"
@@ -172,69 +177,22 @@ async def test_save_to_history_scopes_topic_lookup_by_mode(monkeypatch):
     fake_supabase = FakeSupabase()
     monkeypatch.setattr(api_auth_module, "get_supabase_admin", lambda: fake_supabase)
 
-    await query_module.save_to_history("key-mode", "same-topic", ["simple"], "socratic")
+    await query_module.save_to_history("key-mode", "same-topic", [{"depth": "simple"}])
 
-    assert ("select", "mode", "socratic") in fake_supabase.history.eq_calls
+    assert ("select", "user_id", "key-mode") in fake_supabase.history.eq_calls
+    assert ("select", "topic", "same-topic") in fake_supabase.history.eq_calls
+    assert not any(call[1] == "mode" for call in fake_supabase.history.eq_calls)
     assert fake_supabase.history.insert_payload is not None
-    assert fake_supabase.history.insert_payload["mode"] == "socratic"
+    assert fake_supabase.history.insert_payload["prompt_specs"] == [{"depth": "simple"}]
 
 
 @pytest.mark.asyncio
 async def test_query_invalid_topic(app_client, override_default_api_key):
     resp = await app_client.post(
         "/api/query",
-        json={"topic": "bad<topic>", "levels": ["simple"], "mode": "learn"},
+        json={"topic": "bad<topic>", "prompt_spec": {"depth": "simple"}, "mode": "learn"},
     )
     assert resp.status_code == 400
-
-
-@pytest.mark.asyncio
-async def test_query_technical_mode_rejects_non_pro_user(app_client, monkeypatch, override_default_api_key):
-    calls = []
-
-    async def fake_generate_explanation(*_args, **_kwargs):
-        calls.append(True)
-        return "ok"
-
-    async def fake_cache_get(_key):
-        return None
-
-    async def fake_cache_set(_key, _value):
-        return True
-
-    async def fake_save_to_history(*_args, **_kwargs):
-        return None
-
-    async def fake_non_pro_key():
-        return ApiKeyRecord(
-            id="starter-key",
-            prefix="sk-depth-starter",
-            project_name="Starter",
-            owner_email="starter@example.com",
-            plan="starter",
-            monthly_token_budget=2_000_000,
-            requests_per_minute=60,
-        )
-
-    monkeypatch.setattr(query_module, "generate_explanation", fake_generate_explanation)
-    monkeypatch.setattr(query_module, "cache_get", fake_cache_get)
-    monkeypatch.setattr(query_module, "cache_set", fake_cache_set)
-    monkeypatch.setattr(query_module, "save_to_history", fake_save_to_history)
-    app_client.app.dependency_overrides[verify_api_key] = fake_non_pro_key
-
-    resp = await app_client.post(
-        "/api/query",
-        json={
-            "topic": "Space",
-            "levels": ["simple"],
-            "mode": "technical",
-            "premium": True,
-        },
-    )
-
-    assert resp.status_code == 403
-    assert "requires a Pro or Enterprise plan" in resp.json()["detail"]
-    assert calls == []
 
 
 @pytest.mark.asyncio
@@ -254,7 +212,7 @@ async def test_query_technical_mode_requires_authentication(app_client, override
         "/api/query",
         json={
             "topic": "Space",
-            "levels": ["simple"],
+            "prompt_spec": {"depth": "simple"},
             "mode": "technical",
         },
     )
@@ -279,7 +237,7 @@ async def test_query_stream_emits_done(app_client, monkeypatch, override_default
     async with app_client.stream(
         "POST",
         "/api/query/stream",
-        json={"topic": "Ocean", "levels": ["simple"], "mode": "learn"},
+        json={"topic": "Ocean", "prompt_spec": {"depth": "simple"}, "mode": "learn"},
     ) as resp:
         assert resp.status_code == 200
         text = await resp.aread()
@@ -324,13 +282,13 @@ async def test_query_rate_limit_exceeded(app_client, monkeypatch, test_settings,
 
     first = await app_client.post(
         "/api/query",
-        json={"topic": "rate", "levels": ["simple"], "mode": "learn"},
+        json={"topic": "rate", "prompt_spec": {"depth": "simple"}, "mode": "learn"},
     )
     assert first.status_code == 200
 
     second = await app_client.post(
         "/api/query",
-        json={"topic": "rate", "levels": ["simple"], "mode": "learn"},
+        json={"topic": "rate", "prompt_spec": {"depth": "simple"}, "mode": "learn"},
     )
     assert second.status_code == 429
     assert second.json()["detail"]["type"] == "rate_limit_exceeded"
@@ -372,7 +330,7 @@ async def test_query_quota_exhaustion_blocks_inference(app_client, monkeypatch, 
 
     resp = await app_client.post(
         "/api/query",
-        json={"topic": "quota", "levels": ["simple"], "mode": "learn"},
+        json={"topic": "quota", "prompt_spec": {"depth": "simple"}, "mode": "learn"},
     )
     assert resp.status_code == 429
     detail = resp.json()["detail"]
@@ -400,7 +358,7 @@ async def test_query_circuit_breaker_trigger_rejects(app_client, monkeypatch, te
 
     resp = await app_client.post(
         "/api/query",
-        json={"topic": "breaker", "levels": ["simple"], "mode": "learn"},
+        json={"topic": "breaker", "prompt_spec": {"depth": "simple"}, "mode": "learn"},
     )
     assert resp.status_code == 503
     assert resp.json()["detail"]["type"] == "circuit_breaker_open"

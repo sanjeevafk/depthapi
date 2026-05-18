@@ -1,0 +1,4 @@
+{
+  "name": "guided",
+  "template": "Reasoning mode - guided:\nGuide the reader step by step. Use a small number of ordered steps when the topic is procedural or causally sequential."
+}

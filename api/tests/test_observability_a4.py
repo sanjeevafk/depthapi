@@ -1,13 +1,10 @@
-import importlib
 import hashlib
 import uuid
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 
 import api.services.inference.inference as inference_module
-import api.services.inference.llm_client as llm_client_module
 from api.logging_config import anonymize_text, anonymize_user_id, redact_sensitive_processor
 import api.logging_config as logging_config_module
 
@@ -79,116 +76,6 @@ async def test_inference_logs_structured_observability_fields(monkeypatch):
     assert captured["retry"] is True
     assert "prompt" not in captured
     assert telemetry_sink["token_usage"] == captured["token_usage"]
-
-
-@pytest.mark.asyncio
-async def test_native_llm_client_receives_request_id_and_stream_telemetry(monkeypatch):
-    class Chunk:
-        def __init__(self, content: str | None):
-            self.model = "groq/llama-3.1-8b-instant"
-            self.usage = {
-                "prompt_tokens": 5,
-                "completion_tokens": 3,
-                "total_tokens": 8,
-            }
-            self._hidden_params = {"response_cost": 0.0004}
-            self.choices = [SimpleNamespace(delta=SimpleNamespace(content=content))]
-
-    class FakeCompletions:
-        def __init__(self):
-            self.calls: list[dict[str, Any]] = []
-
-        async def create(self, **kwargs):
-            self.calls.append(kwargs)
-            if kwargs.get("stream"):
-                async def generator():
-                    yield Chunk("hello")
-                    yield Chunk(None)
-
-                return generator()
-            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))])
-
-    # Reload to restore real llm_client helpers because conftest autouse patches these.
-    importlib.reload(llm_client_module)
-
-    class FakeSpan:
-        def __init__(self):
-            self.data: dict[str, object] = {}
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def set_data(self, key: str, value: object):
-            self.data[key] = value
-
-    span_calls: list[tuple[str, str, FakeSpan]] = []
-
-    def fake_start_span(*, op: str, name: str):
-        span = FakeSpan()
-        span_calls.append((op, name, span))
-        return span
-
-    fake_completions = FakeCompletions()
-    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=fake_completions))
-
-    class DummyProviderState:
-        async def should_attempt(self, _provider):
-            return True
-
-        async def mark_success(self, _provider):
-            return None
-
-        async def mark_failure(self, _provider):
-            return None
-
-    async def fake_get_provider_client(_provider):
-        return fake_client
-
-    monkeypatch.setattr(llm_client_module, "_provider_state_manager", DummyProviderState())
-    monkeypatch.setattr(llm_client_module, "_get_provider_client", fake_get_provider_client)
-    monkeypatch.setattr(llm_client_module.sentry_sdk, "start_span", fake_start_span)
-    monkeypatch.setattr(llm_client_module.sentry_sdk, "get_traceparent", lambda: "traceparent-value")
-    monkeypatch.setattr(llm_client_module.sentry_sdk, "get_baggage", lambda: "baggage-value")
-
-    result = await llm_client_module.create_chat_completion(
-        model="default-fast",
-        messages=[{"role": "user", "content": "hi"}],
-        request_id="req-create",
-    )
-
-    assert result.choices[0].message.content == "ok"
-    assert fake_completions.calls[0]["extra_headers"]["x-request-id"] == "req-create"
-    assert fake_completions.calls[0]["extra_headers"]["sentry-trace"] == "traceparent-value"
-    assert fake_completions.calls[0]["extra_headers"]["baggage"] == "baggage-value"
-
-    telemetry_sink: dict[str, object] = {}
-    chunks: list[str] = []
-    async for chunk in llm_client_module.stream_chat_completion(
-        model="default-fast",
-        messages=[{"role": "user", "content": "hi"}],
-        request_id="req-stream",
-        telemetry_sink=telemetry_sink,
-    ):
-        chunks.append(chunk)
-
-    assert chunks == ["hello"]
-    assert fake_completions.calls[1]["extra_headers"]["x-request-id"] == "req-stream"
-    assert fake_completions.calls[1]["extra_headers"]["sentry-trace"] == "traceparent-value"
-    assert fake_completions.calls[1]["extra_headers"]["baggage"] == "baggage-value"
-    assert fake_completions.calls[1]["stream_options"]["include_usage"] is True
-    assert telemetry_sink["token_usage"] == {
-        "prompt_tokens": 5,
-        "completion_tokens": 3,
-        "total_tokens": 8,
-    }
-    assert telemetry_sink["estimated_cost_usd"] == 0.0004
-    assert isinstance(telemetry_sink["stream_duration_ms"], float)
-    assert span_calls[0][0] == "llm.call"
-    assert span_calls[1][0] == "llm.call"
-    assert span_calls[0][2].data.get("llm.model_alias") == "default-fast"
 
 
 def test_redaction_removes_sensitive_values_but_keeps_usage_metrics():

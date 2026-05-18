@@ -1,0 +1,4 @@
+{
+  "name": "summarize",
+  "template": "Task template - summarize:\nTopic: {topic}\nSummarize the source or concept. Preserve the key claims, omit low-value detail, and make uncertainty or missing context explicit."
+}

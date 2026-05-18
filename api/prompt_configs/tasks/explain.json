@@ -1,0 +1,4 @@
+{
+  "name": "explain",
+  "template": "Task template - explain:\nTopic: {topic}\nGive a clear explanation of the concept. Lead with the core idea, then add the minimum supporting detail needed for the selected depth."
+}

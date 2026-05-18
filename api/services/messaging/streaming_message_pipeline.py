@@ -8,7 +8,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from api.auth import get_supabase_admin
-from api.config import CONTEXT_LOAD_TIMEOUTS
+from api.config import CONTEXT_LOAD_TIMEOUTS, get_stream_config
 from api.logging_config import logger
 from api.services.messaging.message_gate import cache_get_value
 from api.services.conversation.conversation_context import ConversationMessage
@@ -381,6 +381,18 @@ class StreamingMessagePipeline:
                 assistant_client_id=assistant_client_id,
                 selected_mode=selected_mode,
                 prompt_mode=prompt_mode,
+                prompt_spec=(
+                    {
+                        "topic": req.prompt_spec.to_prompt_spec(content).topic,
+                        "depth": req.prompt_spec.to_prompt_spec(content).depth,
+                        "task": req.prompt_spec.to_prompt_spec(content).task,
+                        "reasoning": req.prompt_spec.to_prompt_spec(content).reasoning,
+                        "style": req.prompt_spec.to_prompt_spec(content).style,
+                        "capabilities": sorted(req.prompt_spec.to_prompt_spec(content).capabilities),
+                    }
+                    if getattr(req, "prompt_spec", None)
+                    else None
+                ),
                 content=content,
                 regenerate=bool(req.regenerate),
             )
@@ -403,13 +415,6 @@ class StreamingMessagePipeline:
                 llm_mode=llm_mode,
                 prompt_mode=prompt_mode,
                 request_temperature=request_temperature,
-                cache_ttl_seconds=cache_ttl_seconds,
-                stream_max_seconds=stream_max_seconds,
-                fallback_timeout_seconds=fallback_timeout_seconds,
-                close_timeout_seconds=close_timeout_seconds,
-                heartbeat_seconds=heartbeat_seconds,
-                stream_start_timeout_seconds=stream_start_timeout_seconds,
-                idempotency_ttl_seconds=idempotency_ttl_seconds,
                 history_limit=history_limit,
                 ack_message=ack_message,
                 intent_system_prompt=intent_system_prompt,
@@ -426,6 +431,7 @@ class StreamingMessagePipeline:
                 persistence=persistence,
                 ingress_dedupe_clear=self.ingress_dedupe_clear,
                 release_lock=self.lock_manager.release,
+                config=get_stream_config(),
             )
 
             response = self.message_dispatcher.dispatch_streaming_message(event_loop.run)

@@ -26,6 +26,7 @@ from api.services.messaging.stream_helpers import (
 from api.services.messaging.stream_event_finalize import finalize_assistant_message
 from api.services.messaging.stream_persistence import StreamPersistence
 from api.services.messaging.token_count import count_prompt_tokens
+from api.config import get_stream_config, StreamConfig
 from api.services.conversation.conversation_context import ConversationMessage
 from api.utils import SOCRATIC_MODE, TECHNICAL_MODE
 
@@ -53,13 +54,6 @@ class StreamEventLoop:
         llm_mode: str,
         prompt_mode: str,
         request_temperature: float,
-        cache_ttl_seconds: int,
-        stream_max_seconds: int,
-        fallback_timeout_seconds: float,
-        close_timeout_seconds: float,
-        heartbeat_seconds: float,
-        stream_start_timeout_seconds: float,
-        idempotency_ttl_seconds: int,
         history_limit: int,
         ack_message: str | None,
         intent_system_prompt: str | None,
@@ -76,6 +70,7 @@ class StreamEventLoop:
         persistence: StreamPersistence,
         ingress_dedupe_clear: Callable[[str], Any],
         release_lock: Callable[[str], None],
+        config: StreamConfig | None = None,
     ) -> None:
         self.request = request
         self.request_received = request_received
@@ -94,13 +89,6 @@ class StreamEventLoop:
         self.llm_mode = llm_mode
         self.prompt_mode = prompt_mode
         self.request_temperature = request_temperature
-        self.cache_ttl_seconds = cache_ttl_seconds
-        self.stream_max_seconds = stream_max_seconds
-        self.fallback_timeout_seconds = fallback_timeout_seconds
-        self.close_timeout_seconds = close_timeout_seconds
-        self.heartbeat_seconds = heartbeat_seconds
-        self.stream_start_timeout_seconds = stream_start_timeout_seconds
-        self.idempotency_ttl_seconds = idempotency_ttl_seconds
         self.history_limit = history_limit
         self.ack_message = ack_message
         self.intent_system_prompt = intent_system_prompt or ""
@@ -117,6 +105,24 @@ class StreamEventLoop:
         self.persistence = persistence
         self.ingress_dedupe_clear = ingress_dedupe_clear
         self.release_lock = release_lock
+        self.config = config or get_stream_config()
+
+        # Derived config
+        self.cache_ttl_seconds = self.config.cache_ttl_seconds
+        self.stream_max_seconds = (
+            self.config.stream_max_seconds_technical 
+            if self.selected_mode == TECHNICAL_MODE 
+            else self.config.stream_max_seconds_learning
+        )
+        self.fallback_timeout_seconds = self.config.fallback_timeout_seconds
+        self.close_timeout_seconds = self.config.close_timeout_seconds
+        self.heartbeat_seconds = self.config.heartbeat_seconds
+        self.stream_start_timeout_seconds = (
+            self.config.technical_stream_start_timeout_seconds 
+            if self.selected_mode == TECHNICAL_MODE 
+            else self.config.stream_start_timeout_seconds
+        )
+        self.idempotency_ttl_seconds = self.config.idempotency_ttl_seconds
 
     async def run(self) -> AsyncGenerator[str, None]:
         start_time = time.perf_counter()
@@ -432,6 +438,9 @@ class StreamEventLoop:
                 is_pro=self.is_pro,
                 collection_id=self.req.collection_id,
                 use_trusted_corpus=self.req.use_trusted_corpus,
+                prompt_spec=getattr(self.req, "prompt_spec", None).to_prompt_spec(self.content)
+                if getattr(self.req, "prompt_spec", None)
+                else None,
                 telemetry_sink=telemetry_sink,
                 conversation_messages=self.context_messages,
                 conversation_context=self.socratic_context,
@@ -501,6 +510,9 @@ class StreamEventLoop:
                         fallback_timeout_seconds=self.fallback_timeout_seconds,
                         collection_id=self.req.collection_id,
                         use_trusted_corpus=self.req.use_trusted_corpus,
+                        prompt_spec=getattr(self.req, "prompt_spec", None).to_prompt_spec(self.content)
+                        if getattr(self.req, "prompt_spec", None)
+                        else None,
                     )
                 except Exception as exc:
                     logger.error(
@@ -583,6 +595,9 @@ class StreamEventLoop:
                         conversation_context=self.socratic_context,
                         intent_system_prompt=self.intent_system_prompt,
                         fallback_timeout_seconds=self.fallback_timeout_seconds,
+                        prompt_spec=getattr(self.req, "prompt_spec", None).to_prompt_spec(self.content)
+                        if getattr(self.req, "prompt_spec", None)
+                        else None,
                     )
                     full_content = str(fallback_content)
                     for index in range(0, len(full_content), chunk_size):

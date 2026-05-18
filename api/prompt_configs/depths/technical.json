@@ -1,0 +1,5 @@
+{
+  "name": "technical",
+  "template": "Depth modifier - technical:\nExplain {topic} for a working professional or developer. Use accurate domain terminology, cover how it works, why it is designed that way, and what changes at edge cases. Prefer precise mechanisms over broad summaries.",
+  "metadata": {"axis": "depth"}
+}

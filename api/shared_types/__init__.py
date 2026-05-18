@@ -7,11 +7,13 @@ from .core import (
     ProviderConfig,
     ProviderName,
 )
+from .prompt import PromptSpecRequest
 
 __all__ = [
     "ConversationContext",
     "ConversationTurn",
     "InferenceRequest",
+    "PromptSpecRequest",
     "ProviderConfig",
     "ProviderName",
 ]

@@ -6,7 +6,7 @@ from typing import Any, Awaitable, Callable
 
 import structlog
 
-from api.prompts import DiagramType, build_prompt
+from api.prompts import DiagramType, PromptSpec, build_prompt
 from api.logging_config import logger
 from api.services.inference.inference_constants import (
     TECHNICAL_LAST_RESORT_RESPONSE,
@@ -33,6 +33,15 @@ def is_low_quality(response: str) -> bool:
     )
 
 
+def has_complete_ending(response: str) -> bool:
+    text = (response or "").strip()
+    if not text:
+        return False
+    if text.endswith("..."):
+        return False
+    return text[-1] in {".", "?", "!", "`"}
+
+
 async def call_with_quality_escalation(
     aliases: list[str],
     prompt: str,
@@ -43,7 +52,10 @@ async def call_with_quality_escalation(
     effective_alias_chain_fn: Callable[..., list[str]],
     **kwargs: Any,
 ) -> str:
-    chain = effective_alias_chain_fn(aliases, complexity=complexity)
+    if len(aliases) == 1:
+        chain = [aliases[0]]
+    else:
+        chain = effective_alias_chain_fn(aliases, complexity=complexity)
     if not chain:
         raise RuntimeError("No eligible model aliases available for quality routing.")
 
@@ -66,13 +78,13 @@ def build_technical_prompt(
     depth: str,
     diagram_type: str | None,
 ) -> str:
-    """Assemble the final technical-mode prompt."""
+    """Assemble a technical prompt from independent prompt axes."""
     _ = depth
-    mode_key = "technical_structured"
-    if intent == "brainstorm":
-        mode_key = "technical_brainstorm"
-    elif intent == "compare":
-        mode_key = "technical_compare"
+    task = {
+        "brainstorm": "brainstorm",
+        "compare": "compare",
+        "summarize": "summarize",
+    }.get(intent, "analyze")
 
     def _map_diagram(value: str | None) -> DiagramType:
         normalized = (value or "").strip().lower()
@@ -87,8 +99,16 @@ def build_technical_prompt(
         }
         return mapping.get(normalized, DiagramType.FLOWCHART_TD)
 
-    diagram = None if mode_key == "technical_compare" else _map_diagram(diagram_type)
-    return build_prompt(mode_key, topic, diagram_type=diagram)
+    needs_diagram = task in {"analyze", "brainstorm"}
+    spec = PromptSpec(
+        topic=topic,
+        depth="technical",
+        task=task,
+        reasoning="direct",
+        style="academic",
+        capabilities=frozenset({"requires_diagram"} if needs_diagram else set()),
+    )
+    return build_prompt(spec, diagram_type=_map_diagram(diagram_type) if needs_diagram else None)
 
 
 async def technical_mode_handler(
@@ -103,13 +123,13 @@ async def technical_mode_handler(
     call_model_fn: Callable[..., Awaitable[str]],
     **kwargs: Any,
 ) -> str:
-    intent = "unknown"
-    depth = "shallow"
+    intent = "explain"
+    depth = "technical"
     diagram_type = "generic"
     try:
         classification = detect_intent_and_depth_fn(topic)
-        intent = classification["intent"]
-        depth = classification["depth"]
+        intent = str(classification.get("task") or classification.get("intent", "explain"))
+        depth = str(classification.get("depth", "technical"))
         diagram_type = detect_diagram_type_fn(topic)
     except Exception as exc:
         _tech_logger.warning(
@@ -121,6 +141,8 @@ async def technical_mode_handler(
         )
 
     prefetched_search_context = kwargs.pop("_search_context", None)
+    rag_context = kwargs.pop("_rag_context", None)
+    
     search_context = (
         _truncate_search_context(prefetched_search_context)
         if isinstance(prefetched_search_context, str)
@@ -136,11 +158,18 @@ async def technical_mode_handler(
             diagram_type=diagram_type,
         )
         prompt = TECHNICAL_MINIMAL_PROMPT
+    
+    # 1. Append RAG context if available
+    if rag_context:
+        prompt = _append_search_context(prompt, f"--- RAG CONTEXT ---\n{rag_context}\n--- END RAG CONTEXT ---")
+        
+    # 2. Append Web Search context
     prompt = _append_search_context(prompt, search_context)
 
     fallback_triggered = False
     fallback_reason: str | None = None
     best_effort_response: str | None = None
+    requested_model = str(kwargs.get("model") or "").strip() or None
     is_pro = bool(kwargs.get("is_pro", False))
     technical_complexity = float(
         extract_features(
@@ -161,8 +190,13 @@ async def technical_mode_handler(
         is_pro=is_pro,
         search_api_used=bool(search_context),
     )
-    primary_alias = ranked_aliases[0] if ranked_aliases else TECHNICAL_MODEL_PRIMARY
-    fallback_alias = next((alias for alias in ranked_aliases if alias != primary_alias), TECHNICAL_MODEL_FALLBACK)
+    if requested_model:
+        primary_alias = requested_model
+        fallback_alias = None
+        ranked_aliases = [requested_model]
+    else:
+        primary_alias = ranked_aliases[0] if ranked_aliases else TECHNICAL_MODEL_PRIMARY
+        fallback_alias = next((alias for alias in ranked_aliases if alias != primary_alias), TECHNICAL_MODEL_FALLBACK)
 
     def _ensure_terminal_char(value: str) -> str:
         trimmed = value.rstrip()
@@ -219,10 +253,24 @@ async def technical_mode_handler(
                 response_length=len(response),
             )
             return None
+        if not has_complete_ending(response):
+            _tech_logger.warning(
+                "technical_response_incomplete",
+                model=model_alias,
+                intent=intent,
+                depth=depth,
+                response_length=len(response),
+            )
+            return None
         return response
 
     response_alias = primary_alias
     response = await _call_and_validate(primary_alias)
+
+    if response is None:
+        retry_response = await _call_and_validate(primary_alias)
+        if retry_response is not None:
+            response = retry_response
 
     if response is None:
         fallback_triggered = True
@@ -233,12 +281,15 @@ async def technical_mode_handler(
             intent=intent,
             depth=depth,
         )
-        response = await _call_and_validate(fallback_alias)
-        response_alias = fallback_alias
+        if fallback_alias is not None:
+            response = await _call_and_validate(fallback_alias)
+            response_alias = fallback_alias
 
     if response is not None and is_low_quality(response):
         quality_retry_alias: str | None = None
-        if response_alias in ranked_aliases:
+        if requested_model:
+            quality_retry_alias = None
+        elif response_alias in ranked_aliases:
             current_index = ranked_aliases.index(response_alias)
             if current_index + 1 < len(ranked_aliases):
                 quality_retry_alias = ranked_aliases[current_index + 1]

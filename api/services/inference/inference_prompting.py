@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from typing import Tuple
 
 from api.config import get_settings
 from api.logging_config import logger
@@ -100,7 +99,9 @@ def _enforce_length_constraint(text: str, constraint: tuple[str, int] | None) ->
                 break
         if selected:
             return " ".join(selected).strip()
-        return normalized[:count].rstrip() + ("." if normalized and normalized[-1] not in ".!?" else "")
+        return normalized[:count].rstrip() + (
+            "." if normalized and normalized[-1] not in ".!?" else ""
+        )
     return _enforce_word_limit(text, count)
 
 

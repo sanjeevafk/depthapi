@@ -1,0 +1,66 @@
+{
+  "datasets": {
+    "system-design-primer": {
+      "redistributable": true,
+      "license": "MIT",
+      "source_url": "https://github.com/donnemartin/system-design-primer",
+      "notes": "Safe for public release on Hugging Face."
+    },
+    "opea-docs": {
+      "redistributable": true,
+      "license": "Apache-2.0",
+      "source_url": "https://github.com/opea-project/opea-docs",
+      "notes": "Open documentation for the OPEA project."
+    },
+    "cpython": {
+      "redistributable": true,
+      "license": "PSF-2.0",
+      "source_url": "https://github.com/python/cpython",
+      "notes": "Python core documentation."
+    },
+    "react.dev": {
+      "redistributable": true,
+      "license": "CC-BY-4.0",
+      "source_url": "https://github.com/reactjs/react.dev",
+      "notes": "React documentation."
+    },
+    "coding-interview-university": {
+      "redistributable": true,
+      "license": "CC-BY-SA-4.0",
+      "source_url": "https://github.com/jwasham/coding-interview-university",
+      "notes": "Popular interview prep guide."
+    },
+    "code_search_net": {
+      "redistributable": true,
+      "license": "MIT",
+      "source_url": "https://github.com/github/CodeSearchNet",
+      "notes": "Established dataset for code search."
+    },
+    "CS-and-Programming-Books": {
+      "redistributable": "mixed",
+      "license": "Various",
+      "whitelist": [
+        "*NotesForProfessionals.pdf",
+        "Eloquent_JavaScript.pdf",
+        "Python Data Science Handbook.pdf"
+      ],
+      "blacklist": [
+        "Introduction to Algorithms.pdf",
+        "Cracking the coding interview*.pdf",
+        "Deep Learning with Python.pdf"
+      ],
+      "notes": "Requires strict filtering during export."
+    },
+    "dlwp": {
+      "redistributable": false,
+      "license": "Copyrighted (Manning)",
+      "notes": "Deep Learning with Python by Francois Chollet. DO NOT RELEASE."
+    },
+    "postmortems": {
+      "redistributable": true,
+      "license": "CC-BY-4.0",
+      "source_url": "https://github.com/danluu/post-mortems",
+      "notes": "Publicly available post-mortem reports."
+    }
+  }
+}
