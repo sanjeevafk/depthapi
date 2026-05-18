@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DepthAPI Prompt Fragment",
+  "type": "object",
+  "required": ["name", "template"],
+  "additionalProperties": true,
+  "properties": {
+    "name": {"type": "string", "minLength": 1},
+    "template": {"type": "string", "minLength": 1},
+    "metadata": {"type": "object"},
+    "requires": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "injectors": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  }
+}

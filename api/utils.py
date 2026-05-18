@@ -15,9 +15,8 @@ LEARNING_MODE = "learn"
 TECHNICAL_MODE = "technical"
 SOCRATIC_MODE = "socratic"
 
-FREE_LEVELS = ["simple", "accessible", "technical", "expert", "meme"]
-PREMIUM_LEVELS: list[str] = []
-PROMPT_LEVELS = FREE_LEVELS
+PROMPT_DEPTHS = ["simple", "accessible", "technical", "expert"]
+PROMPT_LEVELS = PROMPT_DEPTHS
 
 MODE_ALIASES = {
     "technical": TECHNICAL_MODE,
@@ -27,8 +26,6 @@ MODE_ALIASES = {
 
 _DEFAULT_CHAT_MODE_DATA = {
     "chat_modes": [LEARNING_MODE, TECHNICAL_MODE, SOCRATIC_MODE],
-    "free_modes": [LEARNING_MODE, SOCRATIC_MODE],
-    "pro_modes": [TECHNICAL_MODE],
     "prompt_modes": PROMPT_LEVELS,
 }
 
@@ -62,7 +59,7 @@ def normalize_mode(mode: str | None) -> str:
 
 def normalize_prompt_level(level: str | None) -> str:
     normalized = (level or "").strip().lower()
-    return normalized if normalized in PROMPT_LEVELS else "technical"
+    return normalized if normalized in PROMPT_LEVELS else "accessible"
 
 
 def sanitize_filename(value: str) -> str:
@@ -74,37 +71,39 @@ def sanitize_filename(value: str) -> str:
 
 def escape_for_prompt(value: str, max_length: int = 500) -> str:
     """Escape user input for safe embedding in quoted prompt strings.
-    
+
     Note: This escapes structural characters to prevent breaking out of string literals,
     but does NOT defend against semantic prompt injection attacks.
-    
+
     Args:
         value: Raw user input string
         max_length: Maximum allowed length (default 500 chars)
-    
+
     Returns:
         Escaped string safe for embedding in double-quoted prompt strings
     """
     if not isinstance(value, str):
         return ""
-    
+
     # Truncate to max length first
     safe = value.strip()[:max_length]
-    
+
     # Escape backslashes first (must be first to avoid double-escaping)
     safe = safe.replace("\\", "\\\\")
-    
+
     # Escape double quotes to prevent breaking out of quoted strings
     safe = safe.replace('"', '\\"')
-    
+
     # Escape newlines to prevent multi-line injection
     safe = safe.replace("\n", "\\n").replace("\r", "\\r")
-    
+
     return safe
 
 
 def _load_chat_modes():
-    path = os.path.abspath(os.path.join(os.path.dirname(__file__), "resources", "chat_modes.json"))
+    path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "resources", "chat_modes.json")
+    )
     try:
         with open(path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
@@ -112,14 +111,16 @@ def _load_chat_modes():
             raise ValueError("chat_modes.json root must be an object")
         return data
     except Exception as exc:
-        _logger.warning("Failed to load chat_modes.json (%s: %s); using hardcoded defaults.", type(exc).__name__, exc)
+        _logger.warning(
+            "Failed to load chat_modes.json (%s: %s); using hardcoded defaults.",
+            type(exc).__name__,
+            exc,
+        )
         return _DEFAULT_CHAT_MODE_DATA
 
 
 _CHAT_MODE_DATA = _load_chat_modes()
 CHAT_MODES = _CHAT_MODE_DATA.get("chat_modes") or []
-CHAT_FREE_MODES = _CHAT_MODE_DATA.get("free_modes") or []
-CHAT_PREMIUM_MODES = _CHAT_MODE_DATA.get("pro_modes") or []
 CHAT_PROMPT_MODES = _CHAT_MODE_DATA.get("prompt_modes") or []
 
 SUPPORTED_CHAT_MODES = set(CHAT_MODES)
@@ -132,8 +133,7 @@ CHAT_INFERENCE_MODE_ALIASES = {
     TECHNICAL_MODE: TECHNICAL_MODE,
     SOCRATIC_MODE: SOCRATIC_MODE,
 }
-PROMPT_MODE_ALIASES = {
-}
+PROMPT_MODE_ALIASES = {}
 
 
 DEPTH_REQUEST_PATTERNS = (
@@ -185,7 +185,9 @@ async def with_timeout(
         _logger.debug("timeout_wrapper_cancelled", extra={"context": context_label})
         raise
     except Exception as exc:
-        _logger.exception("timeout_wrapper_exception context=%s error=%s", context_label, exc)
+        _logger.exception(
+            "timeout_wrapper_exception context=%s error=%s", context_label, exc
+        )
         if swallow_exceptions:
             return default
         raise

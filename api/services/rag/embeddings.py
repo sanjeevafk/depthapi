@@ -59,7 +59,7 @@ class EmbeddingService:
     def _gemini_model_candidates(self) -> list[str]:
         model = str(self.model or "").strip().removeprefix("models/")
         if not model:
-            model = "gemini-embedding-001"
+            model = "text-embedding-004"
         return [model]
 
     @staticmethod

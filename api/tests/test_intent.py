@@ -7,22 +7,22 @@ from api.services.conversation.intent import (
 
 
 class TestDetectIntentAndDepth:
-    def test_default_returns_explain_medium(self):
+    def test_default_returns_explain_accessible(self):
         result = detect_intent_and_depth("transformer")
-        assert result == {"intent": "explain", "depth": "medium"}
+        assert result == {"intent": "explain", "depth": "accessible"}
 
-    def test_what_is_returns_shallow(self):
+    def test_what_is_returns_simple(self):
         result = detect_intent_and_depth("what is backpropagation")
-        assert result["depth"] == "shallow"
+        assert result["depth"] == "simple"
         assert result["intent"] == "explain"
 
-    def test_how_returns_medium(self):
+    def test_how_returns_accessible(self):
         result = detect_intent_and_depth("how does attention work")
-        assert result["depth"] == "medium"
+        assert result["depth"] == "accessible"
 
-    def test_in_depth_returns_deep(self):
+    def test_in_depth_returns_technical(self):
         result = detect_intent_and_depth("explain attention in depth")
-        assert result["depth"] == "deep"
+        assert result["depth"] == "technical"
 
     def test_compare_intent(self):
         result = detect_intent_and_depth("compare RLHF vs DPO")
@@ -38,10 +38,10 @@ class TestDetectIntentAndDepth:
         assert result["intent"] == "compare"
 
     def test_independent_intent_and_depth(self):
-        # "compare" intent + "deep" depth should both be detected
+        # "compare" intent + "technical" depth should both be detected
         result = detect_intent_and_depth("compare RLHF vs DPO in depth")
         assert result["intent"] == "compare"
-        assert result["depth"] == "deep"
+        assert result["depth"] == "technical"
 
     def test_what_is_architecture_brainstorm_wins(self):
         # "architecture" (brainstorm) should win over "what is" depth signal

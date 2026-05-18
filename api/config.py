@@ -1,6 +1,5 @@
 """Configuration and environment variables."""
 
-import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pydantic import SecretStr, field_validator
@@ -10,10 +9,11 @@ from pydantic_settings import BaseSettings
 @dataclass(frozen=True)
 class StreamConfig:
     """Pre-computed streaming configuration to eliminate 40+ getattr() calls per request.
-    
+
     This data class is computed once at app startup and reused for all requests,
     saving 25-40ms per request by eliminating repeated settings lookups and calculations.
     """
+
     is_prod: bool
     stream_max_seconds_learning: int
     stream_max_seconds_technical: int
@@ -30,6 +30,7 @@ class StreamConfig:
     large_input_token_threshold: int
     large_input_timeout_extension_multiplier: float
     technical_mode_timeout_extension: float
+    cache_ttl_seconds: int
 
 
 # Global stream config instance (initialized at startup)
@@ -52,12 +53,20 @@ def _compute_stream_config() -> StreamConfig:
     settings = get_settings()
     env = str(getattr(settings, "environment", "") or "").strip().lower()
     is_prod = env == "production"
-    
+
     return StreamConfig(
         is_prod=is_prod,
-        stream_max_seconds_learning=max(int(getattr(settings, "stream_max_seconds", 25)), 1),
-        stream_max_seconds_technical=max(int(getattr(settings, "technical_stream_max_seconds", 45)), 25),
-        function_duration_cap=max(5, int(getattr(settings, "vercel_function_max_duration_seconds", 25)) - 2) if is_prod else None,
+        stream_max_seconds_learning=max(
+            int(getattr(settings, "stream_max_seconds", 25)), 1
+        ),
+        stream_max_seconds_technical=max(
+            int(getattr(settings, "technical_stream_max_seconds", 45)), 25
+        ),
+        function_duration_cap=max(
+            5, int(getattr(settings, "vercel_function_max_duration_seconds", 25)) - 2
+        )
+        if is_prod
+        else None,
         fallback_budget_seconds=max(
             1.0,
             min(float(getattr(settings, "stream_fallback_budget_seconds", 6)), 30.0),
@@ -70,8 +79,12 @@ def _compute_stream_config() -> StreamConfig:
             max(float(getattr(settings, "stream_heartbeat_seconds", 2)), 0.1),
             2.0,
         ),
-        stream_start_timeout_seconds=float(getattr(settings, "stream_start_timeout_seconds", 2)),
-        technical_stream_start_timeout_seconds=float(getattr(settings, "technical_stream_start_timeout_seconds", 8.0)),
+        stream_start_timeout_seconds=float(
+            getattr(settings, "stream_start_timeout_seconds", 2)
+        ),
+        technical_stream_start_timeout_seconds=float(
+            getattr(settings, "technical_stream_start_timeout_seconds", 8.0)
+        ),
         idempotency_ttl_seconds=min(
             max(int(getattr(settings, "stream_idempotency_ttl_seconds", 90)), 60),
             120,
@@ -80,10 +93,19 @@ def _compute_stream_config() -> StreamConfig:
             5,
             min(int(getattr(settings, "stream_idempotency_stale_seconds", 20)), 120),
         ),
-        large_input_char_threshold=int(getattr(settings, "large_input_char_threshold", 5000)),
-        large_input_token_threshold=int(getattr(settings, "large_input_token_threshold", 5000)),
-        large_input_timeout_extension_multiplier=float(getattr(settings, "large_input_timeout_extension_multiplier", 1.5)),
-        technical_mode_timeout_extension=float(getattr(settings, "technical_mode_timeout_extension", 1.3)),
+        large_input_char_threshold=int(
+            getattr(settings, "large_input_char_threshold", 5000)
+        ),
+        large_input_token_threshold=int(
+            getattr(settings, "large_input_token_threshold", 5000)
+        ),
+        large_input_timeout_extension_multiplier=float(
+            getattr(settings, "large_input_timeout_extension_multiplier", 1.5)
+        ),
+        technical_mode_timeout_extension=float(
+            getattr(settings, "technical_mode_timeout_extension", 1.3)
+        ),
+        cache_ttl_seconds=int(getattr(settings, "message_cache_ttl_seconds", 3600)),
     )
 
 
@@ -114,7 +136,7 @@ class Settings(BaseSettings):
     openrouter_timeout_seconds: int = 90
     llm_timeout_seconds: int = 60
     embedding_provider: str = "gemini"
-    embedding_model: str = "gemini-embedding-001"
+    embedding_model: str = "text-embedding-004"
     embedding_dimension: int = 768
 
     stream_max_seconds: int = 30  # Increased from 20 to 30 for large input handling
@@ -125,7 +147,9 @@ class Settings(BaseSettings):
     stream_idempotency_ttl_seconds: int = 90
     stream_idempotency_stale_seconds: int = 20
     stream_fallback_budget_seconds: int = 8
-    vercel_function_max_duration_seconds: int = 50  # Increased from 25 to support large inputs
+    vercel_function_max_duration_seconds: int = (
+        50  # Increased from 25 to support large inputs
+    )
     trusted_proxies: str = ""
 
     redis_url: str = "redis://localhost:6379"
@@ -166,19 +190,23 @@ class Settings(BaseSettings):
     conversation_context_max_tokens: int = 1200
     conversation_context_summary_tokens: int = 240
     conversation_context_fetch_limit: int = 80
-    
+
     # Large text input handling
     max_input_chars_api: int = 100000  # Hard cap for API (100K chars)
     max_input_tokens_learning: int = 10000  # ~40K chars
     max_input_tokens_technical: int = 15000  # ~60K chars
     max_input_tokens_socratic: int = 8000  # ~32K chars
-    
+
     # Timeout extension triggers (lowercase threshold names for consistency)
-    large_input_char_threshold: int = 5000  # Trigger on 5K+ chars regardless of truncation
-    large_input_token_threshold: int = 5000  # Lowered from 10K to 5K tokens (was too high)
+    large_input_char_threshold: int = (
+        5000  # Trigger on 5K+ chars regardless of truncation
+    )
+    large_input_token_threshold: int = (
+        5000  # Lowered from 10K to 5K tokens (was too high)
+    )
     large_input_timeout_extension_multiplier: float = 1.5  # 50% longer for large inputs
     technical_mode_timeout_extension: float = 1.3  # Additional 30% for technical mode
-    
+
     supabase_url: str = ""
     supabase_publishable_key: str = ""
     supabase_secret_key: SecretStr = SecretStr("")
@@ -199,11 +227,11 @@ class Settings(BaseSettings):
     # Email / Resend
     resend_api_key: SecretStr = SecretStr("")
     resend_from: str = ""
-    support_email: str = "support@depthapi.app"
+    support_email: str = "[EMAIL_ADDRESS]"
     site_name: str = "DepthAPI"
-    public_base_url: str = "https://depthapi.app"
-    allowed_origins: str = ""
-    
+    public_base_url: str = "http://localhost:3000"
+    allowed_origins: str = "http://localhost:3000, http://localhost:5173"
+
     # Dodo Payments Configuration
     dodo_api_key: str = ""
     dodo_webhook_secret: str = ""
@@ -248,7 +276,11 @@ class Settings(BaseSettings):
             raise ValueError("LLM timeout must be at least 1 second.")
         return value
 
-    @field_validator("stream_max_seconds", "technical_stream_max_seconds", "vercel_function_max_duration_seconds")
+    @field_validator(
+        "stream_max_seconds",
+        "technical_stream_max_seconds",
+        "vercel_function_max_duration_seconds",
+    )
     @classmethod
     def _validate_stream_caps(cls, value: int) -> int:
         if value < 1:
@@ -267,4 +299,3 @@ def reinitialize_cache() -> None:
     global _STREAM_CONFIG
     _STREAM_CONFIG = None
     get_settings.cache_clear()
-

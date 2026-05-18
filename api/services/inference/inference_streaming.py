@@ -10,7 +10,8 @@ import structlog
 from openai.types.chat import ChatCompletionMessageParam
 
 from api.config import get_settings
-from api.logging_config import anonymize_user_id, log_sampled_success
+from api.logging_config import anonymize_user_id, logger, log_sampled_success
+from api.prompt_engine import PromptSpec
 from api.services.inference.inference_constants import (
     TECHNICAL_MAX_TOKENS,
     TECHNICAL_MINIMAL_PROMPT,
@@ -61,15 +62,42 @@ async def generate_stream_explanation(
     anonymized_user_id = anonymize_user_id(str(kwargs.get("user_id") or "") or None)
     route_telemetry_sink = kwargs.get("telemetry_sink") if isinstance(kwargs.get("telemetry_sink"), dict) else None
     prompt = ""
+    pre_task = str(kwargs.get("_pre_classified_intent") or "explain")
+    pre_depth = str(kwargs.get("_pre_classified_depth") or "accessible")
+    pre_reasoning = str(kwargs.get("_pre_classified_reasoning") or "direct")
+    pre_style = str(kwargs.get("_pre_classified_style") or "normal")
+    pre_capabilities = set(kwargs.get("_pre_classified_capabilities") or [])
+
+    def _canonical_depth(value: str | None) -> str:
+        normalized = (value or "").strip().lower()
+        mapping = {"shallow": "simple", "medium": "accessible", "deep": "technical", "meme": "accessible"}
+        normalized = mapping.get(normalized, normalized)
+        return normalized if normalized in {"simple", "accessible", "technical", "expert"} else "accessible"
+
+    def _request_spec(*, search_context: str = "", reasoning: str | None = None) -> PromptSpec:
+        capabilities = set(pre_capabilities)
+        if search_context:
+            capabilities.discard("requires_search")
+            capabilities.discard("requires_citations")
+        capabilities.discard("requires_diagram")
+        selected_style = "meme" if (level or "").strip().lower() == "meme" else pre_style
+        return PromptSpec(
+            topic=topic,
+            depth=_canonical_depth(level) if level else _canonical_depth(pre_depth),
+            task=pre_task,
+            reasoning=reasoning or pre_reasoning,
+            style=selected_style,
+            capabilities=frozenset(capabilities),
+        )
 
     if mode == "technical":
-        intent = "unknown"
-        depth = "shallow"
+        intent = "explain"
+        depth = "technical"
         diagram_type = "generic"
         try:
             classification = detect_intent_and_depth_fn(topic)
-            intent = classification["intent"]
-            depth = classification["depth"]
+            intent = str(classification.get("task") or classification.get("intent", "explain"))
+            depth = str(classification.get("depth", "technical"))
             diagram_type = detect_diagram_type_fn(topic)
         except Exception as exc:
             _tech_logger.warning(
@@ -80,10 +108,32 @@ async def generate_stream_explanation(
                 diagram_type=diagram_type,
             )
 
+        # 1. RAG Retrieval
+        rag_context = ""
+        try:
+            rag_results = await retrieve_rag_context(
+                query=topic,
+                api_key_id=str(kwargs.get("user_id") or "anonymous"),
+                limit=int(os.getenv("RAG_TOP_K", "5")),
+                collection_id=kwargs.get("collection_id"),
+                use_trusted_corpus=kwargs.get("use_trusted_corpus", True),
+                query_mode="technical",
+            )
+            rag_context = format_rag_context(rag_results)
+        except Exception as exc:
+            logger.error(f"technical_stream_rag_failed: {str(exc)}", request_id=kwargs.get("request_id"))
+
+        # 2. Web Search
         search_context = await load_search_context_fn(topic, mode="technical")
+        
         prompt = build_technical_prompt_fn(topic, intent, depth, diagram_type)
         if not prompt or not prompt.strip():
             prompt = TECHNICAL_MINIMAL_PROMPT
+            
+        # Append RAG context
+        if rag_context:
+            prompt = _append_search_context(prompt, f"--- RAG CONTEXT ---\n{rag_context}\n--- END RAG CONTEXT ---")
+            
         prompt = _append_search_context(prompt, search_context)
         messages = build_messages_fn(
             prompt,
@@ -103,6 +153,7 @@ async def generate_stream_explanation(
         stream_telemetry: dict[str, object] = {}
         stream_start = time.perf_counter()
         streamed_chunks = 0
+        streamed_chars = 0
         stream_completed = True
         partial_failure = False
 
@@ -116,7 +167,10 @@ async def generate_stream_explanation(
                 telemetry_sink=stream_telemetry,
             ):
                 streamed_chunks += 1
+                streamed_chars += len(str(chunk or ""))
                 yield chunk
+            if streamed_chars == 0:
+                raise RuntimeError("empty_stream_response")
         except Exception as exc:
             _tech_logger.warning(
                 "technical_stream_failed",
@@ -190,28 +244,32 @@ async def generate_stream_explanation(
     if mode == "socratic":
         search_context = await load_search_context_fn(topic, mode="socratic")
         prompt = build_prompt_fn(
-            "socratic",
-            topic,
+            _request_spec(search_context=search_context, reasoning="socratic"),
             conversation_context=kwargs.get("conversation_context", ""),
+            search_context=search_context,
         )
-        prompt = _append_search_context(prompt, search_context)
     else:
         # 1. RAG Retrieval
-        rag_results = await retrieve_rag_context(
-            query=topic,
-            api_key_id=str(kwargs.get("user_id") or "anonymous"),
-            limit=int(os.getenv("RAG_TOP_K", "5")),
-            collection_id=kwargs.get("collection_id")
-        )
-        rag_context = format_rag_context(rag_results)
+        rag_context = ""
+        try:
+            rag_results = await retrieve_rag_context(
+                query=topic,
+                api_key_id=str(kwargs.get("user_id") or "anonymous"),
+                limit=int(os.getenv("RAG_TOP_K", "5")),
+                collection_id=kwargs.get("collection_id"),
+                use_trusted_corpus=kwargs.get("use_trusted_corpus", True),
+                query_mode="conceptual",
+            )
+            rag_context = format_rag_context(rag_results)
+        except Exception as exc:
+            logger.error(f"learn_stream_rag_failed: {str(exc)}", request_id=kwargs.get("request_id"))
 
         # 2. Web Search
         search_context = await load_search_context_fn(topic, mode="learn")
         
         # 3. Assemble Prompt
-        prompt = build_prompt_fn(level, topic)
-        prompt = _append_rag_context(prompt, rag_context)
-        prompt = _append_search_context(prompt, search_context)
+        combined_context = "\n\n".join(part for part in (rag_context, search_context) if part)
+        prompt = build_prompt_fn(_request_spec(search_context=combined_context), search_context=combined_context)
         length_constraint = prompt_orchestrator.extract_length_constraint(topic)
         prompt = prompt_orchestrator.apply_length_constraints(prompt, length_constraint)
 
@@ -307,6 +365,8 @@ async def generate_stream_explanation(
                 wants_direct_answer=wants_direct_answer,
             )
             fallback_response = constrained_response.strip()
+            if not fallback_response and not socratic_raw_chunks and socratic_error is None:
+                raise RuntimeError("empty_stream_response")
             if socratic_error is not None and not fallback_response:
                 fallback_response = f"I hit a temporary issue while streaming. Please try again. {footer}"
             elif socratic_error is not None:
@@ -318,6 +378,7 @@ async def generate_stream_explanation(
             yield footer
     else:
         streamed_chunks = 0
+        streamed_chars = 0
         remaining_chars = None
         target_words = None
         words_emitted = 0
@@ -358,10 +419,12 @@ async def generate_stream_explanation(
                         break
                     if len(text_chunk) <= remaining_chars:
                         streamed_chunks += 1
+                        streamed_chars += len(text_chunk)
                         remaining_chars -= len(text_chunk)
                         yield text_chunk
                     else:
                         streamed_chunks += 1
+                        streamed_chars += remaining_chars
                         yield text_chunk[:remaining_chars]
                         remaining_chars = 0
                         break
@@ -376,6 +439,7 @@ async def generate_stream_explanation(
                         sentence_words = word_count_fn(sentence)
                         if words_emitted + sentence_words <= target_words:
                             streamed_chunks += 1
+                            streamed_chars += len(sentence)
                             prefix = "" if not emitted_any else " "
                             yield f"{prefix}{sentence}"
                             emitted_any = True
@@ -389,6 +453,7 @@ async def generate_stream_explanation(
                     continue
 
                 streamed_chunks += 1
+                streamed_chars += len(text_chunk)
                 yield text_chunk
         except Exception as exc:
             stream_telemetry["stream_error"] = str(exc)
@@ -428,6 +493,8 @@ async def generate_stream_explanation(
                 if words_emitted + cue_words <= target_words:
                     prefix = "" if not emitted_any else " "
                     yield f"{prefix}{cue}"
+        if streamed_chars == 0 and not emitted_any:
+            raise RuntimeError("empty_stream_response")
 
     stream_duration_ms = round((time.perf_counter() - stream_start) * 1000, 2)
     model_inference_ms = stream_telemetry.get("model_inference_ms")

@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, Field
+from api.shared_types import PromptSpecRequest
 
 from api.monitoring import capture_telemetry_event
 from api.services.conversation.conversation_lock_manager import ConversationLockManager
@@ -33,6 +34,7 @@ class MessageRequest(BaseModel):
     assistant_client_id: Optional[str] = None
     mode: Optional[str] = None
     prompt_mode: Optional[str] = None
+    prompt_spec: PromptSpecRequest | None = None
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     regenerate: bool = False
 

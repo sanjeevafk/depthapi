@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 
+from api.shared_types import PromptSpecRequest
 from api.auth import get_supabase_admin
 from api.config import CONTEXT_LOAD_TIMEOUTS, get_settings
 from api.logging_config import anonymize_text, anonymize_user_id, logger
@@ -55,6 +56,7 @@ class MessageRequest(BaseModel):
     assistant_client_id: Optional[str] = None
     mode: Optional[str] = None
     prompt_mode: Optional[str] = None
+    prompt_spec: PromptSpecRequest | None = None
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
     regenerate: bool = False
     collection_id: Optional[str] = None

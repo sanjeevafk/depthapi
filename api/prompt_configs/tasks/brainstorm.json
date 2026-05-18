@@ -1,0 +1,5 @@
+{
+  "name": "brainstorm",
+  "template": "Task template - brainstorm:\nTopic: {topic}\nGenerate three distinct approaches: simple/practical, scalable/advanced, and unconventional. For each, include idea, how it works, tradeoffs, and when to use it.",
+  "metadata": {"output": "markdown"}
+}

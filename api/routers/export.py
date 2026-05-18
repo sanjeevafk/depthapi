@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
-from api.utils import DEFAULT_CHAT_MODE, FREE_LEVELS, SUPPORTED_CHAT_MODES, normalize_mode, sanitize_filename
+from api.utils import DEFAULT_CHAT_MODE, PROMPT_DEPTHS, SUPPORTED_CHAT_MODES, normalize_mode, sanitize_filename
 from api.services.inference.inference import generate_explanation
 
 logger = structlog.get_logger(__name__)
@@ -36,7 +36,7 @@ async def export_explanations(req: ExportRequest, api_key: ApiKeyRecord = Depend
         req.mode = DEFAULT_CHAT_MODE
 
     # Identify levels to include based on mode
-    target_levels = set(FREE_LEVELS)
+    target_levels = set(PROMPT_DEPTHS)
     
     current_levels = set(req.explanations.keys())
     missing_levels = list(target_levels - current_levels)
@@ -55,7 +55,7 @@ async def export_explanations(req: ExportRequest, api_key: ApiKeyRecord = Depend
                 req.explanations[lvl] = f"Error generating content: {str(result)}"
     
     ordered_explanations = {}
-    for lvl in FREE_LEVELS:
+    for lvl in PROMPT_DEPTHS:
         if lvl in req.explanations:
             ordered_explanations[lvl] = req.explanations[lvl]
                 

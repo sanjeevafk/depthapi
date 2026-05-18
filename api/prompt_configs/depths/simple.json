@@ -1,0 +1,5 @@
+{
+  "name": "simple",
+  "template": "Depth modifier - simple:\nExplain {topic} to someone with no prior domain knowledge. Use everyday language, avoid acronyms, and cover only the single core idea. Use at most one concrete analogy. Target 2-4 short sentences.",
+  "metadata": {"axis": "depth"}
+}
