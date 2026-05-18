@@ -1,6 +1,25 @@
 import pytest
 
 import api.routers.ingest as ingest_module
+from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
+
+
+@pytest.fixture(autouse=True)
+def override_ingest_api_key(app_client):
+    async def fake_key():
+        return ApiKeyRecord(
+            id="test-key-uuid-1234",
+            prefix="sk-depth-test",
+            project_name="Test Project",
+            owner_email="test@example.com",
+            plan="pro",
+            monthly_token_budget=10_000_000,
+            requests_per_minute=100,
+        )
+
+    app_client.app.dependency_overrides[verify_api_key] = fake_key
+    yield
+    app_client.app.dependency_overrides.pop(verify_api_key, None)
 
 
 @pytest.mark.asyncio

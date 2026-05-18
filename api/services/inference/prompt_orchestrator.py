@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from api.prompts import build_prompt
+from api.prompt_engine import PromptSpec
 from api.services.inference.inference_prompting import (
     _apply_length_constraint,
     _drain_complete_sentences,
@@ -17,8 +18,11 @@ from api.services.inference.inference_prompting import (
 class PromptOrchestrator:
     def build_prompt(self, query: str, context: str | None, mode: str) -> str:
         if mode == "socratic":
-            return build_prompt("socratic", query, conversation_context=context or "")
-        return build_prompt(context or "accessible", query)
+            return build_prompt(
+                PromptSpec(query, depth="accessible", task="explain", reasoning="socratic"),
+                conversation_context=context or "",
+            )
+        return build_prompt(PromptSpec(query, depth=context or "accessible"))
 
     def extract_length_constraint(self, text: str) -> tuple[str, int] | None:
         return _extract_length_constraint(text)

@@ -1,0 +1,5 @@
+{
+  "name": "accessible",
+  "template": "Depth modifier - accessible:\nExplain {topic} to a technically curious professional with adjacent knowledge. Use proper terms, define specialized terms inline, and connect the mechanism to a practical workflow. Target 100-160 words unless a stricter runtime limit is provided.",
+  "metadata": {"axis": "depth"}
+}

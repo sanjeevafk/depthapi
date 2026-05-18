@@ -24,6 +24,7 @@ class StreamPersistence:
         prompt_mode: str,
         content: str,
         regenerate: bool,
+        prompt_spec: dict[str, Any] | None = None,
     ) -> None:
         self.supabase = supabase
         self.request_id = request_id
@@ -34,6 +35,7 @@ class StreamPersistence:
         self.assistant_client_id = assistant_client_id
         self.selected_mode = selected_mode
         self.prompt_mode = prompt_mode
+        self.prompt_spec = prompt_spec
         self.content = content
         self.regenerate = regenerate
 
@@ -136,6 +138,8 @@ class StreamPersistence:
             "settings": {"mode": self.selected_mode, "prompt_mode": self.prompt_mode},
             "updated_at": now_iso,
         }
+        if self.prompt_spec:
+            update_payload["prompt_spec"] = self.prompt_spec
         try:
             await (
                 self.supabase.table("conversations")

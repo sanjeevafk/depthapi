@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any, AsyncGenerator, cast
 import asyncio
 import json
+import os
 import time
 
 import sentry_sdk
@@ -307,7 +308,55 @@ async def _increment_provider_usage(provider: ProviderName, usage: dict[str, int
 
 
 async def _provider_within_runtime_limits(provider: ProviderName) -> bool:
+    if str(os.getenv("DEPTHAPI_BENCHMARK_MODE", "") or "").strip().lower() in {"1", "true", "yes", "on"}:
+        return True
     return await _provider_usage_tracker.within_runtime_limits(provider)
+
+
+def _init_telemetry_sink(
+    telemetry_sink: dict[str, Any] | None,
+    *,
+    requested_model: str,
+    fallback_chain: list[ProviderTarget],
+) -> dict[str, Any] | None:
+    if not isinstance(telemetry_sink, dict):
+        return None
+    telemetry_sink.setdefault("requested_model", requested_model)
+    telemetry_sink["fallback_chain"] = [
+        {"provider": candidate.provider, "model": candidate.model}
+        for candidate in fallback_chain
+    ]
+    telemetry_sink.setdefault("provider_attempts", [])
+    telemetry_sink.setdefault("retry_events", [])
+    return telemetry_sink
+
+
+def _append_provider_attempt(
+    telemetry_sink: dict[str, Any] | None,
+    *,
+    provider: ProviderName,
+    model: str,
+    outcome: str,
+    latency_ms: float | None = None,
+    error_type: str | None = None,
+    error: str | None = None,
+) -> None:
+    if not isinstance(telemetry_sink, dict):
+        return
+    attempts = telemetry_sink.setdefault("provider_attempts", [])
+    if isinstance(attempts, list):
+        payload: dict[str, Any] = {
+            "provider": provider,
+            "model": model,
+            "outcome": outcome,
+        }
+        if latency_ms is not None:
+            payload["latency_ms"] = latency_ms
+        if error_type:
+            payload["error_type"] = error_type
+        if error:
+            payload["error"] = error
+        attempts.append(payload)
 
 
 def get_provider_config_state() -> dict[str, object]:
@@ -364,6 +413,7 @@ async def create_chat_completion(
     **kwargs,
 ) -> Any:
     """Create a chat completion with manual provider fallback."""
+    telemetry_sink = kwargs.pop("telemetry_sink", None)
     request_id = kwargs.pop("request_id", None)
     trace_headers = kwargs.pop("trace_headers", None)
 
@@ -390,6 +440,7 @@ async def create_chat_completion(
 
     last_error: Exception | None = None
     alias = model or "default-fast"
+    telemetry = _init_telemetry_sink(telemetry_sink, requested_model=alias, fallback_chain=candidates)
     eligible_candidates: list[ProviderTarget] = []
 
     for candidate in candidates:
@@ -397,8 +448,20 @@ async def create_chat_completion(
 
         if not await _provider_state_manager.should_attempt(provider):
             logger.warning("provider_temporarily_blocked", provider=provider, model_alias=alias)
+            _append_provider_attempt(
+                telemetry,
+                provider=provider,
+                model=candidate.model,
+                outcome="blocked",
+            )
             continue
         if not await _provider_within_runtime_limits(provider):
+            _append_provider_attempt(
+                telemetry,
+                provider=provider,
+                model=candidate.model,
+                outcome="runtime_limited",
+            )
             continue
         eligible_candidates.append(candidate)
 
@@ -408,11 +471,20 @@ async def create_chat_completion(
     for candidate in eligible_candidates:
         provider = candidate.provider
         provider_model = candidate.model
+        attempt_started = time.perf_counter()
 
         try:
             client = await _get_provider_client(provider)
         except LLMUnavailable as exc:
             last_error = exc
+            _append_provider_attempt(
+                telemetry,
+                provider=provider,
+                model=provider_model,
+                outcome="client_unavailable",
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
             continue
 
         try:
@@ -435,10 +507,32 @@ async def create_chat_completion(
                     span.set_data("llm.model", resolved_model)
                 await _provider_state_manager.mark_success(provider)
                 await _increment_provider_usage(provider, usage)
+                latency_ms = round((time.perf_counter() - attempt_started) * 1000, 2)
+                _append_provider_attempt(
+                    telemetry,
+                    provider=provider,
+                    model=provider_model,
+                    outcome="success",
+                    latency_ms=latency_ms,
+                )
+                if isinstance(telemetry, dict):
+                    telemetry["actual_provider"] = provider
+                    telemetry["actual_model"] = resolved_model or provider_model
+                    telemetry["requested_model"] = alias
                 return response
         except Exception as exc:
             await _provider_state_manager.mark_failure(provider)
             sentry_sdk.capture_exception(exc)
+            latency_ms = round((time.perf_counter() - attempt_started) * 1000, 2)
+            _append_provider_attempt(
+                telemetry,
+                provider=provider,
+                model=provider_model,
+                outcome="error",
+                latency_ms=latency_ms,
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
 
             if _is_auth_error(exc):
                 raise LLMInvalidAPIKey(f"Provider {provider} rejected credentials.") from exc
@@ -448,6 +542,16 @@ async def create_chat_completion(
 
             last_error = exc
             if _is_retryable_error(exc):
+                if isinstance(telemetry, dict):
+                    retry_events = telemetry.setdefault("retry_events", [])
+                    if isinstance(retry_events, list):
+                        retry_events.append(
+                            {
+                                "provider": provider,
+                                "model": provider_model,
+                                "reason": type(exc).__name__,
+                            }
+                        )
                 continue
             raise
 
@@ -496,6 +600,7 @@ async def stream_chat_completion(
         raise LLMUnavailable("No provider candidates were resolved for the request.")
 
     alias = model or "default-fast"
+    telemetry = _init_telemetry_sink(telemetry_sink, requested_model=alias, fallback_chain=candidates)
     last_error: Exception | None = None
     eligible_candidates: list[ProviderTarget] = []
 
@@ -504,8 +609,20 @@ async def stream_chat_completion(
 
         if not await _provider_state_manager.should_attempt(provider):
             logger.warning("provider_temporarily_blocked", provider=provider, model_alias=alias)
+            _append_provider_attempt(
+                telemetry,
+                provider=provider,
+                model=candidate.model,
+                outcome="blocked",
+            )
             continue
         if not await _provider_within_runtime_limits(provider):
+            _append_provider_attempt(
+                telemetry,
+                provider=provider,
+                model=candidate.model,
+                outcome="runtime_limited",
+            )
             continue
         eligible_candidates.append(candidate)
 
@@ -515,11 +632,20 @@ async def stream_chat_completion(
     for candidate in eligible_candidates:
         provider = candidate.provider
         provider_model = candidate.model
+        attempt_started = time.perf_counter()
 
         try:
             client = await _get_provider_client(provider)
         except LLMUnavailable as exc:
             last_error = exc
+            _append_provider_attempt(
+                telemetry,
+                provider=provider,
+                model=provider_model,
+                outcome="client_unavailable",
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
             continue
 
         emitted_content = False
@@ -539,12 +665,31 @@ async def stream_chat_completion(
         except Exception as exc:
             await _provider_state_manager.mark_failure(provider)
             sentry_sdk.capture_exception(exc)
+            _append_provider_attempt(
+                telemetry,
+                provider=provider,
+                model=provider_model,
+                outcome="error",
+                latency_ms=round((time.perf_counter() - attempt_started) * 1000, 2),
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
             if _is_auth_error(exc):
                 raise LLMInvalidAPIKey(f"Provider {provider} rejected credentials.") from exc
             if isinstance(exc, APIStatusError) and int(getattr(exc, "status_code", 0) or 0) == 400:
                 raise LLMBadRequest(f"Provider {provider} rejected the request payload.") from exc
             last_error = exc
             if _is_retryable_error(exc):
+                if isinstance(telemetry, dict):
+                    retry_events = telemetry.setdefault("retry_events", [])
+                    if isinstance(retry_events, list):
+                        retry_events.append(
+                            {
+                                "provider": provider,
+                                "model": provider_model,
+                                "reason": type(exc).__name__,
+                            }
+                        )
                 continue
             raise
 
@@ -574,6 +719,17 @@ async def stream_chat_completion(
 
                 await _provider_state_manager.mark_success(provider)
                 await _increment_provider_usage(provider, usage_summary)
+                _append_provider_attempt(
+                    telemetry,
+                    provider=provider,
+                    model=provider_model,
+                    outcome="success",
+                    latency_ms=round((time.perf_counter() - attempt_started) * 1000, 2),
+                )
+                if isinstance(telemetry, dict):
+                    telemetry["actual_provider"] = provider
+                    telemetry["actual_model"] = model_name or provider_model
+                    telemetry["requested_model"] = alias
                 return
             except Exception as exc:
                 await _provider_state_manager.mark_failure(provider)
@@ -589,6 +745,17 @@ async def stream_chat_completion(
 
                 last_error = exc
                 if _is_retryable_error(exc):
+                    if isinstance(telemetry, dict):
+                        retry_events = telemetry.setdefault("retry_events", [])
+                        if isinstance(retry_events, list):
+                            retry_events.append(
+                                {
+                                    "provider": provider,
+                                    "model": provider_model,
+                                    "reason": type(exc).__name__,
+                                    "stream_started": emitted_content,
+                                }
+                            )
                     continue
                 raise
             finally:
@@ -605,13 +772,13 @@ async def stream_chat_completion(
                 if isinstance(estimated_cost_usd, float):
                     llm_span.set_data("llm.cost_usd", estimated_cost_usd)
 
-                if isinstance(telemetry_sink, dict):
-                    telemetry_sink["token_usage"] = usage_summary
-                    telemetry_sink["estimated_cost_usd"] = estimated_cost_usd
-                    telemetry_sink["model"] = model_name or provider_model
-                    telemetry_sink["provider"] = provider
-                    telemetry_sink["model_inference_ms"] = first_token_ms
-                    telemetry_sink["stream_duration_ms"] = round((time.perf_counter() - stream_start) * 1000, 2)
+                if isinstance(telemetry, dict):
+                    telemetry["token_usage"] = usage_summary
+                    telemetry["estimated_cost_usd"] = estimated_cost_usd
+                    telemetry["model"] = model_name or provider_model
+                    telemetry["provider"] = provider
+                    telemetry["model_inference_ms"] = first_token_ms
+                    telemetry["stream_duration_ms"] = round((time.perf_counter() - stream_start) * 1000, 2)
 
     if last_error:
         raise LLMUnavailable("All configured providers failed to stream a response.") from last_error

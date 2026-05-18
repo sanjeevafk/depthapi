@@ -1,4 +1,4 @@
-"""Hybrid intent classifier for DepthAPI query routing.
+"""Hybrid intent classifier for DepthAPI prompt-axis routing.
 
 Strategy
 --------
@@ -10,10 +10,13 @@ The SLM fallback is only triggered when the regex pass produces a low-confidence
 result (no strong keyword signal). All callers receive the same dict shape:
 
     {
-        "intent":    "explain" | "compare" | "brainstorm",
-        "depth":     "shallow" | "medium" | "deep",
-        "source":    "regex"   | "llm",
-        "confidence": float,   # 0.0–1.0; regex uses heuristic score
+        "task":       "explain" | "compare" | "brainstorm" | "analyze" | "summarize",
+        "depth":      "simple" | "accessible" | "technical" | "expert",
+        "reasoning":  "direct" | "socratic" | "debate" | "guided",
+        "style":      "normal" | "meme" | "concise" | "academic",
+        "capabilities": ["requires_diagram", ...],
+        "source":     "regex" | "llm",
+        "confidence": float
     }
 """
 
@@ -25,39 +28,71 @@ import logging
 import re
 from typing import Literal
 
+from api.prompt_engine import PromptSpec
+from api.services.inference.llm_errors import LLMBadRequest
+from api.services.inference.llm_client import create_chat_completion
+from api.services.infra.cache import cache_get, cache_set
+
 _logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Types
 # ---------------------------------------------------------------------------
 
-IntentType  = Literal["explain", "compare", "brainstorm"]
-DepthType   = Literal["shallow", "medium", "deep"]
+TaskType = Literal["explain", "compare", "brainstorm", "analyze", "summarize"]
+DepthType = Literal["simple", "accessible", "technical", "expert"]
+ReasoningType = Literal["direct", "socratic", "debate", "guided"]
+StyleType = Literal["normal", "meme", "concise", "academic"]
 ClassifierSource = Literal["regex", "llm"]
 
 
 class IntentResult:
-    __slots__ = ("intent", "depth", "source", "confidence")
+    __slots__ = ("task", "depth", "reasoning", "style", "capabilities", "source", "confidence")
 
     def __init__(
         self,
-        intent: IntentType,
-        depth: DepthType,
-        source: ClassifierSource,
-        confidence: float,
+        task: TaskType | None = None,
+        depth: DepthType = "accessible",
+        reasoning: ReasoningType = "direct",
+        style: StyleType = "normal",
+        capabilities: list[str] | None = None,
+        source: ClassifierSource = "regex",
+        confidence: float = 0.0,
+        intent: TaskType | None = None,
     ) -> None:
-        self.intent = intent
+        self.task = task or intent or "explain"
         self.depth = depth
+        self.reasoning = reasoning
+        self.style = style
+        self.capabilities = capabilities or []
         self.source = source
         self.confidence = confidence
 
+    @property
+    def intent(self) -> TaskType:
+        return self.task
+
     def to_dict(self) -> dict:
         return {
-            "intent": self.intent,
+            "task": self.task,
+            "intent": self.task,
             "depth": self.depth,
+            "reasoning": self.reasoning,
+            "style": self.style,
+            "capabilities": self.capabilities,
             "source": self.source,
             "confidence": self.confidence,
         }
+
+    def to_prompt_spec(self, topic: str) -> PromptSpec:
+        return PromptSpec(
+            topic=topic,
+            depth=self.depth,
+            task=self.task,
+            reasoning=self.reasoning,
+            style=self.style,
+            capabilities=frozenset(self.capabilities),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +120,14 @@ _BRAINSTORM_PATTERNS: list[str] = [
     r"\bwhich approach\b",
 ]
 
-_DEEP_PATTERNS: list[str] = [
+_EXPERT_PATTERNS: list[str] = [
+    r"\bexpert\b",
+    r"\bresearch level\b",
+    r"\bformal proof\b",
+    r"\bpeer review\b",
+]
+
+_TECHNICAL_PATTERNS: list[str] = [
     r"\bin depth\b",
     r"\bdeep dive\b",
     r"\bderive\b",
@@ -96,9 +138,11 @@ _DEEP_PATTERNS: list[str] = [
     r"\bfrom first principles\b",
     r"\bunder the hood\b",
     r"\bhow exactly\b",
+    r"\btechnical\b",
+    r"\bimplementation\b",
 ]
 
-_SHALLOW_PATTERNS: list[str] = [
+_SIMPLE_PATTERNS: list[str] = [
     r"\bwhat is\b",
     r"\bdefine\b",
     r"\boverview\b",
@@ -107,6 +151,51 @@ _SHALLOW_PATTERNS: list[str] = [
     r"\bsummary\b",
     r"\btldr\b",
     r"\bbriefly\b",
+]
+
+_SUMMARIZE_PATTERNS: list[str] = [
+    r"\bsummarize\b",
+    r"\bsummary\b",
+    r"\btldr\b",
+    r"\btl;dr\b",
+]
+
+_SOCRATIC_PATTERNS: list[str] = [
+    r"\bsocratic\b",
+    r"\bquiz me\b",
+    r"\bask me\b",
+    r"\bguide me with questions\b",
+]
+
+_GUIDED_PATTERNS: list[str] = [
+    r"\bstep by step\b",
+    r"\bwalk me through\b",
+    r"\bguide me\b",
+]
+
+_DEBATE_PATTERNS: list[str] = [
+    r"\bdebate\b",
+    r"\bargue both sides\b",
+    r"\bcase for and against\b",
+]
+
+_MEME_PATTERNS: list[str] = [
+    r"\bmeme\b",
+    r"\bfunny\b",
+]
+
+_ACADEMIC_PATTERNS: list[str] = [
+    r"\bacademic\b",
+    r"\bcitations?\b",
+    r"\bsources?\b",
+]
+
+_DIAGRAM_PATTERNS: list[str] = [
+    r"\bdiagram\b",
+    r"\bflowchart\b",
+    r"\bsequence\b",
+    r"\barchitecture\b",
+    r"\bpipeline\b",
 ]
 
 # Minimum number of pattern hits to be considered "confident"
@@ -127,34 +216,78 @@ def _regex_classify(query: str) -> IntentResult:
     brainstorm_hits = _count_hits(lowered, _BRAINSTORM_PATTERNS)
 
     if compare_hits >= _CONFIDENCE_THRESHOLD and compare_hits >= brainstorm_hits:
-        intent: IntentType = "compare"
-        intent_hits = compare_hits
+        task: TaskType = "compare"
+        task_hits = compare_hits
     elif brainstorm_hits >= _CONFIDENCE_THRESHOLD:
-        intent = "brainstorm"
-        intent_hits = brainstorm_hits
+        task = "brainstorm"
+        task_hits = brainstorm_hits
+    elif _count_hits(lowered, _SUMMARIZE_PATTERNS) >= _CONFIDENCE_THRESHOLD:
+        task = "summarize"
+        task_hits = _count_hits(lowered, _SUMMARIZE_PATTERNS)
     else:
-        intent = "explain"
-        intent_hits = 0  # default; no strong signal needed
+        task = "explain"
+        task_hits = 0  # default; no strong signal needed
 
     # --- Depth ---
-    deep_hits    = _count_hits(lowered, _DEEP_PATTERNS)
-    shallow_hits = _count_hits(lowered, _SHALLOW_PATTERNS)
+    expert_hits = _count_hits(lowered, _EXPERT_PATTERNS)
+    technical_hits = _count_hits(lowered, _TECHNICAL_PATTERNS)
+    simple_hits = _count_hits(lowered, _SIMPLE_PATTERNS)
 
-    if deep_hits >= _CONFIDENCE_THRESHOLD:
-        depth: DepthType = "deep"
-        depth_hits = deep_hits
-    elif shallow_hits >= _CONFIDENCE_THRESHOLD:
-        depth = "shallow"
-        depth_hits = shallow_hits
+    if expert_hits >= _CONFIDENCE_THRESHOLD:
+        depth: DepthType = "expert"
+        depth_hits = expert_hits
+    elif technical_hits >= _CONFIDENCE_THRESHOLD:
+        depth = "technical"
+        depth_hits = technical_hits
+    elif simple_hits >= _CONFIDENCE_THRESHOLD:
+        depth = "simple"
+        depth_hits = simple_hits
     else:
-        depth = "medium"
+        depth = "accessible"
         depth_hits = 0
 
+    reasoning: ReasoningType = "direct"
+    reasoning_hits = 0
+    if _count_hits(lowered, _SOCRATIC_PATTERNS) >= _CONFIDENCE_THRESHOLD:
+        reasoning = "socratic"
+        reasoning_hits = _count_hits(lowered, _SOCRATIC_PATTERNS)
+    elif _count_hits(lowered, _DEBATE_PATTERNS) >= _CONFIDENCE_THRESHOLD:
+        reasoning = "debate"
+        reasoning_hits = _count_hits(lowered, _DEBATE_PATTERNS)
+    elif _count_hits(lowered, _GUIDED_PATTERNS) >= _CONFIDENCE_THRESHOLD:
+        reasoning = "guided"
+        reasoning_hits = _count_hits(lowered, _GUIDED_PATTERNS)
+
+    style: StyleType = "normal"
+    style_hits = 0
+    if _count_hits(lowered, _MEME_PATTERNS) >= _CONFIDENCE_THRESHOLD:
+        style = "meme"
+        style_hits = _count_hits(lowered, _MEME_PATTERNS)
+    elif _count_hits(lowered, _ACADEMIC_PATTERNS) >= _CONFIDENCE_THRESHOLD:
+        style = "academic"
+        style_hits = _count_hits(lowered, _ACADEMIC_PATTERNS)
+    elif task == "summarize" or "brief" in lowered or "concise" in lowered:
+        style = "concise"
+
+    capabilities = []
+    if _count_hits(lowered, _DIAGRAM_PATTERNS) >= _CONFIDENCE_THRESHOLD:
+        capabilities.append("requires_diagram")
+    if "citation" in lowered or "sources" in lowered or "latest" in lowered:
+        capabilities.extend(["requires_search", "requires_citations"])
+
     # Confidence: normalised hit count across both dimensions
-    total_hits = intent_hits + depth_hits
+    total_hits = task_hits + depth_hits + reasoning_hits + style_hits
     confidence = min(1.0, total_hits * 0.25)  # 4+ signals → 1.0
 
-    return IntentResult(intent=intent, depth=depth, source="regex", confidence=confidence)
+    return IntentResult(
+        task=task,
+        depth=depth,
+        reasoning=reasoning,
+        style=style,
+        capabilities=capabilities,
+        source="regex",
+        confidence=confidence,
+    )
 
 
 def _is_ambiguous(result: IntentResult) -> bool:
@@ -175,17 +308,23 @@ _CLASSIFIER_PROMPT_TEMPLATE = """\
 Classify this API query. Output ONLY a JSON object with these exact keys:
 
 {{
-  "intent":    "explain" | "compare" | "brainstorm",
-  "depth":     "shallow" | "medium" | "deep"
+  "task": "explain" | "compare" | "brainstorm" | "analyze" | "summarize",
+  "depth": "simple" | "accessible" | "technical" | "expert",
+  "reasoning": "direct" | "socratic" | "debate" | "guided",
+  "style": "normal" | "meme" | "concise" | "academic",
+  "capabilities": []
 }}
 
 Definitions:
 - compare:    asks to contrast ≥2 things (vs, difference, tradeoffs, pros/cons)
 - brainstorm: asks for options / design / approaches (how would I, which approach)
 - explain:    everything else (what is, how does, walk me through)
-- shallow:    high-level overview; user wants a quick answer
-- deep:       mechanistic detail; user uses words like: in depth, derive, rigorously
-- medium:     everything in between
+- summarize:  asks for compressed restatement or TLDR
+- simple:     plain-language overview; user wants a quick answer
+- technical:  mechanistic detail; implementation, internals, or engineering depth
+- expert:     peer-level, formal, research, or literature-level treatment
+- accessible: everything in between
+- capabilities may include: "requires_search", "requires_diagram", "requires_context", "requires_citations"
 
 Query: "{query}"
 """
@@ -196,33 +335,82 @@ def _build_classifier_prompt(query: str) -> str:
     return _CLASSIFIER_PROMPT_TEMPLATE.format(query=escaped)
 
 
+def _extract_json_object(raw: str) -> dict:
+    cleaned = (raw or "").strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        cleaned = cleaned[start : end + 1]
+    return json.loads(cleaned)
+
+
+def _normalize_classifier_payload(data: dict) -> IntentResult:
+    task = data.get("task") or data.get("intent") or "explain"
+    depth = data.get("depth", "accessible")
+    reasoning = data.get("reasoning", "direct")
+    style = data.get("style", "normal")
+    capabilities = data.get("capabilities", [])
+    if task not in ("explain", "compare", "brainstorm", "analyze", "summarize"):
+        task = "explain"
+    if depth not in ("simple", "accessible", "technical", "expert"):
+        depth = "accessible"
+    if reasoning not in ("direct", "socratic", "debate", "guided"):
+        reasoning = "direct"
+    if style not in ("normal", "meme", "concise", "academic"):
+        style = "normal"
+    if not isinstance(capabilities, list):
+        capabilities = []
+    capabilities = [
+        item for item in capabilities
+        if item in {"requires_search", "requires_diagram", "requires_context", "requires_citations"}
+    ]
+    return IntentResult(
+        task=task,
+        depth=depth,
+        reasoning=reasoning,
+        style=style,
+        capabilities=capabilities,
+        source="llm",
+        confidence=0.90,
+    )
+
+
 async def _call_llm_classifier(query: str) -> IntentResult:
     """Call the fast model alias to classify an ambiguous query."""
-    # Import inline to avoid circular dependency at module load time
-    from api.services.model_client import call_model_raw  # type: ignore[import]
-
     prompt = _build_classifier_prompt(query)
     try:
-        raw = await call_model_raw(
-            system=_CLASSIFIER_SYSTEM,
-            user=prompt,
-            model_alias="learn-groq-llama8b",  # fast + cheap
-            max_tokens=32,
-            temperature=0.0,
-        )
-        data = json.loads(raw.strip())
-        intent  = data.get("intent",  "explain")
-        depth   = data.get("depth",   "medium")
-        # Validate values fall in allowed set
-        if intent not in ("explain", "compare", "brainstorm"):
-            intent = "explain"
-        if depth not in ("shallow", "medium", "deep"):
-            depth = "medium"
-        return IntentResult(intent=intent, depth=depth, source="llm", confidence=0.90)
+        messages = [
+            {"role": "system", "content": _CLASSIFIER_SYSTEM},
+            {"role": "user", "content": prompt},
+        ]
+        request_kwargs = {
+            "model": "learn-groq-llama8b",
+            "messages": messages,
+            "max_tokens": 96,
+            "temperature": 0.0,
+        }
+        try:
+            response = await create_chat_completion(
+                **request_kwargs,
+                response_format={"type": "json_object"},
+            )
+        except LLMBadRequest:
+            response = await create_chat_completion(**request_kwargs)
+        raw = str(response.choices[0].message.content or "").strip()
+        data = _extract_json_object(raw)
+        return _normalize_classifier_payload(data)
     except Exception as exc:
         _logger.warning("llm_intent_classifier_failed error=%s", exc)
         # Graceful degradation: return a safe default
-        return IntentResult(intent="explain", depth="medium", source="llm", confidence=0.50)
+        return IntentResult(
+            task="explain",
+            depth="accessible",
+            reasoning="direct",
+            style="normal",
+            capabilities=[],
+            source="llm",
+            confidence=0.50,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -240,12 +428,13 @@ def _cache_key(query: str) -> str:
 
 async def _read_cache(query: str) -> IntentResult | None:
     try:
-        from api.services.infra.cache import get_cache_client  # type: ignore[import]
-        client = await get_cache_client()
-        raw = await client.get(_cache_key(query))
-        if raw:
-            data = json.loads(raw)
-            return IntentResult(**data)
+        raw = await cache_get(_cache_key(query))
+        if isinstance(raw, dict):
+            data = raw
+            result = IntentResult(**data)
+            if result.source == "llm" and result.confidence < 0.9:
+                return None
+            return result
     except Exception:
         pass
     return None
@@ -253,9 +442,9 @@ async def _read_cache(query: str) -> IntentResult | None:
 
 async def _write_cache(query: str, result: IntentResult) -> None:
     try:
-        from api.services.infra.cache import get_cache_client  # type: ignore[import]
-        client = await get_cache_client()
-        await client.set(_cache_key(query), json.dumps(result.to_dict()), ex=_CACHE_TTL)
+        if result.source == "llm" and result.confidence < 0.9:
+            return
+        await cache_set(_cache_key(query), result.to_dict(), ttl=_CACHE_TTL)
     except Exception:
         pass
 
@@ -266,7 +455,7 @@ async def _write_cache(query: str, result: IntentResult) -> None:
 
 
 async def classify_intent(query: str, *, use_llm: bool = True) -> IntentResult:
-    """Classify intent and depth for the given query.
+    """Classify prompt axes for the given query.
 
     Parameters
     ----------
@@ -277,7 +466,7 @@ async def classify_intent(query: str, *, use_llm: bool = True) -> IntentResult:
 
     Returns
     -------
-    IntentResult with .intent, .depth, .source, .confidence
+    IntentResult with prompt-axis fields and .to_prompt_spec(topic)
     """
     # 1. Regex fast path
     result = _regex_classify(query)

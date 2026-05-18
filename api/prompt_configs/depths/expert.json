@@ -1,0 +1,5 @@
+{
+  "name": "expert",
+  "template": "Depth modifier - expert:\nTreat the reader as a domain expert. Use field-standard terminology, formal notation where helpful, first-principles framing, and explicit discussion of tradeoffs, open questions, or active debate.",
+  "metadata": {"axis": "depth"}
+}
