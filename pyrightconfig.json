@@ -21,7 +21,7 @@
   ],
   "strict": [
     "api/services/inference.py",
-    "api/routers/messages.py",
+    "api/routers/query.py",
     "api/services/llm_client.py",
     "api/services/rate_limit.py",
     "api/services/message_gate.py",
