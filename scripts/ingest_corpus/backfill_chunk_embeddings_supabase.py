@@ -12,7 +12,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from api.auth import get_supabase_admin
-from api.services.embeddings import get_embedding_service
+from api.services.rag.embeddings import get_embedding_service
 
 
 def _vector_literal(values: list[float]) -> str:

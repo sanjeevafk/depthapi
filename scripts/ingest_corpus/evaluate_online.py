@@ -15,8 +15,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from api.auth import get_supabase_admin
-from api.services.embeddings import get_embedding_service
-from api.services.reranker import get_reranker_service
+from api.services.rag.embeddings import get_embedding_service
+from api.services.rag.reranker import get_reranker_service
 
 # Constants
 EVAL_DIR = Path("evaluation")
@@ -31,7 +31,16 @@ def _normalize_hash(value: str) -> str:
     cleaned = "".join(ch for ch in value.lower() if ch.isalnum())
     return cleaned[:16]
 
-async def evaluate_query(supabase, embed_service, reranker_service, query_text, relevant_hashes, top_k=20, rerank=False):
+async def evaluate_query(
+    supabase,
+    embed_service,
+    reranker_service,
+    query_text,
+    relevant_hashes,
+    api_key_id,
+    top_k=20,
+    rerank=False,
+):
     # 1. Embed query
     query_embedding = await embed_service.create_embeddings([query_text])
     embedding_list = query_embedding[0]
@@ -42,7 +51,7 @@ async def evaluate_query(supabase, embed_service, reranker_service, query_text, 
     resp = await supabase.rpc("hybrid_search_v5", {
         "query_text": query_text,
         "query_embedding": embedding_list,
-        "target_api_key_id": API_KEY_ID,
+        "target_api_key_id": api_key_id,
         "final_count": pool_size
     }).execute()
 
@@ -92,6 +101,7 @@ async def main():
     parser.add_argument("--top-k", nargs="+", type=int, default=[5, 10, 20])
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--rerank", action="store_true", help="Enable Stage-2 Reranking with Cross-Encoder")
+    parser.add_argument("--api-key-id", type=str, default=API_KEY_ID)
     args = parser.parse_args()
 
     supabase = get_supabase_admin()
@@ -104,7 +114,7 @@ async def main():
         ground_truth = json.load(f)
 
     mode_str = "WITH RERANKING" if args.rerank else "HYBRID ONLY"
-    print(f"\nStarting Online Evaluation [{mode_str}] against Supabase (API Key: {API_KEY_ID})")
+    print(f"\nStarting Online Evaluation [{mode_str}] against Supabase (API Key: {args.api_key_id})")
     print("=" * 60)
 
     results = {k: {"mrr": [], "hit_rate": []} for k in args.top_k}
@@ -119,7 +129,16 @@ async def main():
         
         if not relevant: continue
         
-        retrieved = await evaluate_query(supabase, embed, reranker, text, relevant, top_k=max_k, rerank=args.rerank)
+        retrieved = await evaluate_query(
+            supabase,
+            embed,
+            reranker,
+            text,
+            relevant,
+            args.api_key_id,
+            top_k=max_k,
+            rerank=args.rerank,
+        )
         
         q_res = {"id": qid, "hits": {}}
         for k in args.top_k:

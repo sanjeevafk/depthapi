@@ -17,8 +17,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(REPO_ROOT))
 
-from api.services.embeddings import get_embedding_service
-from api.services.filesystem_rag_store import FilesystemRAGStore
+from api.services.rag.embeddings import get_embedding_service
+from api.services.rag.filesystem_rag_store import FilesystemRAGStore
 
 CHECKPOINTS_DIR = REPO_ROOT / "data" / "rag" / "checkpoints"
 
