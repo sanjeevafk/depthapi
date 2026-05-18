@@ -15,13 +15,17 @@ as the stable identifier, replacing the old user_id concept.
 from __future__ import annotations
 
 import hashlib
+import os
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from api.config import get_settings
 from api.logging_config import logger
+from api.shared_types import IAuthProvider
 from api.services.infra.cache import get_redis
 from api.services.infra.redis_safe import safe_redis_call
 
@@ -76,6 +80,70 @@ class ApiKeyRecord:
 def _hash_key(raw_key: str) -> str:
     """SHA-256 hex digest of the raw API key. This is the lookup token."""
     return hashlib.sha256(raw_key.strip().encode()).hexdigest()
+
+
+def _dev_key_entries(value: str) -> list[str]:
+    return [entry.strip() for entry in value.split(",") if entry.strip()]
+
+
+def _dev_keys_from_env() -> list[str]:
+    settings = get_settings()
+    configured = _dev_key_entries(str(getattr(settings, "dev_api_keys", "") or ""))
+    if configured:
+        return configured
+    for env_name in ("DEV_API_KEYS", "DEPTHAPI_API_KEYS"):
+        raw = str(os.getenv(env_name, "") or "").strip()
+        if raw:
+            return _dev_key_entries(raw)
+    return []
+
+
+class EnvAuthProvider(IAuthProvider):
+    """Resolve API keys from a local comma-separated environment variable."""
+
+    def __init__(self, raw_keys: list[str]):
+        self._records = {key.strip(): self._build_record(key.strip()) for key in raw_keys if key.strip()}
+
+    @staticmethod
+    def _build_record(raw_key: str) -> ApiKeyRecord:
+        key_hash = _hash_key(raw_key)
+        return ApiKeyRecord(
+            id=f"dev-{key_hash[:16]}",
+            prefix=raw_key[: min(len(raw_key), 20)],
+            project_name="Local Development",
+            owner_email="local@depthapi.dev",
+            plan="enterprise",
+            monthly_token_budget=0,
+            requests_per_minute=0,
+        )
+
+    @property
+    def configured(self) -> bool:
+        return bool(self._records)
+
+    async def authenticate(self, raw_key: str) -> ApiKeyRecord | None:
+        return self._records.get(raw_key.strip())
+
+
+class SupabaseAuthProvider(IAuthProvider):
+    """Resolve API keys from the existing Supabase lookup flow."""
+
+    async def authenticate(self, raw_key: str) -> ApiKeyRecord | None:
+        return await _lookup_in_db(_hash_key(raw_key))
+
+
+def _select_auth_provider() -> IAuthProvider:
+    settings = get_settings()
+    mode = str(getattr(settings, "auth_provider_mode", "auto") or "auto").strip().lower()
+    env_provider = EnvAuthProvider(_dev_keys_from_env())
+
+    if mode == "env":
+        return env_provider
+    if mode == "supabase":
+        return SupabaseAuthProvider()
+    if env_provider.configured:
+        return env_provider
+    return SupabaseAuthProvider()
 
 
 async def _cache_get(key_hash: str) -> ApiKeyRecord | None:
@@ -223,9 +291,10 @@ async def verify_api_key(
     if cached is not None:
         return cached
 
-    # 2 — Supabase lookup (slow path, ~20-50ms; result cached for next requests)
+    # 2 — Selected provider lookup (Supabase by default; env-backed in local dev)
     _lookup_start = time.perf_counter()
-    record = await _lookup_in_db(key_hash)
+    provider = _select_auth_provider()
+    record = await provider.authenticate(raw_key)
     _lookup_ms = round((time.perf_counter() - _lookup_start) * 1000, 2)
 
     if record is None:
@@ -247,6 +316,7 @@ async def verify_api_key(
         prefix=record.prefix,
         plan=record.plan,
         db_lookup_ms=_lookup_ms,
+        auth_provider=type(provider).__name__,
     )
 
     # Cache for subsequent requests

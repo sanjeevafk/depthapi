@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from functools import lru_cache
-from pydantic import SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -127,6 +127,11 @@ class Settings(BaseSettings):
     """Application settings loaded from environment."""
 
     environment: str = "development"
+    auth_provider_mode: str = "auto"
+    dev_api_keys: str = Field(
+        default="",
+        validation_alias=AliasChoices("DEV_API_KEYS", "DEPTHAPI_API_KEYS"),
+    )
     log_user_hash_salt: str = ""
     groq_api_key: SecretStr = SecretStr("")
     cerebras_api_key: SecretStr = SecretStr("")
@@ -246,7 +251,7 @@ class Settings(BaseSettings):
     slowapi_default_limit_per_minute: int = 120
 
     class Config:
-        env_file = (".env", "../.env")
+        env_file = (".env.local", ".env", "../.env")
 
         env_file_encoding = "utf-8"
         extra = "ignore"
@@ -275,6 +280,23 @@ class Settings(BaseSettings):
         if value < 1:
             raise ValueError("LLM timeout must be at least 1 second.")
         return value
+
+    @field_validator("auth_provider_mode", mode="before")
+    @classmethod
+    def _normalize_auth_provider_mode(cls, value: object) -> str:
+        if value is None:
+            return "auto"
+        normalized = str(value).strip().lower()
+        if normalized not in {"auto", "env", "supabase"}:
+            raise ValueError("auth_provider_mode must be one of: auto, env, supabase.")
+        return normalized
+
+    @field_validator("dev_api_keys", mode="before")
+    @classmethod
+    def _normalize_dev_api_keys(cls, value: object) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
 
     @field_validator(
         "stream_max_seconds",

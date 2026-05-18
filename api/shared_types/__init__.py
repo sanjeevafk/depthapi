@@ -8,11 +8,13 @@ from .core import (
     ProviderName,
 )
 from .prompt import PromptSpecRequest
+from .protocols import IAuthProvider
 
 __all__ = [
     "ConversationContext",
     "ConversationTurn",
     "InferenceRequest",
+    "IAuthProvider",
     "PromptSpecRequest",
     "ProviderConfig",
     "ProviderName",

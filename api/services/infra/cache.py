@@ -4,6 +4,7 @@ from typing import Any
 
 import httpx
 import orjson
+import redis.asyncio as redis_asyncio
 
 from api.config import get_settings
 from api.constants import (
@@ -196,7 +197,83 @@ class UpstashRedisCompat:
         await self._client.aclose()
 
 
-_client: UpstashRedisCompat | None = None
+class LocalRedisCompat:
+    """Async Redis client wrapper backed by a direct Redis URL."""
+
+    def __init__(self, url: str):
+        self._client = redis_asyncio.from_url(url, decode_responses=False)
+
+    async def ping(self) -> bool:
+        await self._client.ping()
+        return True
+
+    async def get(self, key: str) -> Any:
+        return await self._client.get(key)
+
+    async def delete(self, key: str) -> int:
+        return int(await self._client.delete(key))
+
+    async def rpush(self, key: str, *values: Any) -> int:
+        return int(await self._client.rpush(key, *values))
+
+    async def ltrim(self, key: str, start: int, stop: int) -> bool:
+        await self._client.ltrim(key, start, stop)
+        return True
+
+    async def lrange(self, key: str, start: int, stop: int) -> list[Any]:
+        result = await self._client.lrange(key, start, stop)
+        return list(result)
+
+    async def hget(self, key: str, field: str) -> Any:
+        return await self._client.hget(key, field)
+
+    async def hset(self, key: str, field: str, value: Any) -> int:
+        return int(await self._client.hset(key, field, value))
+
+    async def hgetall(self, key: str) -> dict[str, Any]:
+        return dict(await self._client.hgetall(key))
+
+    async def setex(self, key: str, ttl: int, value: Any) -> bool:
+        await self._client.setex(key, ttl, value)
+        return True
+
+    async def set_if_not_exists(self, key: str, ttl: int, value: Any) -> bool:
+        result = await self._client.set(key, value, ex=ttl, nx=True)
+        return bool(result)
+
+    async def incr(self, key: str) -> int:
+        return int(await self._client.incr(key))
+
+    async def incrby(self, key: str, amount: int) -> int:
+        return int(await self._client.incrby(key, amount))
+
+    async def eval(self, script: str, numkeys: int, *args: Any) -> Any:
+        return await self._client.eval(script, numkeys, *args)
+
+    async def pipeline(self, commands: list[list[Any]]) -> list[Any]:
+        pipe = self._client.pipeline(transaction=False)
+        for command in commands:
+            if not command:
+                continue
+            op = str(command[0]).lower()
+            args = command[1:]
+            method = getattr(pipe, op, None)
+            if method is None:
+                raise RuntimeError(f"Unsupported pipeline command: {command[0]}")
+            method(*args)
+        return list(await pipe.execute())
+
+    async def expire(self, key: str, ttl_seconds: int) -> bool:
+        return bool(await self._client.expire(key, ttl_seconds))
+
+    async def ttl(self, key: str) -> int:
+        return int(await self._client.ttl(key))
+
+    async def close(self) -> None:
+        await self._client.aclose()
+
+
+_client: UpstashRedisCompat | LocalRedisCompat | None = None
 _client_lock: asyncio.Lock | None = None
 _client_lock_loop: asyncio.AbstractEventLoop | None = None
 _thread_lock = threading.Lock()
@@ -216,8 +293,8 @@ def _strip_env_quotes(value: str) -> str:
     return value.strip().strip('"').strip("'")
 
 
-async def get_redis() -> UpstashRedisCompat:
-    """Get or create Upstash Redis REST client."""
+async def get_redis() -> UpstashRedisCompat | LocalRedisCompat:
+    """Get or create the configured Redis client."""
     global _client
     if _client is not None:
         return _client
@@ -229,11 +306,18 @@ async def get_redis() -> UpstashRedisCompat:
         settings = get_settings()
         base_url = _strip_env_quotes(getattr(settings, "upstash_redis_rest_url", ""))
         token = _strip_env_quotes(getattr(settings, "upstash_redis_rest_token", ""))
+        redis_url = _strip_env_quotes(getattr(settings, "redis_url", ""))
 
-        if not base_url or not token:
-            raise RuntimeError("UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are required")
+        if base_url and token:
+            _client = UpstashRedisCompat(base_url=base_url, token=token)
+            return _client
 
-        _client = UpstashRedisCompat(base_url=base_url, token=token)
+        if not redis_url:
+            raise RuntimeError(
+                "Either UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN or REDIS_URL is required"
+            )
+
+        _client = LocalRedisCompat(redis_url)
         return _client
 
 
@@ -404,7 +488,7 @@ async def cache_set_if_absent(key: str, value: dict[str, Any], ttl: int) -> bool
 async def close_redis() -> None:
     """Close Upstash Redis REST client."""
     global _client
-    client: UpstashRedisCompat | None = None
+    client: UpstashRedisCompat | LocalRedisCompat | None = None
     async with _get_lock():
         if _client:
             client = _client

@@ -76,6 +76,36 @@ async def test_get_redis_singleton_is_lock_safe(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_get_redis_uses_local_redis_when_upstash_is_unset(monkeypatch):
+    class FakeLocalRedisClient:
+        instances = 0
+
+        def __init__(self, url):
+            assert url == "redis://redis:6379/0"
+            type(self).instances += 1
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        cache_module,
+        "get_settings",
+        lambda: SimpleNamespace(
+            upstash_redis_rest_url="",
+            upstash_redis_rest_token="",
+            redis_url="redis://redis:6379/0",
+        ),
+    )
+    monkeypatch.setattr(cache_module, "LocalRedisCompat", FakeLocalRedisClient)
+    monkeypatch.setattr(cache_module, "_client", None)
+
+    client = await cache_module.get_redis()
+
+    assert isinstance(client, FakeLocalRedisClient)
+    assert FakeLocalRedisClient.instances == 1
+
+
+@pytest.mark.asyncio
 async def test_close_redis_is_lock_safe_under_parallel_calls(monkeypatch):
     class FakeRedisClient:
         close_calls = 0
