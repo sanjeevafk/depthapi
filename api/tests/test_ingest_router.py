@@ -1,4 +1,5 @@
 import pytest
+from pathlib import Path
 
 import api.routers.ingest as ingest_module
 from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
@@ -89,3 +90,87 @@ async def test_delete_collection_marks_deleted(app_client, monkeypatch, fake_sup
     table, payload = fake_supabase.updates[0]
     assert table == "knowledge_collections"
     assert "deleted_at" in payload
+
+
+@pytest.mark.asyncio
+async def test_local_ingest_writes_to_filesystem_backend(app_client, monkeypatch, tmp_path):
+    monkeypatch.setattr(ingest_module, "get_supabase_admin", lambda: None)
+    monkeypatch.setenv("RAG_DATA_PATH", str(tmp_path))
+
+    class FakeStore:
+        def __init__(self):
+            self.calls = []
+
+        async def ingest(self, **kwargs):
+            self.calls.append(kwargs)
+            return 2
+
+    class FakeEmbedService:
+        async def create_embeddings(self, texts):
+            return [[0.1, 0.2] for _ in texts]
+
+    fake_store = FakeStore()
+    monkeypatch.setattr(ingest_module, "get_rag_backend", lambda: fake_store)
+    monkeypatch.setattr(ingest_module, "FilesystemRAGStore", FakeStore)
+    monkeypatch.setattr(ingest_module, "get_embedding_service", lambda: FakeEmbedService())
+
+    async def fake_local_content_and_chunks(_req):
+        return "Policies and procedures.", ["chunk one", "chunk two"]
+
+    monkeypatch.setattr(ingest_module, "_local_content_and_chunks", fake_local_content_and_chunks)
+
+    resp = await app_client.post(
+        "/api/ingest",
+        json={
+            "collection_name": "Docs",
+            "filename": "handbook.txt",
+            "raw_text": "Policies and procedures.",
+        },
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "completed"
+    assert data["queue_id"]
+    assert fake_store.calls
+    assert fake_store.calls[0]["namespace"].startswith("test-key-uuid-1234/")
+
+
+@pytest.mark.asyncio
+async def test_local_list_collections_reads_registry(app_client, monkeypatch, tmp_path):
+    monkeypatch.setattr(ingest_module, "get_supabase_admin", lambda: None)
+    monkeypatch.setenv("RAG_DATA_PATH", str(tmp_path))
+    registry = ingest_module._registry()
+    registry.get_or_create_collection(
+        api_key_id="test-key-uuid-1234",
+        collection_id=None,
+        collection_name="Docs",
+    )
+
+    resp = await app_client.get("/api/collections")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["name"] == "Docs"
+
+
+@pytest.mark.asyncio
+async def test_local_delete_collection_removes_namespace(app_client, monkeypatch, tmp_path):
+    monkeypatch.setattr(ingest_module, "get_supabase_admin", lambda: None)
+    monkeypatch.setenv("RAG_DATA_PATH", str(tmp_path))
+    registry = ingest_module._registry()
+    collection = registry.get_or_create_collection(
+        api_key_id="test-key-uuid-1234",
+        collection_id=None,
+        collection_name="Docs",
+    )
+    namespace_dir = Path(tmp_path) / "test-key-uuid-1234" / collection["id"]
+    namespace_dir.mkdir(parents=True, exist_ok=True)
+    (namespace_dir / "chunks.json").write_text("[]", encoding="utf-8")
+
+    resp = await app_client.delete(f"/api/collections/{collection['id']}")
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "deleted"
+    assert not namespace_dir.exists()
