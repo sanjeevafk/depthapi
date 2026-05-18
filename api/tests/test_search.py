@@ -117,6 +117,7 @@ async def test_search_serper_parsing_is_resilient_to_partial_payload(monkeypatch
     manager = search_module.SearchManager()
     monkeypatch.setattr(search_module.config_module, "get_settings", lambda: settings)
     monkeypatch.setattr(search_module.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(search_module.SearchManager, "_shared_client", None)
 
     result = await manager._search_serper("resilient parsing")
     assert "Untitled" in result

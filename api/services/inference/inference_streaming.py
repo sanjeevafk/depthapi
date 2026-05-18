@@ -468,8 +468,10 @@ async def generate_stream_explanation(
             )
             if streamed_chunks == 0:
                 yield "Unable to stream a response right now. Please try again."
+                emitted_any = True
             else:
                 yield "\n\n---\n*Response incomplete due to a service interruption.*"
+                emitted_any = True
 
         if target_words is not None:
             if not trimmed_for_limit:
