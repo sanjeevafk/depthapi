@@ -17,10 +17,6 @@ from api.routers import (
     query,
     ingest,
     export,
-    history,
-    webhooks,
-    payments,
-    messages,
 )
 from api.services.infra.cache import close_redis
 from api.services.infra.redis_safe import redis_circuit_active
@@ -214,11 +210,7 @@ async def llm_error_handler(request: Request, exc: LLMError):
 # --- Core DepthAPI Routes ---
 app.include_router(query.router, prefix="/api")
 app.include_router(ingest.router, prefix="/api")
-app.include_router(messages.router, prefix="/api")
-app.include_router(history.router, prefix="/api")
 app.include_router(export.router, prefix="/api")
-app.include_router(webhooks.router)
-app.include_router(payments.router, prefix="/api")
 
 
 @app.get("/api/health", tags=["health"])

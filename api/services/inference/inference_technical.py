@@ -39,7 +39,10 @@ def has_complete_ending(response: str) -> bool:
         return False
     if text.endswith("..."):
         return False
-    return text[-1] in {".", "?", "!", "`"}
+    last_char = text[-1]
+    if last_char in {".", "?", "!", "`"}:
+        return True
+    return last_char.isalnum()
 
 
 async def call_with_quality_escalation(
@@ -150,6 +153,7 @@ async def technical_mode_handler(
     )
     prompt_builder = build_technical_prompt_fn or build_technical_prompt
     prompt = prompt_builder(topic, intent, depth, diagram_type)
+    use_minimal_prompt = False
     if not prompt or not prompt.strip():
         _tech_logger.warning(
             "technical_prompt_empty",
@@ -158,13 +162,15 @@ async def technical_mode_handler(
             diagram_type=diagram_type,
         )
         prompt = TECHNICAL_MINIMAL_PROMPT
+        use_minimal_prompt = True
     
-    # 1. Append RAG context if available
-    if rag_context:
-        prompt = _append_search_context(prompt, f"--- RAG CONTEXT ---\n{rag_context}\n--- END RAG CONTEXT ---")
-        
-    # 2. Append Web Search context
-    prompt = _append_search_context(prompt, search_context)
+    if not use_minimal_prompt:
+        # 1. Append RAG context if available
+        if rag_context:
+            prompt = _append_search_context(prompt, f"--- RAG CONTEXT ---\n{rag_context}\n--- END RAG CONTEXT ---")
+
+        # 2. Append Web Search context
+        prompt = _append_search_context(prompt, search_context)
 
     fallback_triggered = False
     fallback_reason: str | None = None
