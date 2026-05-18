@@ -17,13 +17,13 @@ REPORT_PATH = REPO_ROOT / "local-docs" / "MODULAR_SERVICES_BASELINE.json"
 
 TARGET_MODULES = {
     "inference.py": REPO_ROOT / "api" / "services" / "inference.py",
-    "messages.py": REPO_ROOT / "api" / "routers" / "messages.py",
+    "query.py": REPO_ROOT / "api" / "routers" / "query.py",
     "llm_client.py": REPO_ROOT / "api" / "services" / "llm_client.py",
 }
 
 TARGET_TESTS = [
     str(REPO_ROOT / "api" / "tests" / "test_inference.py"),
-    str(REPO_ROOT / "api" / "tests" / "test_messages.py"),
+    str(REPO_ROOT / "api" / "tests" / "test_query_router.py"),
     str(REPO_ROOT / "api" / "tests" / "test_llm_client_fallback.py"),
 ]
 
