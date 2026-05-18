@@ -47,7 +47,11 @@ dlwp_pages_cleaned/
 data/rag/
 backups/
 output/
-DepthAPI_Infographic.html
 scripts/turso/.venv_sync/
 api/.coverage
 .coverage
+evaluation/results_latest.json
+evaluation/results_latest.jsonl
+evaluation/results_latest.csv
+chunk_analysis_report.json
+evaluation/results_latest.json
