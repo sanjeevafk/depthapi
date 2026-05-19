@@ -1,221 +1,256 @@
+from __future__ import annotations
+
+import argparse
+import math
 import os
+import sys
+from collections import Counter
+from pathlib import Path
 from typing import Any, cast
 
-import pandas as pd  # type: ignore[reportMissingModuleSource]
-from datasets import Dataset, load_dataset  # type: ignore[reportMissingModuleSource]
-from supabase import create_client, Client, ClientOptions
 from dotenv import load_dotenv
 
-load_dotenv(".env.local", override=True)
-load_dotenv()  # Fallback for any missing keys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_SECRET_KEY")
-
-if not SUPABASE_URL or not SUPABASE_KEY:
-    print("Missing Supabase credentials in .env")
-    exit(1)
-
-supabase: Client = create_client(
-    SUPABASE_URL, SUPABASE_KEY, options=ClientOptions(postgrest_client_timeout=120.0)
+from scripts.ingest_corpus.research_corpus.dataset_card import write_dataset_card
+from scripts.ingest_corpus.research_corpus.governance import build_governance_artifacts
+from scripts.ingest_corpus.research_corpus.io_utils import (
+    export_parquet_shard,
+    write_json,
 )
 
 
+def _clean_metadata(metadata: Any) -> dict[str, Any]:
+    return metadata if isinstance(metadata, dict) else {}
 
-def fetch_all_chunks() -> list[dict[str, Any]]:
-    print(
-        "Fetching chunks from Supabase using keyset pagination. This is fast and avoids timeouts..."
+
+def _normalize_row(row: dict[str, Any]) -> dict[str, Any]:
+    meta = _clean_metadata(row.get("metadata"))
+    document_id = str(row.get("document_id") or meta.get("doc_id") or "")
+    content = str(row.get("content") or "")
+    content_hash = str(row.get("content_hash") or row.get("id") or "")
+    tags = meta.get("tags") or []
+    if isinstance(tags, list):
+        tags = ", ".join(str(tag) for tag in tags)
+    return {
+        "chunk_id": str(row.get("id") or ""),
+        "source": str(meta.get("source_name") or meta.get("source") or "unknown"),
+        "source_url": str(meta.get("source_url") or ""),
+        "upstream_license": str(
+            meta.get("upstream_license")
+            or meta.get("license")
+            or meta.get("license_name")
+            or "unknown"
+        ),
+        "document_id": document_id,
+        "chunk_index": int(row.get("chunk_order") or 0),
+        "retrieved_at": str(meta.get("retrieved_at") or ""),
+        "chunker_version": str(meta.get("chunker_version") or meta.get("version") or "supabase-export-v1"),
+        "content_hash": content_hash,
+        "content": content,
+        "namespace": str(meta.get("namespace") or "unknown"),
+        "source_name": str(meta.get("source_name") or meta.get("source") or "unknown"),
+        "raw_text": content,
+        "cleaned_text": content,
+        "tags": tags,
+        "collection_name": str(meta.get("collection_name") or ""),
+    }
+
+
+def _export_supabase_shards(output_dir: Path, shard_size: int, limit: int | None = None) -> dict[str, Any]:
+    load_dotenv(".env.local", override=True)
+    load_dotenv()
+
+    from supabase import Client, ClientOptions, create_client  # type: ignore[reportMissingImports]
+
+    supabase_url = os.environ.get("SUPABASE_URL")
+    supabase_key = os.environ.get("SUPABASE_SECRET_KEY")
+    if not supabase_url or not supabase_key:
+        raise RuntimeError("SUPABASE_URL or SUPABASE_SECRET_KEY missing")
+
+    client: Client = create_client(
+        supabase_url,
+        supabase_key,
+        options=ClientOptions(postgrest_client_timeout=120.0),
     )
-    all_chunks: list[dict[str, Any]] = []
-    limit = 1000
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for existing in output_dir.glob("train-*.parquet"):
+        existing.unlink()
+
+    rows_for_manifest: list[dict[str, Any]] = []
+    licenses = Counter()
+    total_rows = 0
+    shard_index = 0
+    buffer: list[dict[str, Any]] = []
+    page_size = 1000
     last_id: int | None = None
 
     while True:
-        try:
-            # We select ONLY the required columns. Excluding the massive 'embedding' vector (1536 floats)
-            # and 'fts_tokens' (tsvector) reduces the payload size by 99%, preventing PostgREST timeouts.
-            query = (
-                supabase.table("knowledge_chunks")
-                .select("id,document_id,content,chunk_order,metadata")
-                .order("id")
-                .limit(limit)
-            )
-            if last_id is not None:
-                query = query.gt("id", last_id)
-
-            response = query.execute()
-            data = cast(list[dict[str, Any]], response.data or [])
-
-            if not data:
-                break
-
-            all_chunks.extend(data)
-            last_id = cast(int, data[-1]["id"])
-
-            if len(all_chunks) % 10000 == 0:
-                print(f"Fetched {len(all_chunks)} chunks...")
-
-            if len(data) < limit:
-                break
-        except Exception as e:
-            print(f"Error fetching after id {last_id}: {e}")
+        query = (
+            client.table("knowledge_chunks")
+            .select("id,document_id,content,content_hash,chunk_order,metadata")
+            .order("id")
+            .limit(page_size)
+        )
+        if last_id is not None:
+            query = query.gt("id", last_id)
+        response = query.execute()
+        batch = cast(list[dict[str, Any]], response.data or [])
+        if not batch:
             break
 
-    return all_chunks
+        for row in batch:
+            normalized = _normalize_row(row)
+            buffer.append(normalized)
+            if len(rows_for_manifest) < 5000:
+                rows_for_manifest.append(
+                    {
+                        "source": normalized["source"],
+                        "source_url": normalized["source_url"],
+                        "upstream_license": normalized["upstream_license"],
+                        "retrieved_at": normalized["retrieved_at"],
+                    }
+                )
+            licenses[cast(str, normalized["upstream_license"])] += 1
+            total_rows += 1
+
+            if len(buffer) >= shard_size:
+                shard_path = output_dir / f"train-{shard_index:05d}.parquet"
+                export_parquet_shard(shard_path, buffer)
+                buffer = []
+                shard_index += 1
+
+            if limit and total_rows >= limit:
+                break
+
+        if limit and total_rows >= limit:
+            break
+
+        last_id = cast(int, batch[-1]["id"])
+        if len(batch) < page_size:
+            break
+
+    if buffer:
+        shard_path = output_dir / f"train-{shard_index:05d}.parquet"
+        export_parquet_shard(shard_path, buffer)
+        shard_index += 1
+
+    return {
+        "rows": total_rows,
+        "shards": shard_index,
+        "output_dir": str(output_dir),
+        "manifest_rows": rows_for_manifest,
+        "licenses": dict(licenses),
+    }
 
 
-def main():
-    chunks = fetch_all_chunks()
+def _publish_folder(
+    repo_id: str,
+    folder_path: Path,
+    dataset_card_path: Path,
+    manifest_path: Path,
+    license_summary_path: Path,
+    commit_message: str,
+    private: bool,
+) -> dict[str, Any]:
+    load_dotenv(".env.local", override=True)
+    load_dotenv()
+    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
+    if not token:
+        raise RuntimeError("HF_TOKEN or HUGGINGFACE_TOKEN missing")
 
-    if not chunks:
-        print(
-            "No chunks found. Check your table name (knowledge_chunks) or credentials."
+    from huggingface_hub import CommitOperationAdd, CommitOperationDelete, HfApi  # type: ignore[reportMissingImports]
+
+    api = HfApi(token=token)
+    api.create_repo(repo_id=repo_id, repo_type="dataset", private=private, exist_ok=True)
+
+    existing_files = api.list_repo_files(repo_id=repo_id, repo_type="dataset")
+    operations: list[Any] = []
+    for path in existing_files:
+        if path.endswith(".parquet") or path in {
+            "README.md",
+            "SOURCES_MANIFEST.yaml",
+            "LICENSE_SUMMARY.md",
+        }:
+            operations.append(CommitOperationDelete(path_in_repo=path))
+
+    for parquet_file in sorted(folder_path.glob("train-*.parquet")):
+        operations.append(
+            CommitOperationAdd(
+                path_in_repo=parquet_file.name,
+                path_or_fileobj=str(parquet_file),
+            )
         )
-        return
-
-    HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
-    if not HF_TOKEN:
-        print("Missing Hugging Face token in HF_TOKEN or HUGGINGFACE_TOKEN env var")
-        return
-    from huggingface_hub import HfApi
-    api = HfApi(token=HF_TOKEN)
-    try:
-        username = api.whoami()["name"]
-        print(f"Authenticated as HF user: {username}")
-    except Exception as e:
-        print(f"Error authenticating with Hugging Face token: {e}")
-        return
-
-    REPO_ID = os.environ.get("HF_REPO_ID") or f"{username}/depthapi_technical_corpus"
-
-    existing_chunk_ids: set[str] = set()
-    try:
-        existing_dataset = load_dataset(
-            REPO_ID, split="train", streaming=True, token=HF_TOKEN
-        )
-        for row in existing_dataset:
-            chunk_id = row.get("chunk_id")
-            if chunk_id is not None:
-                existing_chunk_ids.add(str(chunk_id))
-        if existing_chunk_ids:
-            print(f"Found {len(existing_chunk_ids)} existing chunks in HF repo.")
-    except Exception as e:
-        print(f"Warning: could not load existing dataset for dedup: {e}")
-
-    hf_rows = []
-    skipped = 0
-    for c in chunks:
-        chunk_id = c.get("id")
-        if chunk_id is not None and str(chunk_id) in existing_chunk_ids:
-            skipped += 1
-            continue
-
-        meta = c.get("metadata") or {}
-
-        # Robustly extract metadata fields from either flat columns or nested JSONB metadata
-        source_name = c.get("source_name") or meta.get("source_name") or ""
-        source_url = c.get("source_url") or meta.get("source_url") or ""
-        namespace = c.get("namespace") or meta.get("namespace") or "trusted"
-
-        tags = c.get("tags") or meta.get("tags") or []
-        if isinstance(tags, list):
-            tags = ", ".join(tags)
-
-        content = c.get("content") or ""
-
-        hf_rows.append(
-            {
-                "chunk_id": chunk_id,
-                "doc_id": c.get("document_id") or c.get("doc_id") or "",
-                "namespace": namespace,
-                "source_name": source_name,
-                "source_url": source_url,
-                "raw_text": content,
-                "cleaned_text": content,
-                "tags": tags,
-                "chunk_order": c.get("chunk_order", 0),
-            }
-        )
-
-    if skipped:
-        print(f"Skipped {skipped} chunks already present in HF repo.")
-
-    print("Converting to Hugging Face Dataset...")
-    df = pd.DataFrame(hf_rows)
-    hf_dataset = Dataset.from_pandas(df)
-
-    print(f"Pushing to Hugging Face Hub at {REPO_ID}...")
-    hf_dataset.push_to_hub(
-        REPO_ID,
-        private=False,
-        token=HF_TOKEN,
-        commit_message="Initial release of technical documentation corpus",
+    operations.extend(
+        [
+            CommitOperationAdd(path_in_repo="README.md", path_or_fileobj=str(dataset_card_path)),
+            CommitOperationAdd(path_in_repo="SOURCES_MANIFEST.yaml", path_or_fileobj=str(manifest_path)),
+            CommitOperationAdd(path_in_repo="LICENSE_SUMMARY.md", path_or_fileobj=str(license_summary_path)),
+        ]
     )
-    print("Pushed dataset successfully! Creating dataset card...")
 
-    # Create dataset card (README.md)
-    readme_content = f"""
----
-language:
-- en
-license: mit
-tags:
-- rag
-- technical-docs
-- programming
-- cs
-- programming-books
-size_categories:
-- 100K<n<1M
----
-
-# DepthAPI Technical Corpus
-
-This dataset contains a comprehensive technical corpus optimized for Retrieval-Augmented Generation (RAG). It includes ~240k semantic chunks of high-quality, trusted technical documentation and books.
-
-## Dataset Contents
-
-- MDN Web Docs
-- Kubernetes Documentation
-- CPython Documentation
-- Node.js API Docs
-- React.dev Content
-- Various Notes for Professionals (Java, Python, SQL, JS, TS, etc.)
-- Algorithms and System Design Primers
-
-
-
-## Schema
-
-- `chunk_id`: Unique identifier for the chunk.
-- `doc_id`: Identifier for the source document.
-- `namespace`: Category/namespace (e.g., `trusted`).
-- `source_name`: Human-readable name of the source (e.g., "CPython Docs").
-- `source_url`: URL or source locator.
-- `raw_text`: The raw text content of the chunk.
-- `cleaned_text`: The cleaned, parsed markdown/text content ready for embedding.
-- `tags`: Comma-separated list of tags (e.g., "python, stdlib, P0").
-- `chunk_order`: Integer representing the sequential order of the chunk in the document.
-
-## Intended Use
-
-This dataset is ideal for training and evaluating Large Language Models (LLMs) on technical coding tasks, as well as serving as a high-quality knowledge base for hybrid search / RAG pipelines.
-"""
-    import tempfile
-    with tempfile.NamedTemporaryFile("w", delete=False) as f:
-        f.write(readme_content.strip())
-        temp_path = f.name
-
-    api.upload_file(
-        path_or_fileobj=temp_path,
-        path_in_repo="README.md",
-        repo_id=REPO_ID,
+    api.create_commit(
+        repo_id=repo_id,
         repo_type="dataset",
-        commit_message="Add dataset card",
+        operations=operations,
+        commit_message=commit_message,
     )
-    os.unlink(temp_path)
+    return {
+        "repo_id": repo_id,
+        "files_uploaded": len(list(folder_path.glob("train-*.parquet"))) + 3,
+    }
 
-    print("Dataset card uploaded successfully!")
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Low-memory export of local Supabase chunks to Hugging Face")
+    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--shard-size", type=int, default=10000)
+    parser.add_argument("--hf-repo-id", default="sanjeevafk/depthapi_technical_corpus")
+    parser.add_argument(
+        "--commit-message",
+        default="Refresh dataset from local Supabase low-memory exporter",
+    )
+    parser.add_argument("--private", action="store_true")
+    args = parser.parse_args()
+
+    repo_root = Path(__file__).resolve().parents[2]
+    work_dir = repo_root / "data" / "hf_export"
+    dataset_card_path = repo_root / "datasets" / "depthapi_technical_corpus" / "README.md"
+    manifest_path = repo_root / "SOURCES_MANIFEST.yaml"
+    license_summary_path = repo_root / "LICENSE_SUMMARY.md"
+
+    export_summary = _export_supabase_shards(
+        output_dir=work_dir,
+        shard_size=args.shard_size,
+        limit=args.limit,
+    )
+    write_dataset_card(dataset_card_path)
+    build_governance_artifacts(
+        export_summary["manifest_rows"],
+        license_summary_path,
+        manifest_path,
+    )
+    publish_summary = _publish_folder(
+        repo_id=args.hf_repo_id,
+        folder_path=work_dir,
+        dataset_card_path=dataset_card_path,
+        manifest_path=manifest_path,
+        license_summary_path=license_summary_path,
+        commit_message=args.commit_message,
+        private=args.private,
+    )
+
+    summary = {
+        "status": "success",
+        "rows_exported": export_summary["rows"],
+        "shards_written": export_summary["shards"],
+        "estimated_rows_per_shard": args.shard_size,
+        "repo_id": args.hf_repo_id,
+        "publish": publish_summary,
+    }
+    write_json(repo_root / "data" / "hf_export" / "upload_summary.json", summary)
+    print(summary)
 
 
 if __name__ == "__main__":
