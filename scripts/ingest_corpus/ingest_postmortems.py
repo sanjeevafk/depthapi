@@ -59,7 +59,7 @@ def run(max_files: int | None = None) -> dict[str, Any]:
     
     stats = Counter()
     chunk_order = 0
-    namespace = "trusted_system_design"
+    namespace = "system_design"
     tags = ["postmortem", "incident", "architecture", "devops", "P2"]
 
     for file_path in root_dir.glob("**/*.md"):
