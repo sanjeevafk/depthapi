@@ -1,0 +1,28 @@
+name: research-corpus-ci
+
+on:
+  push:
+    paths:
+      - "scripts/ingest_corpus/**"
+      - "tests/research_corpus/**"
+      - ".github/workflows/research-corpus-ci.yml"
+  pull_request:
+    paths:
+      - "scripts/ingest_corpus/**"
+      - "tests/research_corpus/**"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r api/requirements.txt
+          pip install -r scripts/ingest_corpus/requirements-ingest.txt pandas pyarrow pytest
+      - name: Run research corpus tests
+        run: pytest tests/research_corpus -q
