@@ -43,9 +43,13 @@ AGENTS.md
 dlwp_pages/
 dlwp_pages_cleaned/
 
+# One-off analysis and diagnostic scripts
+analyze_danluu.py
+check_count.py
+docs/corpus/
 
 # Generated local RAG outputs
-data/rag/
+data/
 backups/
 output/
 scripts/turso/.venv_sync/
