@@ -91,7 +91,7 @@
     {
       "name": "System Design Primer",
       "root": "datasets/system-design-primer",
-      "namespace": "trusted_system_design",
+      "namespace": "system_design",
       "priority": "P1",
       "source_type": "markdown",
       "tags": ["system-design", "architecture", "interview"],
