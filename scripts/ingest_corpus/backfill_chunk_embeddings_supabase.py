@@ -73,6 +73,9 @@ async def run(batch_size: int, max_batches: int | None = None) -> dict:
         updated += len(rows)
         batches += 1
         print(f"batch={batches} processed={processed} updated={updated}")
+        
+        # Polite sleep between successful batches to prevent rate limits (15 RPM limit)
+        await asyncio.sleep(4.5)
 
     remaining = await (
         supabase.table("knowledge_chunks")
@@ -92,9 +95,9 @@ async def run(batch_size: int, max_batches: int | None = None) -> dict:
 
 
 def _retry_after_from_error(error_text: str, default: float) -> float:
-    m = re.search(r"retry in ([0-9]+(?:\\.[0-9]+)?)s", error_text, re.IGNORECASE)
+    m = re.search(r"retry in ([0-9]+(?:\.[0-9]+)?)s", error_text, re.IGNORECASE)
     if m:
-        return max(1.0, float(m.group(1)))
+        return max(1.0, float(m.group(1)) + 1.0)
     return default
 
 
