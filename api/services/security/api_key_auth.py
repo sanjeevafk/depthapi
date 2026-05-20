@@ -184,10 +184,38 @@ async def _lookup_in_db(key_hash: str) -> ApiKeyRecord | None:
     )
 
 
+def _build_env_record(raw_key: str) -> ApiKeyRecord:
+    """Construct a synthetic ApiKeyRecord for env-mode dev keys."""
+    prefix = raw_key[:20] if len(raw_key) >= 20 else raw_key
+    return ApiKeyRecord(
+        id=f"dev-{_hash_key(raw_key)[:12]}",
+        prefix=prefix,
+        project_name="Local Development",
+        owner_email="local@depthapi.dev",
+        plan="enterprise",
+        monthly_token_budget=0,  # unlimited in enterprise plan
+        requests_per_minute=0,   # unlimited in enterprise plan
+    )
+
+
+def _get_env_keys() -> set[str]:
+    """Return the set of valid env-mode API keys (normalised, stripped)."""
+    from api.config import get_settings  # local import to avoid circular deps
+    raw = get_settings().dev_api_keys
+    return {k.strip() for k in raw.split(",") if k.strip()}
+
+
 async def verify_api_key(
     credentials: HTTPAuthorizationCredentials = Security(_bearer),
 ) -> ApiKeyRecord:
     """FastAPI dependency. Validates the Bearer API key and returns its record.
+
+    Auth resolution order:
+      1. Env-mode fast path — if AUTH_PROVIDER_MODE=env, or auto+DEV_API_KEYS,
+         match against the env key list and return a synthetic record immediately.
+         No Redis, no Supabase.
+      2. Redis cache hit (~1 ms).
+      3. Supabase DB lookup (~20-50 ms); result cached for subsequent requests.
 
     Usage in routes:
         @router.post("/v1/query")
@@ -216,14 +244,37 @@ async def verify_api_key(
             },
         )
 
+    # --- 1: Env-mode fast path ---
+    from api.config import get_settings  # local import — avoids circular deps
+    settings = get_settings()
+    mode = str(getattr(settings, "auth_provider_mode", "auto") or "auto").strip().lower()
+    env_keys = _get_env_keys()
+
+    use_env = (mode == "env") or (mode == "auto" and bool(env_keys))
+    if use_env:
+        if raw_key in env_keys:
+            record = _build_env_record(raw_key)
+            await _cache_set(_hash_key(raw_key), record)
+            return record
+        if mode == "env":
+            # Hard env mode: never fall through to Supabase
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "type": "invalid_api_key",
+                    "message": "API key not found in DEV_API_KEYS.",
+                },
+            )
+        # auto mode with env keys set but key not in the list → fall through to DB
+
     key_hash = _hash_key(raw_key)
 
-    # 1 — Redis cache hit (fast path, ~1ms)
+    # --- 2: Redis cache hit (~1 ms) ---
     cached = await _cache_get(key_hash)
     if cached is not None:
         return cached
 
-    # 2 — Supabase lookup (slow path, ~20-50ms; result cached for next requests)
+    # --- 3: Supabase DB lookup (~20-50 ms) ---
     _lookup_start = time.perf_counter()
     record = await _lookup_in_db(key_hash)
     _lookup_ms = round((time.perf_counter() - _lookup_start) * 1000, 2)
@@ -249,7 +300,6 @@ async def verify_api_key(
         db_lookup_ms=_lookup_ms,
     )
 
-    # Cache for subsequent requests
     await _cache_set(key_hash, record)
     return record
 
