@@ -1,8 +1,9 @@
-name: Turso Platform Sync
+name: Turso Platform Sync (Disabled)
+# Stubbed: this workflow runs Turso/Supabase sync and requires production
+# secrets. It is disabled by default for open-source contributors.
+# Re-enable by removing the `if: false` guard and setting the required secrets.
 
 on:
-  schedule:
-    - cron: '*/15 * * * *'  # Every 15 minutes (incremental)
   workflow_dispatch:
     inputs:
       mode:
@@ -17,6 +18,7 @@ on:
 
 jobs:
   sync:
+    if: false  # Remove this line and configure secrets to enable.
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
