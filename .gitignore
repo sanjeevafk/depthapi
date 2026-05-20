@@ -40,6 +40,7 @@ AGENTS.md
 .code-review-graph
 .scrapling_cache
 .agents
+dlwp/
 dlwp_pages/
 dlwp_pages_cleaned/
 .planning
