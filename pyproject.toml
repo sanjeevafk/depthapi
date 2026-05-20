@@ -1,0 +1,72 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "depthapi"
+version = "0.1.0"
+description = "DepthAPI: The Cognitive Synthesis Engine"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "fastapi>=0.109.2",
+    "uvicorn[standard]>=0.27.1",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.1.0",
+    "httpx>=0.26.0",
+    "PyJWT>=2.8.0",
+    "redis>=5.0.1",
+    "python-dotenv>=1.0.1",
+    "tenacity>=8.2.3",
+    "orjson>=3.9.13",
+    "structlog>=24.1.0",
+    "openai>=1.51.0",
+    "sentry-sdk[fastapi]>=2.20.0",
+    "slowapi>=0.1.9",
+    "standardwebhooks>=1.0.0",
+    "tiktoken>=0.7.0",
+    "faiss-cpu>=1.8.0",
+    "rank-bm25>=0.2.2",
+    "filelock>=3.12.0",
+    "google-genai>=0.2.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-mock>=3.12.0",
+    "coverage>=7.6.0",
+    "pytest-cov>=5.0.0"
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["api/tests"]
+norecursedirs = ["datasets", ".venv", "node_modules"]
+addopts = "--cov=api --cov-report=term-missing"
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+include = ["api"]
+exclude = ["**/__pycache__", "**/.pytest_cache", "api/tests"]
+typeCheckingMode = "basic"
+executionEnvironments = [
+  { root = ".", extraPaths = [".", "api"] }
+]
+strict = [
+  "api/services/inference.py",
+  "api/routers/query.py",
+  "api/services/llm_client.py",
+  "api/services/rate_limit.py",
+  "api/services/message_gate.py",
+  "api/services/inference_routing.py",
+  "api/services/inference_prompting.py",
+  "api/services/streaming.py",
+  "api/services/message_utils.py"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["api"]
