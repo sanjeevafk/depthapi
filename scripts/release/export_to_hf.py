@@ -379,25 +379,29 @@ def main() -> None:
 
     if args.collections:
         if args.append:
-            # Count existing shards to get the next shard index
+            # Append: count existing shards in work_dir to set offset
             existing_shards = sorted(work_dir.glob("train-*.parquet"))
             shard_offset = len(existing_shards)
             out_dir = work_dir
             print(f"Append mode: {shard_offset} existing shard(s) in {work_dir}")
         else:
-            # Collection-scoped full replace of local output dir
-            out_dir = work_dir
-            shard_offset = 0
-            for f in work_dir.glob("train-*.parquet"):
+            # Collection-scoped: write to isolated subdir — never touch other shards
+            scope = "_".join(c.replace(" ", "_")[:20] for c in args.collections)
+            out_dir = work_dir / "collection_export" / scope
+            for f in out_dir.glob("train-*.parquet"):
                 f.unlink()
-            print(f"Collection export mode: cleared existing local shards")
+            shard_offset = 0
+            print(f"Collection export mode → {out_dir}")
     else:
-        # Full-DB export
+        # Full-DB export: clear and regenerate everything
         out_dir = work_dir
         shard_offset = 0
         for f in work_dir.glob("train-*.parquet"):
             f.unlink()
         print("Full export mode: cleared existing local shards")
+
+    print(f"\nPublishing to: {args.hf_repo_id}" if not args.no_publish else "")
+
 
     print(f"\nExporting to: {out_dir}")
     if args.collections:
@@ -428,7 +432,6 @@ def main() -> None:
         write_json(out_dir / "export_summary.json", export_summary)
         return
 
-    print(f"\nPublishing to: {args.hf_repo_id}")
     publish_summary = _publish_folder(
         repo_id=args.hf_repo_id,
         folder_path=out_dir,
@@ -437,7 +440,9 @@ def main() -> None:
         license_summary_path=license_summary_path,
         commit_message=args.commit_message,
         private=args.private,
-        replace_all_parquet=not args.append,
+        # Only wipe existing HF parquet files when doing a genuine full-DB export
+        # (no collection filter). Collection-scoped runs always append to the repo.
+        replace_all_parquet=(not args.collections and not args.append),
     )
 
     summary = {
