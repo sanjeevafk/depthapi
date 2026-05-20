@@ -1,6 +1,10 @@
-name: research-corpus-ci
+name: Research Corpus CI (Disabled)
+# Stubbed: this workflow requires ingest-specific dependencies and a live
+# Supabase connection. It is disabled by default for open-source contributors.
+# Re-enable by removing the `if: false` guard from the job.
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - "scripts/ingest_corpus/**"
@@ -13,6 +17,7 @@ on:
 
 jobs:
   validate:
+    if: false  # Remove this line to re-enable. Requires Supabase secrets.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
