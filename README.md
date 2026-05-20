@@ -63,7 +63,7 @@ Engineered for developers, DepthAPI follows a high-density, no-fluff output styl
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r api/requirements-dev.txt
+pip install -e ".[dev]"
 python scripts/setup_local_dev.py
 docker compose up -d redis
 uvicorn main:app --reload
