@@ -66,3 +66,6 @@ chunk_analysis_report.json
 scripts/ingest_corpus/*_INGESTION.md
 SOURCES_MANIFEST.yaml
 LICENSE_SUMMARY.md
+
+# Internal planning docs
+docs/planning/
