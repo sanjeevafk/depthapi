@@ -100,12 +100,32 @@ def _ingest_source(source: dict[str, Any], max_files: int | None = None) -> dict
     if not root.exists():
         return {"source_name": source["name"], "error": f"missing root: {root}", "processed_files": 0}
 
-    validators = [
-        make_min_word_validator(30),
-        make_link_ratio_validator(0.2),
-        make_markdown_toc_validator(),
-    ]
-    ingestor = BaseIngestor(source["name"], source_type=source.get("source_type", "markdown"), validators=validators)
+    # Determine source type and apply source-type-aware validators
+    source_type = source.get("source_type", "markdown")
+    
+    # Code sources (Python, TypeScript) have denser word count; relax validators
+    is_code_source = source_type == "code" or any(
+        ext in [".py", ".ts", ".tsx", ".js", ".jsx"] 
+        for glob in source.get("include_globs", [])
+        for ext in [glob[glob.rfind('.'):] if '.' in glob else '']
+    )
+    
+    if is_code_source:
+        # Code: 15-word minimum (allows short but coherent functions/types)
+        # 0.3 link ratio (code may have URLs in docstrings/comments)
+        validators = [
+            make_min_word_validator(15),
+            make_link_ratio_validator(0.3),
+        ]
+    else:
+        # Docs/markdown: strict validators
+        validators = [
+            make_min_word_validator(30),
+            make_link_ratio_validator(0.2),
+            make_markdown_toc_validator(),
+        ]
+    
+    ingestor = BaseIngestor(source["name"], source_type=source_type, validators=validators)
 
     english_allowlist = source.get("english_allowlist", [])
     namespace = source["namespace"]
