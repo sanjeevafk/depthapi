@@ -274,6 +274,7 @@ def _publish_folder(
     commit_message: str,
     private: bool,
     replace_all_parquet: bool = True,
+    batch_size: int = 5,
 ) -> dict[str, Any]:
     load_dotenv(".env.local", override=True)
     load_dotenv()
@@ -286,41 +287,56 @@ def _publish_folder(
     api = HfApi(token=token)
     api.create_repo(repo_id=repo_id, repo_type="dataset", private=private, exist_ok=True)
 
-    operations: list[Any] = []
-
+    # Step 1: delete old files if doing a full replace
     if replace_all_parquet:
-        existing = api.list_repo_files(repo_id=repo_id, repo_type="dataset")
-        for path in existing:
-            if path.endswith(".parquet") or path in {
-                "README.md",
-                "SOURCES_MANIFEST.yaml",
-                "LICENSE_SUMMARY.md",
-            }:
-                operations.append(CommitOperationDelete(path_in_repo=path))
+        existing = list(api.list_repo_files(repo_id=repo_id, repo_type="dataset"))
+        del_ops: list[Any] = [
+            CommitOperationDelete(path_in_repo=p)
+            for p in existing
+            if p.endswith(".parquet") or p in {"README.md", "SOURCES_MANIFEST.yaml", "LICENSE_SUMMARY.md"}
+        ]
+        if del_ops:
+            api.create_commit(
+                repo_id=repo_id,
+                repo_type="dataset",
+                operations=del_ops,
+                commit_message="chore: clear old shards before full restore",
+            )
+            print(f"  Deleted {len(del_ops)} existing file(s) from HF repo")
 
+    # Step 2: upload shards in batches
     local_shards = sorted(folder_path.glob("train-*.parquet"))
-    for pf in local_shards:
-        operations.append(CommitOperationAdd(path_in_repo=pf.name, path_or_fileobj=str(pf)))
+    total_shards = len(local_shards)
+    batches = [local_shards[i : i + batch_size] for i in range(0, total_shards, batch_size)]
 
-    operations += [
+    for batch_idx, batch in enumerate(batches):
+        ops = [CommitOperationAdd(path_in_repo=pf.name, path_or_fileobj=str(pf)) for pf in batch]
+        api.create_commit(
+            repo_id=repo_id,
+            repo_type="dataset",
+            operations=ops,
+            commit_message=f"upload: shards {batch[0].name}–{batch[-1].name} (batch {batch_idx+1}/{len(batches)})",
+        )
+        print(f"  Uploaded batch {batch_idx+1}/{len(batches)}: {[p.name for p in batch]}")
+
+    # Step 3: metadata files
+    meta_ops = [
         CommitOperationAdd(path_in_repo="README.md", path_or_fileobj=str(dataset_card_path)),
-        CommitOperationAdd(
-            path_in_repo="SOURCES_MANIFEST.yaml", path_or_fileobj=str(manifest_path)
-        ),
-        CommitOperationAdd(
-            path_in_repo="LICENSE_SUMMARY.md", path_or_fileobj=str(license_summary_path)
-        ),
+        CommitOperationAdd(path_in_repo="SOURCES_MANIFEST.yaml", path_or_fileobj=str(manifest_path)),
+        CommitOperationAdd(path_in_repo="LICENSE_SUMMARY.md", path_or_fileobj=str(license_summary_path)),
     ]
-
     api.create_commit(
         repo_id=repo_id,
         repo_type="dataset",
-        operations=operations,
+        operations=meta_ops,
         commit_message=commit_message,
     )
+    print("  Uploaded metadata files (README, SOURCES_MANIFEST, LICENSE_SUMMARY)")
+
     return {
         "repo_id": repo_id,
-        "files_uploaded": len(local_shards) + 3,
+        "files_uploaded": total_shards + 3,
+        "shards": total_shards,
         "mode": "full-replace" if replace_all_parquet else "append",
     }
 
