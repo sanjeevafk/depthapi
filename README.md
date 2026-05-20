@@ -115,8 +115,8 @@ curl -X GET "http://localhost:8000/api/collections" \
 ```
 
 ## Vertical-Agnostic, Expert-Specific
-While the engine is vertical-agnostic, it is uniquely powerful for:
-*   **Dev-Verticals:** Ingesting 100k+ pages of technical documentation.
+While the engine is vertical-agnostic, it is uniquely powerful for specific domains:
+*   **Dev-Verticals:** The dataset is open-sourced at [Curated Dev Vertical Dataset](https://huggingface.co/datasets/sanjeevafk/depthapi_technical_corpus) on Hugging Face. This dataset features 100k+ pages of deeply technical documentation, system design primers, and code post-mortems, meticulously parsed and chunked for optimal RAG retrieval.
 *   **Legal/Compliance:** Cross-referencing complex regulatory books.
 *   **Higher Education:** Transforming textbooks into personalized tutors.
 
