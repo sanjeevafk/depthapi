@@ -11,13 +11,19 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import faiss
 import numpy as np
 import structlog
 from filelock import FileLock
 from rank_bm25 import BM25Okapi
 
 logger = structlog.get_logger(__name__)
+
+
+def _load_faiss() -> Any:
+    """Import faiss only when filesystem RAG operations need it."""
+    import faiss
+
+    return faiss
 
 @dataclass
 class RetrievalResult:
@@ -86,6 +92,7 @@ class FilesystemRAGStore:
             
             # 3. Update FAISS Index
             dim = len(embeddings[0]) if embeddings else 768
+            faiss = _load_faiss()
             if paths["vectors"].exists():
                 index = faiss.read_index(str(paths["vectors"]))
             else:
@@ -141,6 +148,7 @@ class FilesystemRAGStore:
         with open(paths["chunks"], "r", encoding="utf-8") as f:
             chunks = json.load(f)
         
+        faiss = _load_faiss()
         index = faiss.read_index(str(paths["vectors"]))
         
         with open(paths["bm25"], "rb") as f:
@@ -189,6 +197,7 @@ class FilesystemRAGStore:
                 return
 
             dim = len(embeddings[0])
+            faiss = _load_faiss()
             index = faiss.IndexHNSWFlat(dim, 32)
             index.hnsw.efConstruction = 200
             vectors = np.array(embeddings).astype("float32")
@@ -242,6 +251,7 @@ class FilesystemRAGStore:
             bm25 = data["bm25"]
             
             # 1. Vector Search (FAISS)
+            faiss = _load_faiss()
             xq = np.array([query_embedding]).astype("float32")
             faiss.normalize_L2(xq) # Assuming cosine similarity if index is inner product, 
                                    # but IndexHNSWFlat uses L2 distance by default.
