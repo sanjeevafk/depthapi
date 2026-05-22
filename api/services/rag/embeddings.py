@@ -10,8 +10,6 @@ from google import genai
 from google.genai import types as genai_types
 from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
-
-from sentence_transformers import SentenceTransformer
 from api.config import get_settings
 
 logger = structlog.get_logger(__name__)
@@ -48,6 +46,8 @@ class EmbeddingService:
         elif self.provider == "local_bge":
             # Forcing CPU for stability as requested
             device = "cpu"
+            from sentence_transformers import SentenceTransformer
+
             self.local_model = SentenceTransformer(str(self.model), device=device)
             logger.info("local_model_loaded", model=self.model, device=device)
         else:
