@@ -53,7 +53,6 @@ from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.ingest_corpus.research_corpus.dataset_card import write_dataset_card
 from scripts.ingest_corpus.research_corpus.governance import build_governance_artifacts
 from scripts.ingest_corpus.research_corpus.io_utils import (
     export_parquet_shard,
@@ -442,7 +441,6 @@ def _hf_token() -> str:
 def _publish_folder(
     repo_id: str,
     folder_path: Path,
-    dataset_card_path: Path,
     manifest_path: Path,
     license_summary_path: Path,
     commit_message: str,
@@ -467,7 +465,6 @@ def _publish_folder(
         existing = api.list_repo_files(repo_id=repo_id, repo_type="dataset")
         for path in existing:
             if path.endswith(".parquet") or path in {
-                "README.md",
                 "SOURCES_MANIFEST.yaml",
                 "LICENSE_SUMMARY.md",
             }:
@@ -485,9 +482,6 @@ def _publish_folder(
 
     # Keep the release docs at repo root; they describe the latest run.
     operations += [
-        CommitOperationAdd(
-            path_in_repo="README.md", path_or_fileobj=str(dataset_card_path)
-        ),
         CommitOperationAdd(
             path_in_repo="SOURCES_MANIFEST.yaml", path_or_fileobj=str(manifest_path)
         ),
@@ -607,9 +601,6 @@ def main() -> None:
     work_dir = repo_root / "data" / "hf_export"
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    dataset_card_path = (
-        repo_root / "datasets" / "depthapi_technical_corpus" / "README.md"
-    )
     manifest_path = repo_root / "SOURCES_MANIFEST.yaml"
     license_summary_path = repo_root / "LICENSE_SUMMARY.md"
 
@@ -642,7 +633,6 @@ def main() -> None:
         since_timestamp=since_ts,
     )
 
-    write_dataset_card(dataset_card_path)
     build_governance_artifacts(
         export_summary["manifest_rows"],
         license_summary_path,
@@ -689,7 +679,6 @@ def main() -> None:
     publish_summary = _publish_folder(
         repo_id=args.hf_repo_id,
         folder_path=run_dir,
-        dataset_card_path=dataset_card_path,
         manifest_path=manifest_path,
         license_summary_path=license_summary_path,
         commit_message=args.commit_message,
