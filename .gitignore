@@ -61,6 +61,7 @@ evaluation/results_latest.json
 evaluation/results_latest.jsonl
 evaluation/results_latest.csv
 chunk_analysis_report.json
+reports
 
 # Local ingestion plans and manifests
 scripts/ingest_corpus/*_INGESTION.md
