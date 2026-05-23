@@ -24,7 +24,7 @@ from api.services.rag.pipeline.models import Document, SourceFingerprint
 
 log = logging.getLogger(__name__)
 
-_REPO_ROOT = Path(__file__).resolve().parents[6]
+_REPO_ROOT = Path(__file__).resolve().parents[5]
 
 # MIME type map for extensions not in mimetypes stdlib
 _EXTENSION_MIME = {

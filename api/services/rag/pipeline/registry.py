@@ -151,9 +151,14 @@ class PluginRegistry:
             AsciiDiagramPreserver,
         )
         from api.services.rag.pipeline.middleware.url_normalizer import UrlNormalizer
+        from api.services.rag.pipeline.middleware.code_snippet_extractor import CodeSnippetExtractor
+        from api.services.rag.pipeline.middleware.license_appender import LicenseAppender
+        
         registry.register_middleware("TocStripper", TocStripper)
         registry.register_middleware("AsciiDiagramPreserver", AsciiDiagramPreserver)
         registry.register_middleware("UrlNormalizer", UrlNormalizer)
+        registry.register_middleware("CodeSnippetExtractor", CodeSnippetExtractor)
+        registry.register_middleware("LicenseAppender", LicenseAppender)
 
         # Chunkers
         from api.services.rag.pipeline.chunkers.semantic_chunker import SemanticChunker
@@ -161,6 +166,9 @@ class PluginRegistry:
 
         # Sinks
         from api.services.rag.pipeline.sinks.local_json_sink import LocalJsonSink
+        from api.services.rag.pipeline.sinks.supabase_vector_sink import SupabaseVectorSink
+        
         registry.register_sink("LocalJsonSink", LocalJsonSink)
+        registry.register_sink("SupabaseVectorSink", SupabaseVectorSink)
 
         return registry
