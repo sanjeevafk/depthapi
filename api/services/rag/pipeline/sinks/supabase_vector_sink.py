@@ -81,7 +81,7 @@ class SupabaseVectorSink(BaseSink):
         # Assume all chunks in this batch belong to the same document
         sample = chunks[0]
         collection_name = sample.dataset_namespace or "Default Collection"
-        filename = sample.source_name or "unknown"
+        filename = sample.source_url or sample.source_name or "unknown"
         language = sample.metadata.get("language", "en")
         
         # 1. Get or Create Collection
