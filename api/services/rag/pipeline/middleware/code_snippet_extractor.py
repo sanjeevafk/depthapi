@@ -42,18 +42,9 @@ class CodeSnippetExtractor(BaseMiddleware):
         match = _CODE_BLOCK_PATTERN.search(doc.markdown_content)
         code_lang = match.group(1).lower() if match else "unknown"
 
-        # Pydantic is frozen, so we must copy the metadata dict
         new_metadata = dict(doc.metadata)
         new_metadata["code_lang"] = code_lang
 
-        # Return a new ParsedDocument with updated metadata
-        # We also pass the same content since we're only updating metadata
-        # To update metadata properly, we use model_copy since with_middleware_applied
-        # doesn't explicitly accept new_metadata in its signature in some implementations.
-        # Wait, let's look at `with_middleware_applied`:
-        # It updates `markdown_content`, `middleware_versions`, `applied_middleware`,
-        # and `middleware_config_hash`.
-        
         doc_updated = doc.with_middleware_applied(
             middleware_name=self.name,
             middleware_version=self.version,
