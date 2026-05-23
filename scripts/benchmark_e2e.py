@@ -461,16 +461,20 @@ class BenchmarkHarness:
         import httpx
 
         local_pgvector_url = str(getattr(self.settings, "local_pgvector_url", "") or "").strip()
-        local_pgvector_secret = getattr(self.settings, "local_pgvector_secret_key", "")
-        if hasattr(local_pgvector_secret, "get_secret_value"):
-            local_pgvector_secret = local_pgvector_secret.get_secret_value()
-        local_pgvector_secret = str(local_pgvector_secret or "").strip()
+        local_pgvector_secret_raw = getattr(self.settings, "local_pgvector_secret_key", "")
+        if hasattr(local_pgvector_secret_raw, "get_secret_value") and callable(getattr(local_pgvector_secret_raw, "get_secret_value", None)):
+            local_pgvector_secret = str(getattr(local_pgvector_secret_raw, "get_secret_value")()) or ""
+        else:
+            local_pgvector_secret = str(local_pgvector_secret_raw or "") or ""
+        local_pgvector_secret = local_pgvector_secret.strip()
 
         remote_url = str(getattr(self.settings, "supabase_url", "") or "").strip()
-        remote_secret = getattr(self.settings, "supabase_secret_key", "")
-        if hasattr(remote_secret, "get_secret_value"):
-            remote_secret = remote_secret.get_secret_value()
-        remote_secret = str(remote_secret or "").strip()
+        remote_secret_raw = getattr(self.settings, "supabase_secret_key", "")
+        if hasattr(remote_secret_raw, "get_secret_value") and callable(getattr(remote_secret_raw, "get_secret_value", None)):
+            remote_secret = str(getattr(remote_secret_raw, "get_secret_value")()) or ""
+        else:
+            remote_secret = str(remote_secret_raw or "") or ""
+        remote_secret = remote_secret.strip()
 
         preferred_source = "local_pgvector" if local_pgvector_url and local_pgvector_secret else "supabase"
         source_url = local_pgvector_url if preferred_source == "local_pgvector" else remote_url
@@ -784,6 +788,7 @@ class BenchmarkHarness:
                 raise BenchmarkIntegrityError("Judge pipeline failed to return structured JSON.") from fallback_exc
         if not parsed_valid(parsed):
             raise BenchmarkIntegrityError("Judge pipeline returned blank structured fields.")
+        assert parsed is not None, "parsed must be dict at this point"
         result = {
             "rubric": rubric,
             "payload_excerpt": compact_payload,

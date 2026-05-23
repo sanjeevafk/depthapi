@@ -30,6 +30,7 @@ test-results/
 .codex
 .env.local
 .env.cloud
+myenv/
 
 # Local/dev artifacts
 .venv-ingest/
