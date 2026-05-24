@@ -6,8 +6,9 @@ class DepthAPIClient:
     """Async client for interacting with DepthAPI."""
     
     def __init__(self, base_url: str = "http://127.0.0.1:8000"):
-        self.base_url = base_url.rstrip("/")
         import os
+        base_url = os.getenv("DEPTHAPI_BASE_URL", base_url)
+        self.base_url = base_url.rstrip("/")
         dev_key = os.getenv("DEV_API_KEYS", "sk-depth-test-key-12345").split(",")[0].strip()
         self.client = httpx.AsyncClient(
             timeout=60.0,
@@ -72,7 +73,8 @@ class DepthAPIClient:
         payload = {
             "topic": query,
             "prompt_spec": mapped_spec,
-            "mode": "chat"
+            "mode": "chat",
+            "bypass_cache": True,
         }
 
         # Mocked response path
@@ -91,9 +93,18 @@ class DepthAPIClient:
             res_json = response.json()
             explanations = res_json.get("explanations", {})
             answer = next(iter(explanations.values()), "") if explanations else ""
+            contexts = res_json.get("contexts") or []
+            context_texts = [
+                str(item.get("text") or item.get("content") or "")
+                for item in contexts
+                if isinstance(item, dict) and (item.get("text") or item.get("content"))
+            ]
             return {
                 "answer": answer,
-                "context": []
+                "context": context_texts,
+                "contexts": contexts,
+                "citations": res_json.get("citations") or [],
+                "metadata": res_json.get("metadata") or {},
             }
         except httpx.HTTPError as e:
             detail = ""

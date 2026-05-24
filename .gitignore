@@ -64,6 +64,15 @@ evaluation/results_latest.csv
 chunk_analysis_report.json
 reports
 
+# Evaluation artifacts
+.deepeval/
+evaluation/.deepeval/
+evaluation/results/
+evaluation/evaluation/
+evaluation/benchmark_dataset.json
+evaluation/benchmark_corpus.json
+uvicorn.log
+
 # Local ingestion plans and manifests
 scripts/ingest_corpus/*_INGESTION.md
 SOURCES_MANIFEST.yaml

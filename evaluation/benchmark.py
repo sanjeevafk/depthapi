@@ -7,7 +7,7 @@ from typing import List
 
 from generate_benchmark import generate_benchmark_dataset
 from depthapi_client import DepthAPIClient
-from langchain_baseline import LangChainBaseline
+from langchain_baseline import SupabaseCorpusBaseline
 from run_judge import CustomLLMJudge
 from run_deepeval import evaluate_deepeval
 from run_ragas import evaluate_ragas
@@ -30,27 +30,47 @@ async def evaluate_single(item, system_name, client, judge, evals_to_run):
             res = await client.query(query)
             
         answer = res.get("answer", "")
-        context = res.get("context", res.get("sources", [])) # Handle different keys
-        
+        context = res.get("context", res.get("sources", []))
+        if not context and isinstance(res.get("contexts"), list):
+            context = [
+                str(c.get("text") or c.get("content") or "")
+                for c in res.get("contexts")
+                if isinstance(c, dict) and (c.get("text") or c.get("content"))
+            ]
+
         result_entry = {
             "id": item["id"],
             "system": system_name,
             "query": query,
             "prompt_spec": prompt_spec,
             "metadata": item.get("metadata", {}),
-            "answer": answer
+            "answer": answer,
+            "ground_truth": item.get("ground_truth"),
+            "relevant_doc_ids": item.get("relevant_doc_ids"),
+            "relevant_chunk_ids": item.get("relevant_chunk_ids"),
+            "difficulty": item.get("difficulty"),
+            "category": item.get("category"),
+            "expected_citations": item.get("expected_citations"),
         }
+        if isinstance(res.get("error"), str):
+            result_entry["runtime_error"] = res.get("error")
+        if isinstance(res.get("contexts"), list):
+            result_entry["contexts"] = res.get("contexts")
+        if isinstance(res.get("citations"), list):
+            result_entry["citations"] = res.get("citations")
+        if isinstance(res.get("metadata"), dict):
+            result_entry["runtime_metadata"] = res.get("metadata")
         
         if "judge" in evals_to_run:
-            judge_res = await judge.evaluate(query, answer, context, prompt_spec)
+            judge_res = await judge.evaluate(query, answer, context, prompt_spec, sample_id=str(item["id"]))
             result_entry["judge"] = judge_res
             
         if "deepeval" in evals_to_run:
-            deepeval_res = evaluate_deepeval(query, answer, context)
+            deepeval_res = evaluate_deepeval(query, answer, context, sample_id=str(item["id"]))
             result_entry["deepeval"] = deepeval_res
             
         if "ragas" in evals_to_run:
-            ragas_res = evaluate_ragas(query, answer, context)
+            ragas_res = evaluate_ragas(query, answer, context, sample_id=str(item["id"]))
             result_entry["ragas"] = ragas_res
             
         return result_entry
@@ -58,11 +78,16 @@ async def evaluate_single(item, system_name, client, judge, evals_to_run):
 async def run_benchmark(size: int, evals: List[str], compare_baseline: bool):
     """Run the complete benchmark."""
     print(f"Generating dataset of size {size}...")
-    dataset = generate_benchmark_dataset(size)
+    dataset_path = Path("benchmark_corpus.json")
+    if dataset_path.exists():
+        with open(dataset_path, "r") as f:
+            dataset = json.load(f)[:size]
+    else:
+        dataset = generate_benchmark_dataset(size)
     
     # Save dataset
-    Path("evaluation").mkdir(exist_ok=True)
-    with open("evaluation/benchmark_dataset.json", "w") as f:
+    Path("results").mkdir(exist_ok=True)
+    with open("results/benchmark_dataset.json", "w") as f:
         json.dump(dataset, f, indent=2)
         
     judge = CustomLLMJudge() if "judge" in evals else None
@@ -77,19 +102,17 @@ async def run_benchmark(size: int, evals: List[str], compare_baseline: bool):
         
     if compare_baseline:
         print("Evaluating LangChain Baseline...")
-        # Create some dummy docs for baseline initialization
-        dummy_docs = [{"content": f"Dummy context for {item['query']}", "metadata": {}} for item in dataset]
-        baseline_client = LangChainBaseline(dummy_docs)
+        baseline_client = SupabaseCorpusBaseline()
         tasks = [evaluate_single(item, "langchain_baseline", baseline_client, judge, evals) for item in dataset]
         baseline_results = await tqdm.gather(*tasks)
         results.extend(baseline_results)
         
     print("Analyzing results...")
-    analyze_and_report(results, "evaluation/results/reports")
-    
-    # Save raw to evaluation/results/raw
-    Path("evaluation/results/raw").mkdir(parents=True, exist_ok=True)
-    with open("evaluation/results/raw/all_results.json", "w") as f:
+    analyze_and_report(results, "results/reports")
+
+    # Save raw to results/raw
+    Path("results/raw").mkdir(parents=True, exist_ok=True)
+    with open("results/raw/all_results.json", "w") as f:
         json.dump(results, f, indent=2)
         
     print("Benchmark complete!")
@@ -98,7 +121,7 @@ async def run_benchmark(size: int, evals: List[str], compare_baseline: bool):
 def main(
     size: int = typer.Option(120, help="Number of test cases to generate"),
     evals: List[str] = typer.Option(["deepeval", "ragas", "judge"], help="Evaluations to run"),
-    compare_baseline: bool = typer.Option(True, "--compare-baseline/--no-baseline", help="Run against LangChain baseline")
+    compare_baseline: bool = typer.Option(True, "--compare-baseline", help="Run against LangChain baseline")
 ):
     """Run the DepthAPI evaluation benchmark."""
     asyncio.run(run_benchmark(size, evals, compare_baseline))
@@ -125,5 +148,10 @@ def fix_sys_argv():
     sys.argv = new_argv
 
 if __name__ == "__main__":
-    fix_sys_argv()
-    app()
+    import argparse
+    parser = argparse.ArgumentParser(description="Run the DepthAPI evaluation benchmark.")
+    parser.add_argument("--size", type=int, default=120)
+    parser.add_argument("--evals", action="append", default=[])
+    parser.add_argument("--compare-baseline", action="store_true", default=False)
+    args = parser.parse_args()
+    asyncio.run(run_benchmark(args.size, args.evals or ["deepeval", "ragas", "judge"], args.compare_baseline))

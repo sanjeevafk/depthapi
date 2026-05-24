@@ -121,6 +121,8 @@ class RetrievalService:
                     expanded_content = await self._expand_context(source_db, cand, neighbor_window)
                 final_context.append({
                     "id": cand["chunk_id"],
+                    "chunk_id": cand.get("chunk_id"),
+                    "document_id": cand.get("document_id"),
                     "content": expanded_content,
                     "citation": {
                         "filename": cand.get("filename"),
@@ -128,8 +130,10 @@ class RetrievalService:
                         "chunk_order": cand.get("chunk_order"),
                         "source_tier": cand.get("source_tier"),
                     },
+                    "metadata": cand.get("metadata") or {},
                     "score": cand.get("rrf_score"),
                     "vector_similarity": cand.get("vector_similarity"),
+                    "match_source": cand.get("match_source"),
                 })
 
             return final_context
