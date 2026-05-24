@@ -81,8 +81,8 @@ class DepthAPIClient:
         if self._mock:
             # produce a deterministic short answer and fake context
             answer = f"(MOCK) Explanation for: {query}"
-            context = [f"Mock context paragraph about {query}"]
-            return {"answer": answer, "context": context}
+            contexts = [{"text": f"Mock context paragraph about {query}"}]
+            return {"answer": answer, "contexts": contexts, "citations": [], "metadata": {}, "error": None}
 
         try:
             response = await self.client.post(
@@ -94,17 +94,12 @@ class DepthAPIClient:
             explanations = res_json.get("explanations", {})
             answer = next(iter(explanations.values()), "") if explanations else ""
             contexts = res_json.get("contexts") or []
-            context_texts = [
-                str(item.get("text") or item.get("content") or "")
-                for item in contexts
-                if isinstance(item, dict) and (item.get("text") or item.get("content"))
-            ]
             return {
                 "answer": answer,
-                "context": context_texts,
                 "contexts": contexts,
                 "citations": res_json.get("citations") or [],
                 "metadata": res_json.get("metadata") or {},
+                "error": None,
             }
         except httpx.HTTPError as e:
             detail = ""
@@ -112,4 +107,4 @@ class DepthAPIClient:
                 detail = f": {response.json()}"
             except Exception:
                 pass
-            return {"error": f"{str(e)}{detail}", "answer": "Error fetching from API", "context": []}
+            return {"error": f"{str(e)}{detail}", "answer": "Error fetching from API", "contexts": [], "citations": [], "metadata": {}}

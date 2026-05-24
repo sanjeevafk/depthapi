@@ -1,9 +1,9 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from eval_utils import EVALUATOR_MODEL, MAX_RETRIES, call_evaluator_model, log_eval_failure, parse_json_with_repair
 
 
-def evaluate_ragas(query: str, answer: str, context: List[str], sample_id: str = None) -> Dict[str, Any]:
+def evaluate_ragas(query: str, answer: str, context: List[str], sample_id: Optional[str] = None) -> Dict[str, Any]:
     """Ragas-style evaluator with explicit structured-output control.
 
     The pinned Ragas package remains installed, but its internal parser path
@@ -53,3 +53,5 @@ Contexts: {context}
                 )
                 return {"ragas_answer_relevancy": None, "ragas_faithfulness": None, "error": "EVAL_FAILED"}
             time.sleep(1.0 * (2 ** attempt))
+    
+    return {"ragas_answer_relevancy": None, "ragas_faithfulness": None, "error": "EVAL_FAILED"}

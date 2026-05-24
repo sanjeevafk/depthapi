@@ -10,8 +10,8 @@ from typing import Any, Dict, Optional
 EVAL_LOG_DIR = Path("results/eval_logs")
 EVAL_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-EVALUATOR_MODEL = "llama-3.3-70b-versatile"
-MAX_RETRIES = 5
+EVALUATOR_MODEL = "openai/gpt-4o-mini"
+MAX_RETRIES = 2
 _CALL_LOCK = threading.Lock()
 _LAST_CALL_TS = 0.0
 
@@ -52,8 +52,8 @@ def call_evaluator_model(prompt: str, *, json_mode: bool = True, model: Optional
         raise RuntimeError(f"Unsupported EVALUATOR_PROVIDER: {provider}")
 
     # Global request pacing across judge/deepeval/ragas to reduce provider 429s.
-    min_interval_s = float(os.environ.get("EVAL_CALL_DELAY_SECONDS", "2.0"))
-    max_retries = int(os.environ.get("EVAL_HTTP_RETRIES", "5"))
+    min_interval_s = float(os.environ.get("EVAL_CALL_DELAY_SECONDS", "0.3"))
+    max_retries = int(os.environ.get("EVAL_HTTP_RETRIES", "2"))
     backoff_base = float(os.environ.get("EVAL_HTTP_BACKOFF_BASE", "2.0"))
     max_backoff_s = float(os.environ.get("EVAL_HTTP_MAX_BACKOFF_SECONDS", "20.0"))
 
@@ -66,7 +66,7 @@ def call_evaluator_model(prompt: str, *, json_mode: bool = True, model: Optional
                 time.sleep(wait_s)
             _LAST_CALL_TS = time.time()
 
-        resp = httpx.post(url, headers=headers, json=payload, timeout=60)
+        resp = httpx.post(url, headers=headers, json=payload, timeout=45)
         if resp.status_code != 429:
             resp.raise_for_status()
             data = resp.json()
