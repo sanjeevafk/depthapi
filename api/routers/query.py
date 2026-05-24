@@ -51,6 +51,9 @@ class QueryResponse(BaseModel):
     topic: str
     explanations: dict[str, str]
     cached: bool = False
+    contexts: list[dict[str, Any]] = Field(default_factory=list)
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 def _history_prompt_specs(_topic: str, _levels: list[str], explicit_spec: Any) -> list[dict[str, Any]]:
@@ -255,6 +258,43 @@ async def query_topic(
         if not model_alias and isinstance(telemetry.get("model_alias"), str):
             model_alias = str(telemetry.get("model_alias"))
 
+    contexts: list[dict[str, Any]] = []
+    seen_context_ids: set[str] = set()
+    for telemetry in level_telemetry.values():
+        retrieved = telemetry.get("retrieved_contexts")
+        if not isinstance(retrieved, list):
+            continue
+        for item in retrieved:
+            if not isinstance(item, dict):
+                continue
+            chunk_id = str(item.get("chunk_id") or item.get("id") or "")
+            if chunk_id and chunk_id in seen_context_ids:
+                continue
+            if chunk_id:
+                seen_context_ids.add(chunk_id)
+            citation = item.get("citation") if isinstance(item.get("citation"), dict) else {}
+            contexts.append({
+                "doc_id": item.get("document_id"),
+                "chunk_id": item.get("chunk_id") or item.get("id"),
+                "text": item.get("content", ""),
+                "score": item.get("score"),
+                "vector_similarity": item.get("vector_similarity"),
+                "match_source": item.get("match_source"),
+                "source": citation.get("source_url") or citation.get("filename") or citation.get("source_tier"),
+                "metadata": item.get("metadata") or {},
+                "citation": citation,
+            })
+    citations = [
+        {
+            "doc_id": ctx.get("doc_id"),
+            "chunk_id": ctx.get("chunk_id"),
+            "source": ctx.get("source"),
+            "score": ctx.get("score"),
+            "metadata": ctx.get("metadata") or {},
+        }
+        for ctx in contexts
+    ]
+
     queue_time_ms = round((time.perf_counter() - request_started) * 1000, 2)
     model_inference_ms = round(max(model_inference_values), 2) if model_inference_values else None
     log_sampled_success(
@@ -272,7 +312,20 @@ async def query_topic(
         sampled=True,
     )
 
-    return QueryResponse(topic=topic, explanations=explanations, cached=False)
+    return QueryResponse(
+        topic=topic,
+        explanations=explanations,
+        cached=False,
+        contexts=contexts,
+        citations=citations,
+        metadata={
+            "token_usage": token_usage,
+            "estimated_cost_usd": round(estimated_cost_usd, 8) if has_cost else None,
+            "model_inference_ms": model_inference_ms,
+            "queue_time_ms": queue_time_ms,
+            "model_alias": model_alias or mode,
+        },
+    )
 
 
 @router.post("/query/stream")

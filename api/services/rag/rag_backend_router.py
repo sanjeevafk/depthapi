@@ -90,4 +90,5 @@ async def retrieve_context(query: str, api_key_id: str, **kwargs):
         ]
     else:
         # Supabase/pgvector backend
+        kwargs.setdefault("min_similarity", float(os.getenv("RAG_MIN_SIMILARITY", "0.65")))
         return await backend.retrieve_context(query, api_key_id, **kwargs)

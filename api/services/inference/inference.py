@@ -234,6 +234,8 @@ async def technical_mode_handler(topic: str, **kwargs: Any) -> str:
             query_mode="technical",
         )
         rag_context = format_rag_context(rag_results)
+        if isinstance(kwargs.get("telemetry_sink"), dict):
+            kwargs["telemetry_sink"]["retrieved_contexts"] = rag_results
     except Exception as exc:
         logger.error(f"technical_mode_rag_failed: {str(exc)}", request_id=kwargs.get("request_id"))
 
@@ -434,6 +436,8 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
             query_mode="conceptual",
         )
         rag_context = format_rag_context(rag_results)
+        if isinstance(kwargs.get("telemetry_sink"), dict):
+            kwargs["telemetry_sink"]["retrieved_contexts"] = rag_results
     except Exception as exc:
         logger.error(f"learn_mode_rag_failed: {str(exc)}", request_id=kwargs.get("request_id"))
     

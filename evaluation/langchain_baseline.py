@@ -8,6 +8,7 @@ try:
 except Exception:
     HuggingFaceEmbeddings = None
 from langchain_groq import ChatGroq
+from corpus_supabase import rest_rpc
 
 # Minimal local PromptTemplate and Document to avoid langchain_core dependency
 class PromptTemplate:
@@ -70,7 +71,8 @@ Answer:"""
             documents = [Document(page_content="Dummy document to initialize vectorstore", metadata={})]
         # If FAISS is unavailable, use a simple in-memory vector store fallback
         if FAISS is not None:
-            self.vectorstore = FAISS.from_documents(documents, self.embeddings)
+            ids = [str(i) for i in range(len(documents))]
+            self.vectorstore = FAISS.from_documents(documents, self.embeddings, ids=ids)
         else:
             # Simple in-memory vectorstore implementing similarity_search(query, k)
             class SimpleVectorStore:
@@ -124,3 +126,72 @@ Answer:"""
             }
         except Exception as e:
             return {"error": str(e), "answer": "Error in LangChain baseline", "context": []}
+
+
+class SupabaseCorpusBaseline:
+    """Baseline RAG over the same local trusted corpus as DepthAPI."""
+
+    def __init__(self, docs: List[Dict[str, Any]] | None = None):
+        self.llm = ChatGroq(model=os.environ.get("EVALUATOR_MODEL", "llama-3.3-70b-versatile"), temperature=0, max_retries=3)
+        self.use_llm = (os.environ.get("BASELINE_USE_LLM", "0") == "1")
+
+    async def _embed(self, query: str) -> list[float]:
+        from api.services.rag.embeddings import get_embedding_service
+        vectors = await get_embedding_service().create_embeddings([query])
+        return vectors[0]
+
+    async def query(self, query: str) -> Dict[str, Any]:
+        try:
+            query_embedding = await self._embed(query)
+            res = rest_rpc("hybrid_search_trusted_v5", {
+                "query_text": query,
+                "query_embedding": query_embedding,
+                "query_mode": "conceptual",
+                "candidate_pool_size": 100,
+                "final_count": int(os.getenv("RAG_TOP_K", "5")),
+                "min_similarity": float(os.getenv("RAG_MIN_SIMILARITY", "0.65")),
+            })
+            res.raise_for_status()
+            rows = res.json() or []
+            contexts = [
+                {
+                    "doc_id": row.get("document_id"),
+                    "chunk_id": row.get("chunk_id"),
+                    "text": row.get("content", ""),
+                    "score": row.get("rrf_score"),
+                    "vector_similarity": row.get("vector_similarity"),
+                    "match_source": row.get("match_source"),
+                    "source": row.get("source_url") or row.get("filename"),
+                    "metadata": row.get("metadata") or {},
+                }
+                for row in rows
+            ]
+            if self.use_llm:
+                context_text = "\n\n".join(f"[{i+1}] {ctx['text']}" for i, ctx in enumerate(contexts))
+                prompt = (
+                    "Answer using only the retrieved corpus context. Cite sources by bracket number.\n\n"
+                    f"Question: {query}\n\nContext:\n{context_text}\n\nAnswer:"
+                )
+                answer = (await self.llm.ainvoke(prompt)).content
+            else:
+                snippets = [ctx["text"].strip() for ctx in contexts[:2] if isinstance(ctx.get("text"), str)]
+                if snippets:
+                    answer = " ".join(snippets)
+                else:
+                    answer = "I could not find enough relevant context in the corpus."
+            return {
+                "answer": answer,
+                "context": [ctx["text"] for ctx in contexts],
+                "contexts": contexts,
+                "citations": [
+                    {
+                        "doc_id": ctx.get("doc_id"),
+                        "chunk_id": ctx.get("chunk_id"),
+                        "source": ctx.get("source"),
+                        "score": ctx.get("score"),
+                    }
+                    for ctx in contexts
+                ],
+            }
+        except Exception as e:
+            return {"error": str(e), "answer": "Error in LangChain baseline", "context": [], "contexts": []}
