@@ -80,3 +80,6 @@ LICENSE_SUMMARY.md
 
 # Internal planning docs
 docs/planning/
+
+# Ignore accidentally committed IBM knowledge set
+configs/ingest/ibm_ai_engineering_knowledgeset.yaml
