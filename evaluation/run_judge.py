@@ -10,7 +10,15 @@ class CustomLLMJudge:
         self.model = os.environ.get("EVALUATOR_MODEL", EVALUATOR_MODEL)
 
     async def evaluate(self, query: str, answer: str, context: List[str], prompt_spec: Dict[str, Any] = None, sample_id: str = None) -> Dict[str, Any]:
-        context_str = "\n\n".join(context)
+        normalized_context = []
+        for c in context or []:
+            if isinstance(c, str):
+                normalized_context.append(c)
+            elif isinstance(c, dict):
+                txt = c.get("text") or c.get("content")
+                if txt:
+                    normalized_context.append(str(txt))
+        context_str = "\n\n".join(normalized_context)
         prompt = f"""Return strict JSON only.
 {{
   "depth_compliance": 1-5 integer,
