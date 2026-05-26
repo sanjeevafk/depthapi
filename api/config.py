@@ -216,6 +216,9 @@ class Settings(BaseSettings):
     exa_api_key: str = ""
     cerebras_daily_token_budget: int = 100000
 
+    slowapi_enabled: bool = False
+    slowapi_default_limit_per_minute: int = 120
+
     sentry_dsn: str = ""
     sentry_enabled: bool = True
     sentry_traces_sample_rate: float = 0.1

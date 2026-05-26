@@ -10,6 +10,10 @@ def evaluate_ragas(query: str, answer: str, context: List[str], sample_id: Optio
     hangs/fails with current Gemini responses. This wrapper preserves the two
     Ragas metrics used by the report while enforcing our parse/repair/logging
     contract directly.
+
+    Retry policy: up to MAX_RETRIES attempts (inherited from eval_utils).
+    On 429s the outer loop detects the error string and waits longer before
+    the next attempt; the inner call_evaluator_model also retries independently.
     """
     import time
     import os
@@ -29,6 +33,7 @@ Answer: {answer}
 Contexts: {context}
 """
     raw = ""
+    last_exc_str = ""
     for attempt in range(MAX_RETRIES):
         try:
             raw = call_evaluator_model(prompt, json_mode=True, model=model_name)
@@ -40,7 +45,8 @@ Contexts: {context}
                 "ragas_faithfulness": parsed.get("ragas_faithfulness"),
             }
         except Exception as e:
-            if attempt == MAX_RETRIES - 1:
+            last_exc_str = str(e)
+            if attempt >= MAX_RETRIES - 1:
                 log_eval_failure(
                     evaluator="ragas",
                     metric_name="ragas_answer_relevancy,ragas_faithfulness",
@@ -48,10 +54,15 @@ Contexts: {context}
                     sample_id=sample_id,
                     model=model_name,
                     retry_count=attempt + 1,
-                    exception=str(e),
+                    exception=last_exc_str,
                     raw_response=raw,
                 )
                 return {"ragas_answer_relevancy": None, "ragas_faithfulness": None, "error": "EVAL_FAILED"}
-            time.sleep(1.0 * (2 ** attempt))
-    
+            # Detect 429 rate-limit and wait longer before the next attempt.
+            if "429" in last_exc_str or "rate limit" in last_exc_str.lower():
+                backoff = min(60.0, 4.0 * (2 ** attempt))
+            else:
+                backoff = 1.0 * (2 ** attempt)
+            time.sleep(backoff)
+
     return {"ragas_answer_relevancy": None, "ragas_faithfulness": None, "error": "EVAL_FAILED"}

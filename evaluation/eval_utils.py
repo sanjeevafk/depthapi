@@ -11,7 +11,7 @@ EVAL_LOG_DIR = Path("results/eval_logs")
 EVAL_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 EVALUATOR_MODEL = "openai/gpt-4o-mini"
-MAX_RETRIES = 2
+MAX_RETRIES = 4
 _CALL_LOCK = threading.Lock()
 _LAST_CALL_TS = 0.0
 
@@ -52,10 +52,11 @@ def call_evaluator_model(prompt: str, *, json_mode: bool = True, model: Optional
         raise RuntimeError(f"Unsupported EVALUATOR_PROVIDER: {provider}")
 
     # Global request pacing across judge/deepeval/ragas to reduce provider 429s.
-    min_interval_s = float(os.environ.get("EVAL_CALL_DELAY_SECONDS", "0.3"))
-    max_retries = int(os.environ.get("EVAL_HTTP_RETRIES", "2"))
+    # Defaults are conservative for Groq free-tier (30 req/min limit).
+    min_interval_s = float(os.environ.get("EVAL_CALL_DELAY_SECONDS", "1.5"))
+    max_retries = int(os.environ.get("EVAL_HTTP_RETRIES", "4"))
     backoff_base = float(os.environ.get("EVAL_HTTP_BACKOFF_BASE", "2.0"))
-    max_backoff_s = float(os.environ.get("EVAL_HTTP_MAX_BACKOFF_SECONDS", "20.0"))
+    max_backoff_s = float(os.environ.get("EVAL_HTTP_MAX_BACKOFF_SECONDS", "60.0"))
 
     for attempt in range(max_retries):
         with _CALL_LOCK:
@@ -66,14 +67,17 @@ def call_evaluator_model(prompt: str, *, json_mode: bool = True, model: Optional
                 time.sleep(wait_s)
             _LAST_CALL_TS = time.time()
 
-        resp = httpx.post(url, headers=headers, json=payload, timeout=45)
-        if resp.status_code != 429:
-            resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"] or ""
-        if attempt == max_retries - 1:
-            resp.raise_for_status()
-        time.sleep(min(max_backoff_s, backoff_base ** attempt))
+        resp = httpx.post(url, headers=headers, json=payload, timeout=60)
+        if resp.status_code == 429:
+            if attempt == max_retries - 1:
+                resp.raise_for_status()
+            # For 429s, use a longer wait to let the provider rate-limit window reset.
+            wait_429 = min(max_backoff_s, backoff_base ** (attempt + 2))
+            time.sleep(wait_429)
+            continue
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"] or ""
     raise RuntimeError("Evaluator request failed after retries")
 
 
