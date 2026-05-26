@@ -26,7 +26,6 @@ from api.services.inference.inference_routing import (
 )
 from api.utils import LEARNING_MODE, TECHNICAL_MODE
 
-# ─── Test Queries ────────────────────────────────────────────────
 QUERIES = [
     {
         "label": "Simple (2 tokens)",
@@ -57,7 +56,7 @@ print("=" * 80)
 for test in QUERIES:
     query = test["query"]
     mode = test["mode"]
-    level = "expert"  # Use most demanding level
+    level = "expert"
 
     features = extract_features(query, mode=mode, level=level)
     complexity = features["complexity"]

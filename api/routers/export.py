@@ -35,7 +35,6 @@ async def export_explanations(req: ExportRequest, api_key: ApiKeyRecord = Depend
     if req.mode not in SUPPORTED_CHAT_MODES:
         req.mode = DEFAULT_CHAT_MODE
 
-    # Identify levels to include based on mode
     target_levels = set(PROMPT_DEPTHS)
     
     current_levels = set(req.explanations.keys())
@@ -81,7 +80,7 @@ async def export_explanations(req: ExportRequest, api_key: ApiKeyRecord = Depend
             media_type="text/plain",
             headers={"Content-Disposition": f"attachment; filename={filename_base}.txt"},
         )
-    else: # format == "md"
+    else:
         content = f"# {req.topic}\n\n"
         if len(req.explanations) > 1:
             content += "---\n\n"

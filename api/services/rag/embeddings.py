@@ -9,6 +9,7 @@ import structlog
 from google import genai
 from google.genai import types as genai_types
 from openai import AsyncOpenAI
+from pydantic import SecretStr
 from tenacity import retry, stop_after_attempt, wait_exponential
 from api.config import get_settings
 
@@ -28,23 +29,16 @@ class EmbeddingService:
         """Re-initializes all model clients based on current self.provider and self.model."""
         settings = get_settings()
         if self.provider == "gemini":
-            api_key = getattr(settings, "gemini_api_key", "")
-            if hasattr(api_key, "get_secret_value"):
-                api_key = api_key.get_secret_value()
-            api_key = str(api_key or "").strip()
+            api_key = self._resolve_secret(getattr(settings, "gemini_api_key", ""))
             if not api_key:
                 raise ValueError("GEMINI_API_KEY is required for Gemini embeddings")
             self.gemini_client = genai.Client(api_key=api_key)
         elif self.provider == "openai":
-            api_key = getattr(settings, "openai_api_key", "")
-            if hasattr(api_key, "get_secret_value"):
-                api_key = api_key.get_secret_value()
-            api_key = str(api_key or "").strip()
+            api_key = self._resolve_secret(getattr(settings, "openai_api_key", ""))
             if not api_key:
                 raise ValueError("OPENAI_API_KEY is required for OpenAI embeddings")
             self.openai_client = AsyncOpenAI(api_key=api_key)
         elif self.provider == "local_bge":
-            # Forcing CPU for stability as requested
             device = "cpu"
             from sentence_transformers import SentenceTransformer
 
@@ -61,6 +55,12 @@ class EmbeddingService:
         if not model:
             model = "text-embedding-004"
         return [model]
+
+    @staticmethod
+    def _resolve_secret(value: object) -> str:
+        if isinstance(value, SecretStr):
+            return value.get_secret_value().strip()
+        return str(value or "").strip()
 
     @staticmethod
     def _extract_gemini_embeddings(result: object) -> List[List[float]]:
@@ -88,7 +88,6 @@ class EmbeddingService:
 
         try:
             cleaned_texts = [t.replace("\n", " ").strip() for t in texts]
-            # Filter empty strings
             valid_texts = [t for t in cleaned_texts if t]
             if not valid_texts:
                 return []
@@ -135,12 +134,12 @@ class EmbeddingService:
                     "normalize_embeddings": True,
                     "convert_to_numpy": True,
                     "show_progress_bar": False,
-                    "batch_size": 16, # As requested
-                    "precision": "float32", # float16 not supported on CPU, using float32 for accuracy
+                    "batch_size": 16,  # Limit CPU memory usage
+                    "precision": "float32",  # float16 unsupported on CPU
                 }
 
                 try:
-                    # Try passing output_dimensionality directly (supported in newer sentence-transformers)
+                    # Try output_dimensionality when supported by sentence-transformers.
                     if int(self.dimensions) != 1024:
                         encode_kwargs["output_dimensionality"] = int(self.dimensions)
 
@@ -148,14 +147,13 @@ class EmbeddingService:
                         self.local_model.encode, valid_texts, **encode_kwargs
                     )
                 except (TypeError, ValueError):
-                    # Fallback for older versions or unsupported models: Encode at full dim then slice
-                    # Note: Slicing works for Matryoshka-trained models like BGE-M3
+                    # Fallback: encode at full dim then slice for Matryoshka models.
                     del encode_kwargs["output_dimensionality"]
                     vectors = await asyncio.to_thread(
                         self.local_model.encode, valid_texts, **encode_kwargs
                     )
                     if int(self.dimensions) < vectors.shape[1]:
-                        # Slice and re-normalize
+                        # Slice and re-normalize.
                         import numpy as np
 
                         vectors = vectors[:, : int(self.dimensions)]
@@ -183,7 +181,6 @@ class EmbeddingService:
             raise
 
 
-# Global singleton instance
 _service: Optional[EmbeddingService] = None
 
 

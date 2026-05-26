@@ -19,9 +19,7 @@ from api.utils import SOCRATIC_MODE, TECHNICAL_MODE
 _request_validator = RequestValidator()
 _message_dispatcher = MessageDispatcher()
 
-# Singleton lock manager replaces inline _CONVERSATION_LOCKS dict.
-# This consolidates lock state and eliminates duplication with
-# api/services/conversation_lock_manager.py.
+# Shared lock manager avoids duplicate lock state.
 _lock_manager = ConversationLockManager(max_locks=10000, ttl_seconds=600)
 
 
