@@ -38,12 +38,6 @@ def build_search_context_block(search_context: str = "") -> str:
     return "Search context: none provided."
 
 
-def build_quote_block(quote_text: str = "") -> str:
-    if quote_text.strip():
-        return f'Optional quote - embed once naturally if useful:\n"{quote_text.strip()}"'
-    return ""
-
-
 def build_context_block(conversation_context: str = "") -> str:
     if conversation_context.strip():
         return (
@@ -58,7 +52,6 @@ def build_prompt_result(
     *,
     conversation_context: str = "",
     search_context: str = "",
-    quote_text: str = "",
     diagram_type: Optional[DiagramType] = None,
 ) -> PromptBuild:
     """Build a prompt and observability trace from a canonical PromptSpec."""
@@ -67,7 +60,6 @@ def build_prompt_result(
         RuntimeContext(
             conversation_context=conversation_context,
             search_context=search_context,
-            quote_text=quote_text,
             diagram_type=diagram_type,
         ),
     )
@@ -79,7 +71,6 @@ def build_prompt(
     *,
     conversation_context: str = "",
     search_context: str = "",
-    quote_text: str = "",
     diagram_type: Optional[DiagramType] = None,
 ) -> str:
     """Build a prompt from the canonical PromptSpec object."""
@@ -88,7 +79,6 @@ def build_prompt(
         spec,
         conversation_context=conversation_context,
         search_context=search_context,
-        quote_text=quote_text,
         diagram_type=diagram_type,
     )
     return build.prompt
@@ -100,7 +90,6 @@ def build_prompt_with_trace(
     *,
     conversation_context: str = "",
     search_context: str = "",
-    quote_text: str = "",
     diagram_type: Optional[DiagramType] = None,
 ) -> PromptBuild:
     """Build a prompt and expose selected axes, injectors, and template chain."""
@@ -109,7 +98,6 @@ def build_prompt_with_trace(
         spec,
         conversation_context=conversation_context,
         search_context=search_context,
-        quote_text=quote_text,
         diagram_type=diagram_type,
     )
 
