@@ -16,9 +16,7 @@ async def run_dedup_audit():
 
     print("--- RAG Deduplication Audit ---")
     
-    # 1. Check for exact content duplicates (same hash, different IDs)
     print("\n[1] Checking for exact content hash collisions...")
-    # SQL query to find duplicate hashes
     query = """
     SELECT content_hash, COUNT(*) as count
     FROM knowledge_chunks
@@ -29,13 +27,7 @@ async def run_dedup_audit():
     LIMIT 10;
     """
     
-    # Using direct SQL if possible, or just fetching chunks to analyze
-    # Since we can't run raw SQL easily via the adapter's .rpc without a function,
-    # let's check if there's an existing RPC or use the table interface.
-    
-    # Actually, we can fetch the counts via .select() with aggregates if supported,
-    # but let's try a simpler approach: fetch all hashes and count in Python.
-    # Note: If the table is huge, this is slow.
+    # Python-side counting avoids RPC dependencies; can be slow on large tables.
     
     res = await supabase.table("knowledge_chunks").select("content_hash, id, document_id").execute()
     chunks = res.data or []
@@ -63,19 +55,12 @@ async def run_dedup_audit():
             for item in items:
                 print(f"      - ID: {item['id']} (Doc: {item['document_id']})")
 
-    # 2. Evaluate dual-tsvector redundancy in search results
     print("\n[2] Evaluating dual-tsvector redundancy in hybrid_search_v5...")
-    # This requires running a sample search and checking if 'dense', 'sparse_english', 'sparse_simple'
-    # all return the same chunks frequently.
-    
-    # Pick a sample query
     sample_query = "python decorators"
-    user_id = "00000000-0000-0000-0000-000000000000" # dummy
+    user_id = "00000000-0000-0000-0000-000000000000"
     
     try:
-        # Note: We need a query embedding to run hybrid_search_v5
-        # For simplicity, we'll skip this part if we can't easily generate one here,
-        # but the SQL logic itself already deduplicates by ID.
+        # hybrid_search_v5 requires query embeddings; skip if unavailable.
         print("  (Note: SQL hybrid_search_v5 already performs ID-based UNION. Content-level dedup is the focus.)")
     except Exception as e:
         print(f"  Error running sample search: {e}")

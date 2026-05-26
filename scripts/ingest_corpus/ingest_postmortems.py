@@ -14,7 +14,7 @@ import argparse
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -94,7 +94,7 @@ def run(max_files: int | None = None) -> dict[str, Any]:
             stats["skip_empty_after_chunking"] += 1
             continue
 
-        metadata = [
+        metadata: list[dict[str, Any] | None] = [
             {
                 "dataset_root": "datasets/postmortems/data",
                 "relative_path": rel_posix,
@@ -118,10 +118,6 @@ def run(max_files: int | None = None) -> dict[str, Any]:
         stats["chunks_candidate"] += len(chunks)
         stats["chunks_added"] += len(added)
 
-    # Note: We do NOT call ingestor.flush() if the user is currently running an embedding job.
-    # The prompt explicitly asks us to CREATE A PLAN and NOT run it right now if we are deferring.
-    # We will log that we created it and tell the user how to run it.
-    
     total = ingestor.flush()
     log.info(f"[{source_name}] processed={stats['processed_files']} added={stats['chunks_added']} total_chunks_after_flush={total}")
     

@@ -108,7 +108,6 @@ app.middleware("http")(structlog_middleware)
 register_exception_handlers(app)
 
 
-# --- Core DepthAPI Routes ---
 app.include_router(query.router, prefix="/api")
 app.include_router(ingest.router, prefix="/api")
 app.include_router(export.router, prefix="/api")

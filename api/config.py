@@ -2,8 +2,8 @@
 
 from dataclasses import dataclass
 from functools import lru_cache
-from pydantic import AliasChoices, ConfigDict, Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings
+from pydantic import AliasChoices, Field, SecretStr, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 @dataclass(frozen=True)
@@ -33,11 +33,9 @@ class StreamConfig:
     cache_ttl_seconds: int
 
 
-# Global stream config instance (initialized at startup)
 _STREAM_CONFIG: StreamConfig | None = None
 
 
-# Per-component timeout budgets (seconds) for pre-LLM work.
 CONTEXT_LOAD_TIMEOUTS: dict[str, float] = {
     "redis_snapshot": 0.5,
     "db_context": 1.0,
@@ -144,25 +142,23 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-004"
     embedding_dimension: int = 768
 
-    stream_max_seconds: int = 30  # Increased from 20 to 30 for large input handling
-    technical_stream_max_seconds: int = 32  # Increased from 22 to 32
+    stream_max_seconds: int = 30
+    technical_stream_max_seconds: int = 32
     stream_heartbeat_seconds: int = 2
     stream_start_timeout_seconds: int = 5
     technical_stream_start_timeout_seconds: float = 8.0
     stream_idempotency_ttl_seconds: int = 90
     stream_idempotency_stale_seconds: int = 20
     stream_fallback_budget_seconds: int = 8
-    vercel_function_max_duration_seconds: int = (
-        50  # Increased from 25 to support large inputs
-    )
+    vercel_function_max_duration_seconds: int = 50
     trusted_proxies: str = ""
 
     redis_url: str = "redis://localhost:6379"
     upstash_redis_rest_url: str = ""
     upstash_redis_rest_token: str = ""
-    cache_ttl: int = 86400  # 24 hours
+    cache_ttl: int = 86400
     rate_limit_strategy: str = "upstash_redis"
-    rate_limit_per_user: int = 20  # Requests per minute
+    rate_limit_per_user: int = 20
     rate_limit_burst: int = 5
     rate_limit_burst_window_seconds: int = 10
     rate_limit_sustained_window_seconds: int = 60
@@ -196,18 +192,16 @@ class Settings(BaseSettings):
     conversation_context_summary_tokens: int = 240
     conversation_context_fetch_limit: int = 80
 
-    # Large text input handling
     max_input_chars_api: int = 100000  # Hard cap for API (100K chars)
     max_input_tokens_learning: int = 10000  # ~40K chars
     max_input_tokens_technical: int = 15000  # ~60K chars
     max_input_tokens_socratic: int = 8000  # ~32K chars
 
-    # Timeout extension triggers (lowercase threshold names for consistency)
     large_input_char_threshold: int = (
         5000  # Trigger on 5K+ chars regardless of truncation
     )
     large_input_token_threshold: int = (
-        5000  # Lowered from 10K to 5K tokens (was too high)
+        5000
     )
     large_input_timeout_extension_multiplier: float = 1.5  # 50% longer for large inputs
     technical_mode_timeout_extension: float = 1.3  # Additional 30% for technical mode
@@ -229,28 +223,7 @@ class Settings(BaseSettings):
     sentry_release: str = ""
     sentry_auth_token: str = ""
 
-    # Email / Resend
-    resend_api_key: SecretStr = SecretStr("")
-    resend_from: str = ""
-    support_email: str = "[EMAIL_ADDRESS]"
-    site_name: str = "DepthAPI"
-    public_base_url: str = "http://localhost:3000"
-    allowed_origins: str = "http://localhost:3000, http://localhost:5173"
-
-    # Dodo Payments Configuration
-    dodo_api_key: str = ""
-    dodo_webhook_secret: str = ""
-    dodo_webhook_endpoint: str = ""
-    dodo_webhook_url: str = ""
-    dodo_payment_link_id: str = ""
-    # test_mode or live_mode (Dodo API / future SDK usage)
-    dodo_environment: str = "test_mode"
-    checkout_rate_limit_per_minute: int = 10
-    email_rate_limit_per_minute: int = 5
-    slowapi_enabled: bool = True
-    slowapi_default_limit_per_minute: int = 120
-
-    model_config = ConfigDict(
+    model_config = SettingsConfigDict(
         env_file=(".env.local", ".env", "../.env"),
         env_file_encoding="utf-8",
         extra="ignore",

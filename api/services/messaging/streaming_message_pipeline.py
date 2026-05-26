@@ -141,7 +141,6 @@ class StreamingMessagePipeline:
                 },
             )
 
-            # ── Conversation context & intent ──────────────────────────────
             history_messages = await self.context_builder.parse_snapshot_messages(
                 snapshot_raw_messages,
                 req.conversation_id,

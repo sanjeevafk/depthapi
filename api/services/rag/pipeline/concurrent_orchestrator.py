@@ -2,15 +2,8 @@
 concurrent_orchestrator.py — Async Pipeline Orchestrator with Bounded Concurrency.
 
 Extends PipelineOrchestrator with asyncio-based concurrent document processing.
-CPU-heavy parse/chunk work is offloaded to a ProcessPoolExecutor to avoid
-blocking the event loop.
-
-Design constraints (Phase 4):
-    - Max 10 concurrent documents (configurable semaphore)
-    - Max 2 process pool workers for CPU-bound work
-    - Rate limiting: max 10 docs/sec from source fetch
-    - Connection pooling delegated to sink (Supabase: pool_size=5)
-    - No Celery, Redis, or distributed coordination (deferred to Phase 6)
+CPU-heavy parse/chunk work is offloaded to an executor to avoid blocking the
+event loop.
 
 Usage:
     orchestrator = ConcurrentPipelineOrchestrator(max_concurrent_docs=10)
@@ -50,9 +43,6 @@ from api.services.rag.pipeline.registry import PluginRegistry
 log = logging.getLogger(__name__)
 
 
-# ─── Orchestrator ─────────────────────────────────────────────────────────────
-
-
 class ConcurrentPipelineOrchestrator(PipelineOrchestrator):
     """
     Asyncio-based orchestrator with bounded concurrent document processing.
@@ -60,12 +50,11 @@ class ConcurrentPipelineOrchestrator(PipelineOrchestrator):
     Inherits all sync pipeline logic from PipelineOrchestrator.
     Adds:
         - asyncio.Semaphore for bounded concurrency (default: 10 docs)
-        - ProcessPoolExecutor for CPU-heavy parse/chunk (default: 2 workers)
+        - Thread executor for CPU-heavy parse/chunk (default: 2 workers)
         - Rate limiting via token-bucket (default: 10 docs/sec)
         - Per-run PipelineMetrics with p50/p95/p99 latencies
 
-    Process pool note: ProcessPoolExecutor requires picklable callables.
-    Only pure function adapters (no closures) are dispatched to the pool.
+    Thread pool avoids pickling constraints from plugin instances.
     """
 
     def __init__(
@@ -81,8 +70,6 @@ class ConcurrentPipelineOrchestrator(PipelineOrchestrator):
         self._max_concurrent_docs = max_concurrent_docs
         self._max_process_workers = max_process_workers
         self._max_docs_per_second = max_docs_per_second
-
-    # ── Public async API ─────────────────────────────────────────────────────
 
     async def ingest_async(
         self,
@@ -135,7 +122,6 @@ class ConcurrentPipelineOrchestrator(PipelineOrchestrator):
         semaphore = asyncio.Semaphore(self._max_concurrent_docs)
         new_fingerprints: dict[str, SourceFingerprint] = dict(fingerprints)
 
-        # Collect all (doc, fingerprint) pairs from the (sync) source
         doc_fp_pairs: list[tuple[Document, SourceFingerprint]] = []
         for doc, fingerprint in source.fetch(
             since=fingerprints if mode == IngestionMode.INCREMENTAL else None
@@ -143,21 +129,19 @@ class ConcurrentPipelineOrchestrator(PipelineOrchestrator):
             doc_fp_pairs.append((doc, fingerprint))
             metrics.inc("docs_fetched")
 
-        # Rate-limiting state
         _rate_state = {"tokens": self._max_docs_per_second, "last_refill": time.monotonic()}
 
         async def rate_limited_process(
             doc: Document,
             fingerprint: SourceFingerprint,
         ) -> tuple[dict[str, Any], SourceFingerprint]:
-            """Acquire semaphore + rate limit token before processing."""
+            """Acquire semaphore and rate limit token before processing."""
             async with semaphore:
                 await self._consume_rate_token(_rate_state)
                 with metrics.time("doc_total_ms"):
                     result = await self._process_document_async(doc, config, metrics)
                 return result, fingerprint
 
-        # Dispatch all documents as concurrent tasks
         tasks = [
             asyncio.create_task(rate_limited_process(doc, fp))
             for doc, fp in doc_fp_pairs
@@ -214,8 +198,6 @@ class ConcurrentPipelineOrchestrator(PipelineOrchestrator):
         metrics.emit_summary()
         return result
 
-    # ── Internal helpers ─────────────────────────────────────────────────────
-
     async def _process_document_async(
         self,
         doc: Document,
@@ -230,9 +212,7 @@ class ConcurrentPipelineOrchestrator(PipelineOrchestrator):
         """
         loop = asyncio.get_event_loop()
         try:
-            # Offload CPU-heavy work (parse + chunk) to thread executor.
-            # Note: ProcessPoolExecutor requires picklable args; using thread pool
-            # here to avoid pickling complexity with plugin instances.
+            # Offload CPU-heavy work to a thread executor to avoid pickling constraints.
             result = await loop.run_in_executor(
                 None,
                 functools.partial(self._process_document, doc, config),

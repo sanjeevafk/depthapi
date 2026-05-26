@@ -107,7 +107,6 @@ class StreamEventLoop:
         self.release_lock = release_lock
         self.config = config or get_stream_config()
 
-        # Derived config
         self.cache_ttl_seconds = self.config.cache_ttl_seconds
         self.stream_max_seconds = (
             self.config.stream_max_seconds_technical 
