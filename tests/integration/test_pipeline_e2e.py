@@ -155,10 +155,12 @@ class TestPipelineFullRun:
         data = json.loads(output.read_text(encoding="utf-8"))
 
         for raw in data[:50]:  # Validate first 50 for speed
+            assert raw.get("source_content_hash")
             chunk = Chunk(**raw)
             assert 0.0 <= chunk.quality_score <= 1.0
             assert chunk.token_count > 0
             assert chunk.content_hash  # Non-empty
+            assert chunk.source_content_hash
 
     def test_chunk_ids_are_unique(self, tmp_dirs, tmp_config, tmp_path):
         state_dir, dlq_dir = tmp_dirs

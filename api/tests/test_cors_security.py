@@ -10,6 +10,7 @@ from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
 
 @pytest.mark.asyncio
 async def test_missing_allowed_origins_uses_strict_defaults():
+    assert api_main.DEFAULT_ALLOWED_ORIGINS
     origins = api_main.resolve_allowed_origins(None)
 
     assert origins == list(api_main.DEFAULT_ALLOWED_ORIGINS)

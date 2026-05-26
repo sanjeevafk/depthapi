@@ -26,7 +26,12 @@ from api.services.rag.rag_dimension_guard import (
     validate_embedding_dimension_or_raise,
 )
 from api.logging_config import setup_logging, logger
-from api.middlewares import resolve_allowed_origins, security_headers, structlog_middleware
+from api.middlewares import (
+    DEFAULT_ALLOWED_ORIGINS,
+    resolve_allowed_origins,
+    security_headers,
+    structlog_middleware,
+)
 from api.config import get_settings
 from api.monitoring import init_sentry
 from api.exception_handlers import register_exception_handlers
