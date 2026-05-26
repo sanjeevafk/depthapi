@@ -8,7 +8,7 @@ All tests must be green before proceeding to Phase 1.
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -63,7 +63,7 @@ def sample_parsed_doc(sample_document: Document) -> ParsedDocument:
         extraction_confidence=0.95,
         parser_version="markdown-parser@1.0.0",
         source_content_hash=sample_document.source_content_hash,
-        ingestion_timestamp=datetime.utcnow(),
+        ingestion_timestamp=datetime.now(UTC),
     )
 
 
@@ -100,6 +100,7 @@ class TestDocument:
 
     def test_document_has_ingestion_timestamp(self, sample_document: Document):
         assert isinstance(sample_document.ingestion_timestamp, datetime)
+        assert sample_document.ingestion_timestamp.tzinfo is UTC
 
     def test_two_docs_same_uri_same_hash(self):
         content = b"same content"
@@ -316,6 +317,7 @@ class TestErrorRecord:
         )
         assert err.retry_count == 0
         assert err.max_retries == 3
+        assert err.attempted_at.tzinfo is UTC
 
 
 # ─── SourceFingerprint tests ──────────────────────────────────────────────────
@@ -324,7 +326,7 @@ class TestSourceFingerprint:
     def test_fingerprint_immutable(self):
         fp = SourceFingerprint(
             source_uri="file:///test.md",
-            last_fetch_timestamp=datetime.utcnow(),
+            last_fetch_timestamp=datetime.now(UTC),
             content_hash="abc123",
         )
         with pytest.raises(Exception):

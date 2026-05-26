@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from api.services.rag.pipeline.config_schema import DatasetConfig, ErrorPolicyConfig
@@ -114,7 +114,7 @@ class ErrorHandler:
             self._policies[classification] = policy.model_dump()
 
         # DLQ file path: data/dlq/20260523_system_design_primer_errors.jsonl
-        date_str = datetime.utcnow().strftime("%Y%m%d")
+        date_str = datetime.now(UTC).strftime("%Y%m%d")
         safe_name = dataset_name.lower().replace(" ", "_")
         self._dlq_path = dlq_dir / f"{date_str}_{safe_name}_errors.jsonl"
 

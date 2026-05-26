@@ -7,7 +7,7 @@ Phase 2+5: Tests for chunking plugins and chunking invariants.
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -68,7 +68,7 @@ def sample_parsed_doc() -> ParsedDocument:
         extraction_confidence=0.95,
         parser_version="MarkdownParser@1.0.0",
         source_content_hash=content_hash,
-        ingestion_timestamp=datetime.utcnow(),
+        ingestion_timestamp=datetime.now(UTC),
     )
 
 

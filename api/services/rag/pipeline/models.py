@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
@@ -54,8 +54,8 @@ class Document(BaseModel):
     # Provenance
     source_content_hash: str  # SHA-256(raw_content) — change detection key
     source_last_modified: datetime | None = None
-    ingestion_timestamp: datetime = Field(default_factory=datetime.utcnow)
-    retrieved_at: datetime = Field(default_factory=datetime.utcnow)
+    ingestion_timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    retrieved_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -111,7 +111,7 @@ class ParsedDocument(BaseModel):
     # Provenance (carried from Document)
     source_content_hash: str
     source_last_modified: datetime | None = None
-    ingestion_timestamp: datetime = Field(default_factory=datetime.utcnow)
+    ingestion_timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -221,7 +221,7 @@ class Chunk(BaseModel):
     # Provenance
     source_content_hash: str
     content_hash: str  # SHA-256(content) for deduplication
-    ingestion_timestamp: datetime = Field(default_factory=datetime.utcnow)
+    ingestion_timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     # Quality (deterministic)
     quality_inputs: QualityScoreInputs | None = None
@@ -235,7 +235,7 @@ class Chunk(BaseModel):
     parser_name: str = "unknown"
 
     metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     model_config = {"frozen": True}
 
@@ -269,7 +269,7 @@ class ErrorRecord(BaseModel):
     classification: str  # e.g. "token_count_too_low", "extraction_failed"
     action: str  # e.g. "skip_chunk", "skip_document", "retry"
     retryable: bool
-    attempted_at: datetime = Field(default_factory=datetime.utcnow)
+    attempted_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     max_retries: int = 3
     retry_count: int = 0
 

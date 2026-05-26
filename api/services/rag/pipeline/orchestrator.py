@@ -24,7 +24,7 @@ import logging
 import time
 import traceback
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -110,7 +110,7 @@ class PipelineOrchestrator:
             IngestionResult summary with counts and DLQ path.
         """
         config = DatasetConfig.from_yaml(config_path)
-        started_at = datetime.utcnow()
+        started_at = datetime.now(UTC)
         log.info(
             "Starting ingestion",
             extra={
@@ -186,7 +186,7 @@ class PipelineOrchestrator:
             dataset_name=config.name,
             mode=mode.value,
             started_at=started_at,
-            completed_at=datetime.utcnow(),
+            completed_at=datetime.now(UTC),
             documents_processed=docs_processed,
             documents_skipped=docs_skipped,
             documents_failed=docs_failed,

@@ -15,7 +15,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import mimetypes
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -122,14 +122,15 @@ class LocalDirSource(BaseSource):
                     raw_content=raw_content,
                     mime_type=_mime_for_path(file_path),
                     source_last_modified=datetime.fromtimestamp(
-                        file_path.stat().st_mtime
+                        file_path.stat().st_mtime,
+                        UTC,
                     ),
                     metadata={"file_name": file_path.name, "file_path": str(file_path)},
                 )
 
                 fp = SourceFingerprint(
                     source_uri=source_uri,
-                    last_fetch_timestamp=datetime.utcnow(),
+                    last_fetch_timestamp=datetime.now(UTC),
                     content_hash=content_hash,
                 )
 

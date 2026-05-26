@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from functools import lru_cache
-from pydantic import AliasChoices, Field, SecretStr, field_validator
+from pydantic import AliasChoices, ConfigDict, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -250,11 +250,11 @@ class Settings(BaseSettings):
     slowapi_enabled: bool = True
     slowapi_default_limit_per_minute: int = 120
 
-    class Config:
-        env_file = (".env.local", ".env", "../.env")
-
-        env_file_encoding = "utf-8"
-        extra = "ignore"
+    model_config = ConfigDict(
+        env_file=(".env.local", ".env", "../.env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     @field_validator(
         "groq_api_key",

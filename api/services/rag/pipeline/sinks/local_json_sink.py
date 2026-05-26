@@ -122,6 +122,7 @@ class LocalJsonSink(BaseSink):
             "doc_id": chunk.doc_id,
             "chunk_id": chunk.chunk_id,
             "content_hash": chunk.content_hash,
+            "source_content_hash": chunk.source_content_hash,
             "version": chunk.dataset_version,
             "content": chunk.content,
             "raw_text": chunk.content,

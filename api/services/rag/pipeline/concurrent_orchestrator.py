@@ -31,7 +31,7 @@ import time
 import traceback
 import uuid
 from concurrent.futures import ProcessPoolExecutor
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -103,7 +103,7 @@ class ConcurrentPipelineOrchestrator(PipelineOrchestrator):
         """
         run_id = run_id or str(uuid.uuid4())[:8]
         config = DatasetConfig.from_yaml(config_path)
-        started_at = datetime.utcnow()
+        started_at = datetime.now(UTC)
 
         metrics = PipelineMetrics(dataset_name=config.name, run_id=run_id)
         error_handler = ErrorHandler(
@@ -200,7 +200,7 @@ class ConcurrentPipelineOrchestrator(PipelineOrchestrator):
             dataset_name=config.name,
             mode=mode.value,
             started_at=started_at,
-            completed_at=datetime.utcnow(),
+            completed_at=datetime.now(UTC),
             documents_processed=docs_processed,
             documents_skipped=0,
             documents_failed=docs_failed,

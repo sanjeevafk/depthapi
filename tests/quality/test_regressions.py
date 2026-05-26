@@ -14,7 +14,7 @@ These tests use in-memory fixtures (no filesystem/dataset required).
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -75,7 +75,7 @@ def _make_doc(content: str = SAMPLE_MARKDOWN) -> Document:
         raw_content=raw,
         mime_type="text/markdown",
         source_content_hash=hashlib.sha256(raw).hexdigest(),
-        ingestion_timestamp=datetime.utcnow(),
+        ingestion_timestamp=datetime.now(UTC),
     )
 
 
@@ -92,7 +92,7 @@ def _make_parsed_doc(content: str = SAMPLE_MARKDOWN) -> ParsedDocument:
         middleware_config_hash=hashlib.sha256(b"{}").hexdigest(),
         parsing_duration_ms=12.5,
         source_content_hash=hashlib.sha256(content.encode()).hexdigest(),
-        ingestion_timestamp=datetime.utcnow(),
+        ingestion_timestamp=datetime.now(UTC),
     )
 
 
@@ -245,7 +245,7 @@ class TestSchemaEvolution:
             "dataset_version": "v1.0",
             "source_content_hash": "deadbeef" * 8,
             "content_hash": hashlib.sha256(b"Some content here for testing.").hexdigest(),
-            "ingestion_timestamp": datetime.utcnow().isoformat(),
+            "ingestion_timestamp": datetime.now(UTC).isoformat(),
         }
         chunk = Chunk(**raw)
         # quality_inputs is optional — defaults to None
@@ -278,7 +278,7 @@ class TestSchemaEvolution:
             "dataset_version": "v1.0",
             "source_content_hash": "a" * 64,
             "content_hash": "b" * 64,
-            "ingestion_timestamp": datetime.utcnow().isoformat(),
+            "ingestion_timestamp": datetime.now(UTC).isoformat(),
             "quality_inputs": qi.model_dump(),
         }
         chunk = Chunk(**raw)
