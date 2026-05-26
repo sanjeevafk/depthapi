@@ -58,8 +58,6 @@ def build_prompt_from_spec(
     injector_names = _resolve_injectors(spec, selected, config["schema"].get("capabilities", []))
     if runtime.search_context.strip() and "search_context" not in injector_names:
         injector_names.append("search_context")
-    if runtime.quote_text.strip() and "quote" not in injector_names:
-        injector_names.append("quote")
     if runtime.diagram_type is not None and "diagram" not in injector_names:
         injector_names.append("diagram")
     injector_blocks = []
@@ -160,8 +158,6 @@ def _render_injector(
     values = _template_values(spec, runtime)
     if name == "search_context" and not runtime.search_context.strip():
         return ""
-    if name == "quote" and not runtime.quote_text.strip():
-        return ""
     if name == "conversation_context" and not runtime.conversation_context.strip():
         values = values | {
             "conversation_context": (
@@ -181,7 +177,6 @@ def _template_values(spec: PromptSpec, runtime: RuntimeContext) -> dict[str, str
         "topic": spec.topic,
         "conversation_context": runtime.conversation_context.strip(),
         "search_context": runtime.search_context.strip(),
-        "quote_text": runtime.quote_text.strip(),
         "diagram_instruction": (
             build_diagram_instruction(runtime.diagram_type)
             if runtime.diagram_type is not None

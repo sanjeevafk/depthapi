@@ -109,7 +109,7 @@ def load_prompt_config() -> JsonDict:
         "styles": {name: _load_fragment("styles", name) for name in sorted(VALID_STYLES)},
         "injectors": {
             name: _load_fragment("injectors", name)
-            for name in ("conversation_context", "search_context", "quote", "diagram")
+            for name in ("conversation_context", "search_context", "diagram")
         },
     }
     _validate_loaded_config(config)
@@ -121,7 +121,6 @@ def _validate_loaded_config(config: JsonDict) -> None:
         "topic",
         "conversation_context",
         "search_context",
-        "quote_text",
         "diagram_instruction",
     }
     for group_name in ("layers", "depths", "tasks", "reasoning", "styles", "injectors"):
@@ -138,7 +137,6 @@ def _validate_loaded_config(config: JsonDict) -> None:
                     topic="topic",
                     conversation_context="context",
                     search_context="search",
-                    quote_text="quote",
                     diagram_instruction="diagram",
                 )
             except Exception as exc:

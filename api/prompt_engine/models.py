@@ -43,7 +43,6 @@ class RuntimeContext:
 
     conversation_context: str = ""
     search_context: str = ""
-    quote_text: str = ""
     diagram_type: DiagramType | None = None
 
 
