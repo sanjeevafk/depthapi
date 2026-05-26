@@ -2,8 +2,6 @@
 
 import asyncio
 import os
-import time
-import structlog
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,15 +26,10 @@ from api.services.rag.rag_dimension_guard import (
     validate_embedding_dimension_or_raise,
 )
 from api.services.inference.llm_errors import LLMError, LLMBadRequest, LLMInvalidAPIKey, LLMUnavailable
-from api.logging_config import (
-    setup_logging,
-    logger,
-    generate_request_id,
-    is_valid_request_id,
-    log_sampled_success,
-)
+from api.logging_config import setup_logging, logger
+from api.middlewares import resolve_allowed_origins, security_headers, structlog_middleware
 from api.config import get_settings
-from api.monitoring import init_sentry, capture_exception, continue_trace_from_headers, set_request_context
+from api.monitoring import init_sentry, capture_exception
 
 
 @asynccontextmanager
@@ -93,24 +86,6 @@ if settings.slowapi_enabled:
     ))
     app.add_middleware(SlowAPIMiddleware)
 
-DEFAULT_ALLOWED_ORIGINS = (
-    "https://depthapi.dev",
-    "https://api.depthapi.dev",
-)
-
-
-def resolve_allowed_origins(raw_allowed_origins: str | None) -> list[str]:
-    """Build a secure allowlist for credentialed CORS."""
-    if raw_allowed_origins is None or not raw_allowed_origins.strip():
-        return list(DEFAULT_ALLOWED_ORIGINS)
-
-    parsed_origins = [origin.strip() for origin in raw_allowed_origins.split(",") if origin.strip()]
-    if "*" in parsed_origins:
-        parsed_origins = [origin for origin in parsed_origins if origin != "*"]
-
-    return parsed_origins or list(DEFAULT_ALLOWED_ORIGINS)
-
-
 allowed_origins = resolve_allowed_origins(os.getenv("ALLOWED_ORIGINS"))
 
 app.add_middleware(
@@ -123,63 +98,8 @@ app.add_middleware(
 )
 
 
-@app.middleware("http")
-async def security_headers(request: Request, call_next):
-    """Add security headers to all responses."""
-    response = await call_next(request)
-    csp = (
-        "default-src 'self'; "
-        "object-src 'none'; "
-        "base-uri 'self'; "
-        "frame-ancestors 'none';"
-    )
-    response.headers["Content-Security-Policy"] = csp
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    return response
-
-
-@app.middleware("http")
-async def structlog_middleware(request: Request, call_next):
-    """Log requests with structlog."""
-    start = time.perf_counter()
-    incoming_request_id = request.headers.get("x-request-id")
-    request_id = incoming_request_id if is_valid_request_id(incoming_request_id) else generate_request_id()
-    request.state.request_id = request_id
-
-    structlog.contextvars.clear_contextvars()
-    continue_trace_from_headers(
-        {
-            "sentry-trace": request.headers.get("sentry-trace", ""),
-            "baggage": request.headers.get("baggage", ""),
-        }
-    )
-    set_request_context(
-        request_id=request_id,
-        path=request.url.path,
-        method=request.method,
-        client_ip=request.client.host if request.client else None,
-    )
-    
-    try:
-        response = await call_next(request)
-        duration_ms = round((time.perf_counter() - start) * 1000, 2)
-        response.headers["X-Request-ID"] = request_id
-        if response.status_code < 400:
-            log_sampled_success(
-                "http_request_success",
-                request_id=request_id,
-                status_code=response.status_code,
-                latency_ms=duration_ms,
-                sampled=True,
-            )
-        return response
-    except Exception as e:
-        capture_exception(e, request_id=request_id, path=request.url.path, method=request.method)
-        logger.error("http_request_exception", request_id=request_id, error=str(e))
-        raise
-
+app.middleware("http")(security_headers)
+app.middleware("http")(structlog_middleware)
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
