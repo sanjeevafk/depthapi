@@ -71,7 +71,10 @@ evaluation/results/
 evaluation/evaluation/
 evaluation/benchmark_dataset.json
 evaluation/benchmark_corpus.json
+evaluation/*.log
+evaluation/*.sh
 uvicorn.log
+results/
 
 # Local ingestion plans and manifests
 scripts/ingest_corpus/*_INGESTION.md
@@ -82,3 +85,4 @@ LICENSE_SUMMARY.md
 docs/planning/
 configs/ingest/ibm_ai_engineering_knowledgeset.yaml
 evaluation/benchmark_corpus_selected.json
+evaluation/run_eval.py

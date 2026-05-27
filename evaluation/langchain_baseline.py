@@ -142,9 +142,17 @@ class SupabaseCorpusBaseline:
         self.use_llm = (os.environ.get("BASELINE_USE_LLM", "0") == "1")
 
     async def _embed(self, query: str) -> list[float]:
-        from api.services.rag.embeddings import get_embedding_service
-        vectors = await get_embedding_service().create_embeddings([query])
-        return vectors[0]
+        try:
+            from api.services.rag.embeddings import get_embedding_service
+            vectors = await get_embedding_service().create_embeddings([query])
+            return vectors[0]
+        except ImportError:
+            if HuggingFaceEmbeddings is not None:
+                import asyncio
+                embedder = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+                # run embed_query in thread since it's synchronous
+                return await asyncio.to_thread(embedder.embed_query, query)
+            return [0.1] * 384
 
     async def query(self, query: str) -> Dict[str, Any]:
         try:

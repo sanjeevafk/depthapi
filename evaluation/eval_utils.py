@@ -70,7 +70,7 @@ def call_evaluator_model(prompt: str, *, json_mode: bool = True, model: Optional
         resp = httpx.post(url, headers=headers, json=payload, timeout=60)
         if resp.status_code == 429:
             if attempt == max_retries - 1:
-                resp.raise_for_status()
+                raise RuntimeError(f"429 Exhausted: {resp.text}")
             # For 429s, use a longer wait to let the provider rate-limit window reset.
             wait_429 = min(max_backoff_s, backoff_base ** (attempt + 2))
             time.sleep(wait_429)

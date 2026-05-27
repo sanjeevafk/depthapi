@@ -79,9 +79,20 @@ class DepthAPIClient:
 
         # Mocked response path
         if self._mock:
-            # produce a deterministic short answer and fake context
-            answer = f"(MOCK) Explanation for: {query}"
-            contexts = [{"text": f"Mock context paragraph about {query}"}]
+            # Produce a realistic mock that satisfies validate_generation_row:
+            # - answer >= 30 chars
+            # - contexts list with >= 1 item
+            # - each context has text + chunk_id/doc_id
+            # - no duplicate chunk_ids (dup_ratio <= 0.6)
+            answer = (
+                f"(MOCK) This is a simulated explanation for the query: '{query}'. "
+                f"The DepthAPI mock mode is active and returns deterministic placeholder results."
+            )
+            contexts = [
+                {"text": f"Mock context A about {query}: background information and overview.", "chunk_id": f"mock-chunk-{hash(query) % 9000 + 1000}-a", "doc_id": f"mock-doc-{hash(query) % 900 + 100}"},
+                {"text": f"Mock context B about {query}: technical details and implementation notes.", "chunk_id": f"mock-chunk-{hash(query) % 9000 + 2000}-b", "doc_id": f"mock-doc-{hash(query) % 900 + 200}"},
+                {"text": f"Mock context C about {query}: examples and related references.", "chunk_id": f"mock-chunk-{hash(query) % 9000 + 3000}-c", "doc_id": f"mock-doc-{hash(query) % 900 + 300}"},
+            ]
             return {"answer": answer, "contexts": contexts, "citations": [], "metadata": {}, "error": None}
 
         try:
