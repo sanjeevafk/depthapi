@@ -68,15 +68,21 @@ def call_student_model(system_prompt: str, user_query: str) -> str:
     import httpx
 
     if provider == "openrouter":
-        key = os.environ["OPENROUTER_API_KEY"]
+        key = os.environ.get("OPENROUTER_API_KEY")
+        if not key:
+            raise RuntimeError("Missing OPENROUTER_API_KEY for provider openrouter")
         url = "https://openrouter.ai/api/v1/chat/completions"
         headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     elif provider == "gemini":
-        key = os.environ["GEMINI_API_KEY"]
+        key = os.environ.get("GEMINI_API_KEY")
+        if not key:
+            raise RuntimeError("Missing GEMINI_API_KEY for provider gemini")
         url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
         headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     elif provider == "groq":
-        key = os.environ["GROQ_API_KEY"]
+        key = os.environ.get("GROQ_API_KEY")
+        if not key:
+            raise RuntimeError("Missing GROQ_API_KEY for provider groq")
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     else:
