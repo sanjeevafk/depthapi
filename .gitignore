@@ -86,3 +86,5 @@ docs/planning/
 configs/ingest/ibm_ai_engineering_knowledgeset.yaml
 evaluation/benchmark_corpus_selected.json
 evaluation/run_eval.py
+evaluation/prompt_spec_eval/results/
+evaluation/prompt_spec_eval/*_merged.*
