@@ -1,0 +1,530 @@
+[
+  {
+    "case_id": "benchmark-v2-00",
+    "query": "Explain twitter in clear terms.",
+    "prompt_spec": {
+      "topic": "twitter",
+      "depth": "accessible",
+      "task": "explain",
+      "reasoning": "direct",
+      "style": "normal",
+      "capabilities": []
+    },
+    "expected_behavior": "Explain clearly with defined terms, short sentences, and a practical workflow tie.",
+    "category": "accessible_simplification",
+    "runtime": {},
+    "corpus_chunks": [
+      {
+        "chunk_id": "6e00d4f3-8443-4588-a510-49999c859d61",
+        "doc_id": "5eadf5b8-998f-4908-a922-38de73a7783d",
+        "source": "file://datasets/system-design-primer/solutions/system_design/twitter/README.md"
+      }
+    ],
+    "tags": [
+      "benchmark_v2",
+      "accessible_simplification"
+    ]
+  },
+  {
+    "case_id": "benchmark-v2-01",
+    "query": "Explain System Design Primer in clear terms.",
+    "prompt_spec": {
+      "topic": "System Design Primer",
+      "depth": "accessible",
+      "task": "explain",
+      "reasoning": "direct",
+      "style": "concise",
+      "capabilities": []
+    },
+    "expected_behavior": "Explain with simple terms and a concrete example.",
+    "category": "accessible_simplification",
+    "runtime": {},
+    "corpus_chunks": [
+      {
+        "chunk_id": "0e31fac4-eb8e-470f-97a4-2372b2ba2a41",
+        "doc_id": "bd91efd9-c37c-4223-a6df-a4d7e198f79b",
+        "source": "file://datasets/full-stack-fastapi-template/README.md"
+      }
+    ],
+    "tags": [
+      "benchmark_v2",
+      "accessible_simplification"
+    ]
+  },
+  {
+    "case_id": "benchmark-v2-02",
+    "query": "I am confused about pastebin. What should I focus on first?",
+    "prompt_spec": {
+      "topic": "pastebin",
+      "depth": "accessible",
+      "task": "explain",
+      "reasoning": "socratic",
+      "style": "normal",
+      "capabilities": [
+        "requires_context"
+      ]
+    },
+    "expected_behavior": "Ask one targeted diagnostic question instead of explaining.",
+    "category": "socratic_reasoning",
+    "runtime": {
+      "conversation_context": "User said: I saw pastebin but got lost in the details."
+    },
+    "corpus_chunks": [
+      {
+        "chunk_id": "e5e91668-06ba-45b0-af25-3e1779885a4e",
+        "doc_id": "7bf69cdc-a480-414c-ab4a-f6b2a9073bbd",
+        "source": "file://datasets/system-design-primer/solutions/system_design/pastebin/README.md"
+      }
+    ],
+    "tags": [
+      "benchmark_v2",
+      "socratic_reasoning"
+    ]
+  },
+  {
+    "case_id": "benchmark-v2-03",
+    "query": "Guide me through understanding twitter step by step.",
+    "prompt_spec": {
+      "topic": "twitter",
+      "depth": "accessible",
+      "task": "explain",
+      "reasoning": "guided",
+      "style": "concise",
+      "capabilities": []
+    },
+    "expected_behavior": "Use ordered steps with a checkpoint question and a Next step line.",
+    "category": "guided_reasoning",
+    "runtime": {},
+    "corpus_chunks": [
+      {
+        "chunk_id": "41d97bdf-9150-46dc-ac35-984d2f2bcbc5",
+        "doc_id": "5eadf5b8-998f-4908-a922-38de73a7783d",
+        "source": "file://datasets/system-design-primer/solutions/system_design/twitter/README.md"
+      }
+    ],
+    "tags": [
+      "benchmark_v2",
+      "guided_reasoning"
+    ]
+  },
+  {
+    "case_id": "benchmark-v2-04",
+    "query": "Compare web crawler vs twitter for a production system.",
+    "prompt_spec": {
+      "topic": "web crawler",
+      "depth": "technical",
+      "task": "compare",
+      "reasoning": "debate",
+      "style": "normal",
+      "capabilities": []
+    },
+    "expected_behavior": "Present balanced arguments for both sides, then give conditional conclusion.",
+    "category": "debate_compare",
+    "runtime": {},
+    "corpus_chunks": [
+      {
+        "chunk_id": "e1805d22-f840-4532-a14a-6555dc05134a",
+        "doc_id": "2817286e-220f-4dee-8b9f-05e6c4376069",
+        "source": "file://datasets/system-design-primer/solutions/system_design/web_crawler/README.md"
+      }
+    ],
+    "tags": [
+      "benchmark_v2",
+      "debate_compare"
+    ]
+  },
+  {
+    "case_id": "benchmark-v2-05",
+    "query": "Compare twitter vs pastebin for a production system.",
+    "prompt_spec": {
+      "topic": "twitter",
+      "depth": "technical",
+      "task": "compare",
+      "reasoning": "direct",
+      "style": "normal",
+      "capabilities": []
+    },
+    "expected_behavior": "Compare two options with explicit differences and contextual recommendation.",
+    "category": "task_compare",
+    "runtime": {},
+    "corpus_chunks": [
+      {
+        "chunk_id": "51905faa-5046-42ce-af35-6e765525869b",
+        "doc_id": "5eadf5b8-998f-4908-a922-38de73a7783d",
+        "source": "file://datasets/system-design-primer/solutions/system_design/twitter/README.md"
+      }
+    ],
+    "tags": [
+      "benchmark_v2",
+      "task_compare"
+    ]
+  },
+  {
+    "case_id": "benchmark-v2-06",
+    "query": "Brainstorm approaches for pastebin in a production system.",
+    "prompt_spec": {
+      "topic": "pastebin",
+      "depth": "technical",
+      "task": "brainstorm",
+      "reasoning": "direct",
+      "style": "normal",
+      "capabilities": []
+    },
+    "expected_behavior": "Provide 5 distinct ideas with tradeoffs and best-use guidance.",
+    "category": "task_brainstorm",
+    "runtime": {},
+    "corpus_chunks": [
+      {
+        "chunk_id": "d1ec31de-4d6f-41b3-9d49-e0ef5cbdccea",
+        "doc_id": "7bf69cdc-a480-414c-ab4a-f6b2a9073bbd",
+        "source": "file://datasets/system-design-primer/solutions/system_design/pastebin/README.md"
+      }
+    ],
+    "tags": [
+      "benchmark_v2",
+      "task_brainstorm"
+    ]
+  },
+  {
+    "case_id": "benchmark-v2-07",
+    "query": "Brainstorm approaches for mint in a production system.",
+    "prompt_spec": {
+      "topic": "mint",
+      "depth": "accessible",
+      "task": "brainstorm",
+      "reasoning": "guided",
+      "style": "normal",
+      "capabilities": []
+    },
+    "expected_behavior": "Provide diverse ideas across process/tooling/architecture levers.",
+    "category": "task_brainstorm",
+    "runtime": {},
+    "corpus_chunks": [
+      {
+        "chunk_id": "37fd3e3d-7cb7-44bb-881a-783bcc7344ae",
+        "doc_id": "0cb3a3ab-b770-43f5-be0c-e3337c6c51b6",
+        "source": "file://datasets/system-design-primer/solutions/system_design/mint/README.md"
+      }
+    ],
+    "tags": [
+      "benchmark_v2",
+      "task_brainstorm"
+    ]
+  },
+  {
+    "case_id": "benchmark-v2-08",
+    "query": "Compare query cache vs web crawler for a production system.",
+    "prompt_spec": {
+      "topic": "query cache",
+      "depth": "technical",
+      "task": "compare",
+      "reasoning": "debate",
+      "style": "academic",
+      "capabilities": []
+    },
+    "expected_behavior": "Balanced debate for two approaches with decision criteria.",
+    "category": "debate_compare",
+    "runtime": {},
+    "corpus_chunks": [
+      {
+        "chunk_id": "aa5ae028-1ccb-4e65-914c-e6c4a7261ddd",
+        "doc_id": "acee2a5f-daf5-49a2-872f-dfd77ac77fd1",
+        "source": "file://datasets/system-design-primer/solutions/system_design/query_cache/README.md"
+      }
+    ],
+    "tags": [
+      "benchmark_v2",
+      "debate_compare"
+    ]
+  },
+  {
+    "case_id": "benchmark-v2-09",
+    "query": "Explain web crawler in clear terms.",
+    "prompt_spec": {
+      "topic": "web crawler",
+      "depth": "accessible",
+      "task": "explain",
+      "reasoning": "direct",
+      "style": "normal",
+      "capabilities": []
+    },
+    "expected_behavior": "Explain clearly with minimal jargon and a short example.",
+    "category": "accessible_simplification",
+    "runtime": {},
+    "corpus_chunks": [
+      {
+        "chunk_id": "1ca5f30f-aee4-4cae-b3b1-cae3bb1f48c5",
+        "doc_id": "2817286e-220f-4dee-8b9f-05e6c4376069",
+        "source": "file://datasets/system-design-primer/solutions/system_design/web_crawler/README.md"
+      }
+    ],
+    "tags": [
+      "benchmark_v2",
+      "accessible_simplification"
+    ]
+  },
+  {
+    "case_id": "benchmark-v2-10",
+    "query": "Explain System Design Primer in clear terms.",
+    "prompt_spec": {
+      "topic": "System Design Primer",
+      "depth": "accessible",
+      "task": "explain",
+      "reasoning": "direct",
+      "style": "normal",
+      "capabilities": []
+    },
+    "expected_behavior": "Explain clearly with defined terms, short sentences, and a practical workflow tie.",
+    "category": "accessible_simplification",
+    "runtime": {},
+    "corpus_chunks": [
+      {
+        "chunk_id": "20951aa9-8600-4e82-98b9-0b7363f40185",
+        "doc_id": "bd91efd9-c37c-4223-a6df-a4d7e198f79b",
+        "source": "file://datasets/full-stack-fastapi-template/README.md"
+      }
+    ],
+    "tags": [
+      "benchmark_v2",
+      "accessible_simplification"
+    ]
+  },
+  {
+    "case_id": "benchmark-v2-11",
+    "query": "Explain System Design Primer in clear terms.",
+    "prompt_spec": {
+      "topic": "System Design Primer",
+      "depth": "accessible",
+      "task": "explain",
+      "reasoning": "direct",
+      "style": "concise",
+      "capabilities": []
+    },
+    "expected_behavior": "Explain with simple terms and a concrete example.",
+    "category": "accessible_simplification",
+    "runtime": {},
+    "corpus_chunks": [
+      {
+        "chunk_id": "a975ff76-4c67-45cf-8638-0986d8536afb",
+        "doc_id": "bd91efd9-c37c-4223-a6df-a4d7e198f79b",
+        "source": "file://datasets/full-stack-fastapi-template/README.md"
+      }
+    ],
+    "tags": [
+      "benchmark_v2",
+      "accessible_simplification"
+    ]
+  },
+  {
+    "case_id": "benchmark-v2-12",
+    "query": "I am confused about System Design Primer. What should I focus on first?",
+    "prompt_spec": {
+      "topic": "System Design Primer",
+      "depth": "accessible",
+      "task": "explain",
+      "reasoning": "socratic",
+      "style": "normal",
+      "capabilities": [
+        "requires_context"
+      ]
+    },
+    "expected_behavior": "Ask one targeted diagnostic question instead of explaining.",
+    "category": "socratic_reasoning",
+    "runtime": {
+      "conversation_context": "User said: I saw System Design Primer but got lost in the details."
+    },
+    "corpus_chunks": [
+      {
+        "chunk_id": "a0266c71-b733-49cf-9610-1de5363f5eb1",
+        "doc_id": "bd91efd9-c37c-4223-a6df-a4d7e198f79b",
+        "source": "file://datasets/full-stack-fastapi-template/README.md"
+      }
+    ],
+    "tags": [
+      "benchmark_v2",
+      "socratic_reasoning"
+    ]
+  },
+  {
+    "case_id": "benchmark-v2-13",
+    "query": "Guide me through understanding pastebin step by step.",
+    "prompt_spec": {
+      "topic": "pastebin",
+      "depth": "accessible",
+      "task": "explain",
+      "reasoning": "guided",
+      "style": "concise",
+      "capabilities": []
+    },
+    "expected_behavior": "Use ordered steps with a checkpoint question and a Next step line.",
+    "category": "guided_reasoning",
+    "runtime": {},
+    "corpus_chunks": [
+      {
+        "chunk_id": "7574aaf4-5745-4c64-b9a1-ed3422475207",
+        "doc_id": "7bf69cdc-a480-414c-ab4a-f6b2a9073bbd",
+        "source": "file://datasets/system-design-primer/solutions/system_design/pastebin/README.md"
+      }
+    ],
+    "tags": [
+      "benchmark_v2",
+      "guided_reasoning"
+    ]
+  },
+  {
+    "case_id": "benchmark-v2-14",
+    "query": "Compare System Design Primer vs twitter for a production system.",
+    "prompt_spec": {
+      "topic": "System Design Primer",
+      "depth": "technical",
+      "task": "compare",
+      "reasoning": "debate",
+      "style": "normal",
+      "capabilities": []
+    },
+    "expected_behavior": "Present balanced arguments for both sides, then give conditional conclusion.",
+    "category": "debate_compare",
+    "runtime": {},
+    "corpus_chunks": [
+      {
+        "chunk_id": "8daef5bc-ae2a-409a-829d-7253b513df95",
+        "doc_id": "bd91efd9-c37c-4223-a6df-a4d7e198f79b",
+        "source": "file://datasets/full-stack-fastapi-template/README.md"
+      }
+    ],
+    "tags": [
+      "benchmark_v2",
+      "debate_compare"
+    ]
+  },
+  {
+    "case_id": "benchmark-v2-15",
+    "query": "Compare twitter vs sales rank for a production system.",
+    "prompt_spec": {
+      "topic": "twitter",
+      "depth": "technical",
+      "task": "compare",
+      "reasoning": "direct",
+      "style": "normal",
+      "capabilities": []
+    },
+    "expected_behavior": "Compare two options with explicit differences and contextual recommendation.",
+    "category": "task_compare",
+    "runtime": {},
+    "corpus_chunks": [
+      {
+        "chunk_id": "25fb52a6-61a4-4e73-acec-56a544932388",
+        "doc_id": "5eadf5b8-998f-4908-a922-38de73a7783d",
+        "source": "file://datasets/system-design-primer/solutions/system_design/twitter/README.md"
+      }
+    ],
+    "tags": [
+      "benchmark_v2",
+      "task_compare"
+    ]
+  },
+  {
+    "case_id": "benchmark-v2-16",
+    "query": "Brainstorm approaches for sales rank in a production system.",
+    "prompt_spec": {
+      "topic": "sales rank",
+      "depth": "technical",
+      "task": "brainstorm",
+      "reasoning": "direct",
+      "style": "normal",
+      "capabilities": []
+    },
+    "expected_behavior": "Provide 5 distinct ideas with tradeoffs and best-use guidance.",
+    "category": "task_brainstorm",
+    "runtime": {},
+    "corpus_chunks": [
+      {
+        "chunk_id": "49397985-19ad-4aa1-b61a-4c89973dc940",
+        "doc_id": "15207f2d-eb59-43b7-82d6-7e9588ddbfc7",
+        "source": "file://datasets/system-design-primer/solutions/system_design/sales_rank/README.md"
+      }
+    ],
+    "tags": [
+      "benchmark_v2",
+      "task_brainstorm"
+    ]
+  },
+  {
+    "case_id": "benchmark-v2-17",
+    "query": "Brainstorm approaches for scaling aws in a production system.",
+    "prompt_spec": {
+      "topic": "scaling aws",
+      "depth": "accessible",
+      "task": "brainstorm",
+      "reasoning": "guided",
+      "style": "normal",
+      "capabilities": []
+    },
+    "expected_behavior": "Provide diverse ideas across process/tooling/architecture levers.",
+    "category": "task_brainstorm",
+    "runtime": {},
+    "corpus_chunks": [
+      {
+        "chunk_id": "38c54d87-9a0c-41d5-b0b0-4081124fe1d1",
+        "doc_id": "cec03bdb-508f-4aca-936b-d0a8e6c88c29",
+        "source": "file://datasets/system-design-primer/solutions/system_design/scaling_aws/README.md"
+      }
+    ],
+    "tags": [
+      "benchmark_v2",
+      "task_brainstorm"
+    ]
+  },
+  {
+    "case_id": "benchmark-v2-18",
+    "query": "Compare sales rank vs System Design Primer for a production system.",
+    "prompt_spec": {
+      "topic": "sales rank",
+      "depth": "technical",
+      "task": "compare",
+      "reasoning": "debate",
+      "style": "academic",
+      "capabilities": []
+    },
+    "expected_behavior": "Balanced debate for two approaches with decision criteria.",
+    "category": "debate_compare",
+    "runtime": {},
+    "corpus_chunks": [
+      {
+        "chunk_id": "c497c26d-dd22-4149-8a3a-6a478b28e947",
+        "doc_id": "15207f2d-eb59-43b7-82d6-7e9588ddbfc7",
+        "source": "file://datasets/system-design-primer/solutions/system_design/sales_rank/README.md"
+      }
+    ],
+    "tags": [
+      "benchmark_v2",
+      "debate_compare"
+    ]
+  },
+  {
+    "case_id": "benchmark-v2-19",
+    "query": "Explain System Design Primer in clear terms.",
+    "prompt_spec": {
+      "topic": "System Design Primer",
+      "depth": "accessible",
+      "task": "explain",
+      "reasoning": "direct",
+      "style": "normal",
+      "capabilities": []
+    },
+    "expected_behavior": "Explain clearly with minimal jargon and a short example.",
+    "category": "accessible_simplification",
+    "runtime": {},
+    "corpus_chunks": [
+      {
+        "chunk_id": "bc59a950-5421-49c5-970d-572c4dad6ab3",
+        "doc_id": "bd91efd9-c37c-4223-a6df-a4d7e198f79b",
+        "source": "file://datasets/full-stack-fastapi-template/README.md"
+      }
+    ],
+    "tags": [
+      "benchmark_v2",
+      "accessible_simplification"
+    ]
+  }
+]
