@@ -16,10 +16,18 @@ _CALL_LOCK = threading.Lock()
 _LAST_CALL_TS = 0.0
 
 
-def call_evaluator_model(prompt: str, *, json_mode: bool = True, model: Optional[str] = None) -> str:
+def call_evaluator_model(
+    prompt: str,
+    *,
+    json_mode: bool = True,
+    model: Optional[str] = None,
+    provider: Optional[str] = None,
+    max_retries: Optional[int] = None,
+    max_backoff_s: Optional[float] = None,
+) -> str:
     import httpx
 
-    provider = (os.environ.get("EVALUATOR_PROVIDER", "groq") or "groq").strip().lower()
+    provider = (provider or os.environ.get("EVALUATOR_PROVIDER", "groq") or "groq").strip().lower()
     model_name = model or os.environ.get("EVALUATOR_MODEL", EVALUATOR_MODEL)
 
     payload = {
@@ -54,9 +62,9 @@ def call_evaluator_model(prompt: str, *, json_mode: bool = True, model: Optional
     # Global request pacing across judge/deepeval/ragas to reduce provider 429s.
     # Defaults are conservative for Groq free-tier (30 req/min limit).
     min_interval_s = float(os.environ.get("EVAL_CALL_DELAY_SECONDS", "1.5"))
-    max_retries = int(os.environ.get("EVAL_HTTP_RETRIES", "4"))
+    max_retries = max_retries or int(os.environ.get("EVAL_HTTP_RETRIES", "4"))
     backoff_base = float(os.environ.get("EVAL_HTTP_BACKOFF_BASE", "2.0"))
-    max_backoff_s = float(os.environ.get("EVAL_HTTP_MAX_BACKOFF_SECONDS", "60.0"))
+    max_backoff_s = max_backoff_s or float(os.environ.get("EVAL_HTTP_MAX_BACKOFF_SECONDS", "60.0"))
 
     for attempt in range(max_retries):
         with _CALL_LOCK:
