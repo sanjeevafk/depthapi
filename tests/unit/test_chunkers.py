@@ -152,3 +152,21 @@ class TestSemanticChunker:
         for chunk in chunks:
             with pytest.raises(Exception):
                 chunk.content = "mutated"  # type: ignore[misc]
+
+
+def test_ingestion_worker_semantic_chunks_include_required_metadata():
+    from api.services.rag.knowledge_ingestion import IngestionWorker
+
+    worker = IngestionWorker()
+    chunks = worker.chunk_text_with_metadata(
+        SAMPLE_MARKDOWN,
+        doc_id="doc-abc",
+        source_name="System Design Notes",
+        source_url="https://example.com/system-design",
+    )
+
+    assert chunks
+    assert all(chunk["doc_id"] == "doc-abc" for chunk in chunks)
+    assert all(chunk["chunk_id"].startswith("doc-abc#c") for chunk in chunks)
+    assert all(isinstance(chunk["token_count"], int) and chunk["token_count"] > 0 for chunk in chunks)
+    assert any(chunk["section_title"] for chunk in chunks)

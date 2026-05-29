@@ -279,6 +279,8 @@ async def query_topic(
                 "text": item.get("content", ""),
                 "score": item.get("score"),
                 "vector_similarity": item.get("vector_similarity"),
+                "rerank_score": item.get("rerank_score"),
+                "token_count": item.get("token_count"),
                 "match_source": item.get("match_source"),
                 "source": citation.get("source_url") or citation.get("filename") or citation.get("source_tier"),
                 "metadata": item.get("metadata") or {},

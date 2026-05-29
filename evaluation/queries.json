@@ -48,5 +48,30 @@
     "id": "q010",
     "query": "Implementing a LRU cache with O(1) lookup",
     "type": "code"
+  },
+  {
+    "id": "q011-blind",
+    "query": "In the local DepthAPI corpus, which chunking version marks semantically chunked local ingestion metadata?",
+    "type": "llm_blind"
+  },
+  {
+    "id": "q012-blind",
+    "query": "What exact fallback answer should DepthAPI use when retrieved context is missing support?",
+    "type": "llm_blind"
+  },
+  {
+    "id": "q013-blind",
+    "query": "Which retrieval trace file records rerank scores and selected final contexts for local RAG queries?",
+    "type": "llm_blind"
+  },
+  {
+    "id": "q014-blind",
+    "query": "What internal local RAG namespace is used for trusted corpus retrieval when no collection is specified?",
+    "type": "llm_blind"
+  },
+  {
+    "id": "q015-blind",
+    "query": "Which local ingestion metadata fields connect chunks back to their section title and document ID?",
+    "type": "llm_blind"
   }
 ]

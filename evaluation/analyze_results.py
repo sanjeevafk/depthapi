@@ -1,4 +1,6 @@
 import json
+import re
+import unicodedata
 from pathlib import Path
 from typing import List, Dict, Any
 
@@ -15,22 +17,70 @@ def _coverage(series: pd.Series):
     return s.notna().mean()
 
 
+def canonical_id(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode()
+    text = text.strip().lower()
+    text = re.sub(r"^doc(?:ument)?[_:\-\s]+", "", text)
+    text = re.sub(r"^chunk[_:\-\s]+", "", text)
+    text = re.sub(r"[\s/|:]+", "-", text)
+    text = re.sub(r"[^a-z0-9#._-]+", "", text)
+    text = re.sub(r"-{2,}", "-", text).strip("-_.")
+    return text
+
+
 def _retrieved_ids(row: pd.Series, key: str) -> list[str]:
     contexts = row.get("contexts")
     if not isinstance(contexts, list):
         return []
     values = []
     for ctx in contexts:
-        if isinstance(ctx, dict) and ctx.get(key):
-            values.append(str(ctx.get(key)))
+        if not isinstance(ctx, dict):
+            continue
+        candidates = [
+            ctx.get(key),
+            ctx.get("document_id") if key == "doc_id" else None,
+            ctx.get("id") if key == "chunk_id" else None,
+        ]
+        metadata = ctx.get("metadata")
+        if isinstance(metadata, dict):
+            candidates.extend(
+                [
+                    metadata.get(key),
+                    metadata.get("document_id") if key == "doc_id" else None,
+                    metadata.get("doc_id") if key == "doc_id" else None,
+                    metadata.get("chunk_id") if key == "chunk_id" else None,
+                ]
+            )
+        citation = ctx.get("citation")
+        if isinstance(citation, dict):
+            candidates.extend(
+                [
+                    citation.get(key),
+                    citation.get("document_id") if key == "doc_id" else None,
+                    citation.get("chunk_id") if key == "chunk_id" else None,
+                ]
+            )
+        for candidate in candidates:
+            normalized = canonical_id(candidate)
+            if normalized:
+                values.append(normalized)
     return values
 
 
 def _expected_ids(row: pd.Series, key: str) -> list[str]:
     values = row.get(key)
+    aliases = {
+        "relevant_doc_ids": ["expected_doc_ids", "doc_ids", "documents"],
+        "relevant_chunk_ids": ["expected_chunk_ids", "chunk_ids", "chunks"],
+    }
+    out = []
     if isinstance(values, list):
-        return [str(v) for v in values if v]
-    return []
+        out.extend(values)
+    for alias in aliases.get(key, []):
+        alias_values = row.get(alias)
+        if isinstance(alias_values, list):
+            out.extend(alias_values)
+    return [normalized for normalized in (canonical_id(v) for v in out) if normalized]
 
 
 def _recall_at_k(expected: list[str], retrieved: list[str], k: int = 5):
@@ -64,8 +114,19 @@ def _citation_ids(row: pd.Series, key: str) -> list[str]:
         return []
     values = []
     for citation in citations:
-        if isinstance(citation, dict) and citation.get(key):
-            values.append(str(citation.get(key)))
+        if not isinstance(citation, dict):
+            continue
+        candidates = [
+            citation.get(key),
+            citation.get("document_id") if key == "doc_id" else None,
+        ]
+        metadata = citation.get("metadata")
+        if isinstance(metadata, dict):
+            candidates.extend([metadata.get(key), metadata.get("document_id") if key == "doc_id" else None])
+        for candidate in candidates:
+            normalized = canonical_id(candidate)
+            if normalized:
+                values.append(normalized)
     return values
 
 

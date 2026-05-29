@@ -125,15 +125,18 @@ async def generate_stream_explanation(
 
         # 2. Web Search
         search_context = await load_search_context_fn(topic, mode="technical")
-        
+
         prompt = build_technical_prompt_fn(topic, intent, depth, diagram_type)
         if not prompt or not prompt.strip():
             prompt = TECHNICAL_MINIMAL_PROMPT
-            
+
         # Append RAG context
+        if kwargs.get("use_trusted_corpus") and not rag_context.strip():
+            rag_context = "[NO CONTEXT RETRIEVED]"
+
         if rag_context:
             prompt = _append_search_context(prompt, f"--- RAG CONTEXT ---\n{rag_context}\n--- END RAG CONTEXT ---")
-            
+
         prompt = _append_search_context(prompt, search_context)
         messages = build_messages_fn(
             prompt,
@@ -266,9 +269,11 @@ async def generate_stream_explanation(
 
         # 2. Web Search
         search_context = await load_search_context_fn(topic, mode="learn")
-        
+
         # 3. Assemble Prompt
         combined_context = "\n\n".join(part for part in (rag_context, search_context) if part)
+        if kwargs.get("use_trusted_corpus") and not combined_context.strip():
+            combined_context = "[NO CONTEXT RETRIEVED]"
         prompt = build_prompt_fn(_request_spec(search_context=combined_context), search_context=combined_context)
         length_constraint = prompt_orchestrator.extract_length_constraint(topic)
         prompt = prompt_orchestrator.apply_length_constraints(prompt, length_constraint)

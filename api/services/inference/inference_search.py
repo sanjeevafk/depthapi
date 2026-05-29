@@ -6,6 +6,7 @@ import hashlib
 import asyncio
 import time
 
+from api.services.rag.context_processing import compress_contexts
 from api.services.rag.search import search_service
 from api.services.inference.inference_constants import SEARCH_CONTEXT_MAX_CHARS, SEARCH_CONTEXT_TIMEOUT_SECONDS
 from api.logging_config import logger
@@ -31,7 +32,8 @@ def _append_search_context(prompt: str, context: str) -> str:
         f"{prompt}\n\n"
         "External web context (supplemental, may be incomplete):\n"
         f"{context}\n\n"
-        "Use this context only when relevant and do not fabricate details."
+        "Synthesize rather than copy. Combine overlapping information, only make supported claims, "
+        "and cite supporting contexts where appropriate."
     )
 
 
@@ -41,11 +43,11 @@ def _append_rag_context(prompt: str, context: str) -> str:
     return (
         f"{prompt}\n\n"
         "--- RETRIEVED DEVELOPER KNOWLEDGE ---\n"
-        "The following excerpts are from verified technical sources.\n"
-        "Base your answer primarily on this content.\n"
-        "Do NOT invent API signatures, package names, or version numbers not present below.\n"
-        "If the retrieved content does not answer the question, say so explicitly.\n"
-        "Always end with a SOURCES section listing which sources you used.\n"
+        "Synthesize a concise technical explanation using the retrieved contexts.\n"
+        "Do not copy passages verbatim. Combine overlapping information.\n"
+        "Prefer abstraction and explanation over repetition.\n"
+        "Use grounded technical reasoning and only include claims supported by retrieved context.\n"
+        "Cite supporting contexts where appropriate. If the content does not answer the question, say so.\n"
         "---\n"
         f"{context}\n"
         "--- END RETRIEVED KNOWLEDGE ---"
@@ -57,10 +59,14 @@ def format_rag_context(results: list[dict]) -> str:
         return ""
     
     formatted = []
-    for i, res in enumerate(results):
+    for i, res in enumerate(compress_contexts(results)):
         content = res.get("content", "").strip()
         source = res.get("citation", {}).get("source_url") or res.get("citation", {}).get("source_tier") or "Unknown"
-        formatted.append(f"[{i+1}] Source: {source}\n{content}")
+        section = (res.get("metadata") or {}).get("section_title") or res.get("section_title")
+        label = f"[{i+1}] Source: {source}"
+        if section:
+            label += f" | Section: {section}"
+        formatted.append(f"{label}\n{content}")
     
     return "\n\n".join(formatted)
 
