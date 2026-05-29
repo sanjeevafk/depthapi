@@ -234,6 +234,8 @@ async def technical_mode_handler(topic: str, **kwargs: Any) -> str:
             query_mode="technical",
         )
         rag_context = format_rag_context(rag_results)
+        if kwargs.get("use_trusted_corpus") and not rag_context.strip():
+            rag_context = "[NO CONTEXT RETRIEVED]"
         if isinstance(kwargs.get("telemetry_sink"), dict):
             kwargs["telemetry_sink"]["retrieved_contexts"] = rag_results
     except Exception as exc:
@@ -446,6 +448,8 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
     
     # 3. Assemble Prompt
     combined_context = "\n\n".join(part for part in (rag_context, search_context) if part)
+    if kwargs.get("use_trusted_corpus") and not combined_context.strip():
+        combined_context = "[NO CONTEXT RETRIEVED]"
     prompt_spec, _ = _spec_for_request(
         topic,
         classified_spec,

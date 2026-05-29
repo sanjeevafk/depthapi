@@ -15,6 +15,7 @@ import structlog
 import tiktoken
 from api.auth import get_supabase_admin
 from api.adapters.supabase_adapter import SupabaseHTTPClient
+from api.services.rag.context_processing import rough_token_count
 from api.services.rag.embeddings import get_embedding_service
 
 logger = structlog.get_logger(__name__)
@@ -46,8 +47,8 @@ class IngestionWorker:
         self.worker_id = worker_id
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
         self.embed_service = get_embedding_service()
-        self.chunk_size = 512  # Tokens
-        self.chunk_overlap = 100 # Tokens
+        self.chunk_size = 512  # Semantic target tokens.
+        self.chunk_overlap = 80 # Reserved for legacy fallback only.
         self._link_re = re.compile(r"https?://")
         self._anchor_re = re.compile(r"\]\(#.+?\)")
 
@@ -141,7 +142,13 @@ class IngestionWorker:
             raise ValueError("Document content is empty")
 
         # Chunking
-        chunks_text = self.chunk_text(content)
+        chunks = self.chunk_text_with_metadata(
+            content,
+            doc_id=str(document_id),
+            source_name=str(doc.get("filename") or doc.get("source_url") or "document"),
+            source_url=doc.get("source_url"),
+        )
+        chunks_text = [chunk["content"] for chunk in chunks]
         
         # Batch Embedding
         embeddings = await self.embed_service.create_embeddings(chunks_text)
@@ -152,20 +159,30 @@ class IngestionWorker:
         chunk_rows = []
         seen_hashes: set[str] = set()
         chunk_order = 0
-        for i, (text, vector) in enumerate(zip(chunks_text, embeddings)):
+        for i, (chunk, vector) in enumerate(zip(chunks, embeddings)):
+            text = chunk["content"]
             content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
             if content_hash in seen_hashes:
                 logger.debug("duplicate_chunk_skipped", document_id=document_id, chunk_order=i)
                 continue
             seen_hashes.add(content_hash)
+            metadata = dict(doc.get("metadata", {}) or {})
+            metadata.update(
+                {
+                    "doc_id": chunk["doc_id"],
+                    "chunk_id": chunk["chunk_id"],
+                    "section_title": chunk.get("section_title", ""),
+                    "chunking_version": "v3-semantic-local",
+                }
+            )
             chunk_rows.append({
                 "document_id": document_id,
                 "content": text,
                 "content_hash": content_hash,
                 "embedding": vector,
-                "token_count": len(self.tokenizer.encode(text)),
+                "token_count": int(chunk.get("token_count") or len(self.tokenizer.encode(text))),
                 "chunk_order": chunk_order,
-                "metadata": doc.get("metadata", {})
+                "metadata": metadata,
             })
             chunk_order += 1
 
@@ -198,18 +215,86 @@ class IngestionWorker:
             
         return ""
 
-    def chunk_text(self, text: str) -> List[str]:
-        """Simple recursive-style chunking using token counts."""
+    def chunk_text_with_metadata(
+        self,
+        text: str,
+        *,
+        doc_id: str = "local-document",
+        source_name: str = "document",
+        source_url: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Heading-aware semantic chunking that preserves code/table blocks."""
+        clean = self._clean_text(text)
+        if not clean:
+            return []
+
+        try:
+            from scripts.ingest_corpus.semantic_chunker import HierarchicalSemanticChunker
+
+            chunker = HierarchicalSemanticChunker(
+                max_tokens=self.chunk_size,
+                version="v3-semantic-local",
+                source_type="markdown",
+            )
+            semantic_chunks = chunker.chunk_document(
+                text=clean,
+                doc_id=doc_id,
+                source_name=source_name,
+                source_url=source_url,
+                tags=[],
+                breadcrumbs=[source_name] if source_name else None,
+            )
+            out: list[dict[str, Any]] = []
+            for idx, chunk in enumerate(semantic_chunks):
+                content = self._clean_text(chunk.content)
+                if not self._is_valid_chunk(content):
+                    continue
+                hierarchy = (chunk.metadata or {}).get("hierarchy") or []
+                section_title = str(hierarchy[-1]) if hierarchy else ""
+                out.append(
+                    {
+                        "content": content,
+                        "doc_id": doc_id,
+                        "chunk_id": f"{doc_id}#c{idx:04d}",
+                        "section_title": section_title,
+                        "token_count": int(chunk.token_count or rough_token_count(content)),
+                        "chunk_order": idx,
+                    }
+                )
+            if out:
+                return out
+        except Exception as exc:
+            logger.warning("semantic_chunking_failed_fallback", error=str(exc))
+
+        return self._legacy_chunk_text_with_metadata(clean, doc_id=doc_id)
+
+    def _legacy_chunk_text_with_metadata(self, text: str, *, doc_id: str) -> list[dict[str, Any]]:
+        """Token-window fallback used only if semantic chunking fails."""
         tokens = self.tokenizer.encode(text)
-        chunks = []
+        chunks: list[dict[str, Any]] = []
         
         start = 0
+        chunk_order = 0
         while start < len(tokens):
             end = start + self.chunk_size
             chunk_tokens = tokens[start:end]
             chunk_text = self._clean_text(self.tokenizer.decode(chunk_tokens))
             if self._is_valid_chunk(chunk_text):
-                chunks.append(chunk_text)
+                chunks.append(
+                    {
+                        "content": chunk_text,
+                        "doc_id": doc_id,
+                        "chunk_id": f"{doc_id}#c{chunk_order:04d}",
+                        "section_title": "",
+                        "token_count": len(chunk_tokens),
+                        "chunk_order": chunk_order,
+                    }
+                )
+                chunk_order += 1
             start += (self.chunk_size - self.chunk_overlap)
             
         return chunks
+
+    def chunk_text(self, text: str) -> List[str]:
+        """Backward-compatible text-only chunking wrapper."""
+        return [chunk["content"] for chunk in self.chunk_text_with_metadata(text)]

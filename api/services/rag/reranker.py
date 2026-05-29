@@ -2,19 +2,21 @@
 Uses Cross-Encoders to re-sort hybrid search results for higher precision.
 """
 
+import os
 from typing import List, Dict, Any
 import structlog
 import asyncio
-from sentence_transformers import CrossEncoder
 
 logger = structlog.get_logger(__name__)
 
 class RerankerService:
-    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
-        self.model_name = model_name
+    def __init__(self, model_name: str | None = None):
+        self.model_name = model_name or os.getenv("RAG_RERANKER_MODEL", "BAAI/bge-reranker-base")
         # Using CPU for stability in local dev
-        self.model = CrossEncoder(model_name, device="cpu")
-        logger.info("reranker_model_loaded", model=model_name, device="cpu")
+        from sentence_transformers import CrossEncoder
+
+        self.model = CrossEncoder(self.model_name, device="cpu")
+        logger.info("reranker_model_loaded", model=self.model_name, device="cpu")
 
     async def rerank(self, query: str, candidates: List[Dict[str, Any]], top_n: int = 10) -> List[Dict[str, Any]]:
         """

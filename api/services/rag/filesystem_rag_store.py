@@ -7,14 +7,18 @@ import json
 import os
 import pickle
 import hashlib
-from dataclasses import asdict, dataclass
+import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import structlog
 from filelock import FileLock
 from rank_bm25 import BM25Okapi
+
+from api.services.rag.context_processing import canonical_id, rough_token_count
+from api.services.rag.reranker import get_reranker_service
 
 logger = structlog.get_logger(__name__)
 
@@ -28,13 +32,19 @@ def _load_faiss() -> Any:
 @dataclass
 class RetrievalResult:
     chunk_id: str
+    document_id: Optional[str]
     content: str
     source_name: str
     source_url: Optional[str]
     chunk_order: int
+    section_title: Optional[str]
+    token_count: int
     rrf_score: float
     vector_similarity: float
     namespace: str
+    rerank_score: Optional[float] = None
+    rerank_delta: Optional[int] = None
+    metadata: Dict[str, Any] | None = None
 
 class FilesystemRAGStore:
     def __init__(self, base_path: str = "data/rag"):
@@ -42,6 +52,7 @@ class FilesystemRAGStore:
         self.base_path.mkdir(parents=True, exist_ok=True)
         # Cache for loaded namespaces: {namespace: {"index": faiss_index, "bm25": bm25_obj, "chunks": list}}
         self._cache: Dict[str, Dict[str, Any]] = {}
+        self.last_retrieval_timings: dict[str, float | None] = {}
 
     def _get_ns_paths(self, namespace: str) -> Dict[str, Path]:
         ns_dir = self.base_path / namespace
@@ -80,12 +91,25 @@ class FilesystemRAGStore:
             for i, (content, vector, meta) in enumerate(zip(chunks, embeddings, metadata)):
                 chunk_id = hashlib.sha256(content.encode("utf-8")).hexdigest()
                 new_chunks_data.append({
-                    "id": chunk_id,
+                    "id": meta.get("chunk_id") or chunk_id,
+                    "content_hash": chunk_id,
                     "content": content,
                     "source_name": meta.get("source_name", "Unknown"),
                     "source_url": meta.get("source_url"),
                     "chunk_order": meta.get("chunk_order", i),
-                    "token_count": meta.get("token_count", 0),
+                    "token_count": int(meta.get("token_count") or rough_token_count(content)),
+                    "document_id": meta.get("document_id") or meta.get("doc_id"),
+                    "doc_id": meta.get("doc_id") or meta.get("document_id"),
+                    "section_title": meta.get("section_title", ""),
+                    "embedding": vector,
+                    "metadata": {
+                        **dict(meta.get("metadata") or {}),
+                        "doc_id": meta.get("doc_id") or meta.get("document_id"),
+                        "chunk_id": meta.get("chunk_id") or chunk_id,
+                        "section_title": meta.get("section_title", ""),
+                        "token_count": int(meta.get("token_count") or rough_token_count(content)),
+                        "chunking_version": meta.get("chunking_version", "v3-semantic-local"),
+                    },
                 })
             
             all_chunks = existing_chunks + new_chunks_data
@@ -189,6 +213,11 @@ class FilesystemRAGStore:
                         "source_url": chunk.get("source_url"),
                         "chunk_order": int(chunk.get("chunk_order", idx) or idx),
                         "token_count": int(chunk.get("token_count", 0) or 0),
+                        "document_id": chunk.get("document_id") or chunk.get("doc_id"),
+                        "doc_id": chunk.get("doc_id") or chunk.get("document_id"),
+                        "section_title": chunk.get("section_title", ""),
+                        "embedding": embedding,
+                        "metadata": chunk.get("metadata") or {},
                     }
                 )
 
@@ -235,10 +264,10 @@ class FilesystemRAGStore:
         top_k: int = 5,
         min_similarity: float = 0.65,
     ) -> List[RetrievalResult]:
-        """
-        Hybrid search across namespaces using RRF.
-        """
+        """Hybrid search across namespaces, then MMR and cross-encoder reranking."""
+        retrieval_started = time.perf_counter()
         all_results: List[RetrievalResult] = []
+        candidate_pool = max(top_k * 4, int(os.getenv("RAG_CANDIDATE_POOL", "20")))
         
         for ns in namespaces:
             self.load_namespace(ns)
@@ -258,13 +287,13 @@ class FilesystemRAGStore:
                                    # We should use IndexHNSWFlat with InnerProduct for cosine.
                                    # For MVP, we'll convert L2 to a similarity score.
             
-            D, I = index.search(xq, top_k * 2)
+            D, I = index.search(xq, candidate_pool)
             
             # 2. Keyword Search (BM25)
             tokenized_query = query_text.lower().split()
             bm25_scores = bm25.get_scores(tokenized_query)
             # Get top indices from BM25
-            bm25_top_indices = np.argsort(bm25_scores)[::-1][:top_k * 2]
+            bm25_top_indices = np.argsort(bm25_scores)[::-1][:candidate_pool]
             
             # 3. RRF Fusion
             # Create ranks
@@ -290,17 +319,145 @@ class FilesystemRAGStore:
                     chunk = chunks[idx]
                     ns_results.append(RetrievalResult(
                         chunk_id=chunk["id"],
+                        document_id=chunk.get("document_id") or chunk.get("doc_id"),
                         content=chunk["content"],
                         source_name=chunk["source_name"],
                         source_url=chunk.get("source_url"),
                         chunk_order=chunk["chunk_order"],
+                        section_title=chunk.get("section_title"),
+                        token_count=int(chunk.get("token_count") or rough_token_count(chunk.get("content", ""))),
                         rrf_score=score,
                         vector_similarity=float(similarity),
-                        namespace=ns
+                        namespace=ns,
+                        metadata={**dict(chunk.get("metadata") or {}), "embedding": chunk.get("embedding")},
                     ))
             
             all_results.extend(ns_results)
 
-        # Final sort by RRF score
+        # Final sort by RRF score, then diversify and rerank.
         all_results.sort(key=lambda x: x.rrf_score, reverse=True)
-        return all_results[:top_k]
+        deduped = self._dedupe_results(all_results)
+        diversified = self._apply_mmr(deduped, query_embedding=query_embedding, top_n=min(candidate_pool, len(deduped)))
+        reranked, rerank_ms = await self._rerank_results(query_text, diversified, final_k=top_k)
+        retrieval_ms = (time.perf_counter() - retrieval_started) * 1000
+        self.last_retrieval_timings = {
+            "retrieval_latency_ms": round(retrieval_ms, 2),
+            "rerank_latency_ms": rerank_ms,
+        }
+        logger.info(
+            "filesystem_retrieval_completed",
+            candidates=len(all_results),
+            deduped=len(deduped),
+            diversified=len(diversified),
+            selected=len(reranked),
+            retrieval_ms=round(retrieval_ms, 2),
+        )
+        return reranked[:top_k]
+
+    def _dedupe_results(self, results: list[RetrievalResult]) -> list[RetrievalResult]:
+        deduped: dict[str, RetrievalResult] = {}
+        for result in results:
+            key = result.chunk_id or hashlib.sha256(result.content.encode("utf-8")).hexdigest()
+            current = deduped.get(key)
+            if current is None or result.rrf_score > current.rrf_score:
+                deduped[key] = result
+        return list(deduped.values())
+
+    def _embedding_for_result(self, result: RetrievalResult) -> np.ndarray | None:
+        metadata = result.metadata or {}
+        embedding = metadata.get("embedding")
+        if embedding is None:
+            embedding = metadata.get("_embedding")
+        if embedding is None:
+            return None
+        try:
+            vec = np.array(embedding, dtype="float32")
+            norm = np.linalg.norm(vec)
+            return vec / norm if norm else vec
+        except Exception:
+            return None
+
+    def _text_similarity(self, left: str, right: str) -> float:
+        left_terms = set(str(left or "").lower().split())
+        right_terms = set(str(right or "").lower().split())
+        if not left_terms or not right_terms:
+            return 0.0
+        return len(left_terms & right_terms) / len(left_terms | right_terms)
+
+    def _apply_mmr(
+        self,
+        results: list[RetrievalResult],
+        *,
+        query_embedding: list[float],
+        top_n: int,
+        lambda_mult: float = 0.65,
+    ) -> list[RetrievalResult]:
+        if len(results) <= 1:
+            return results
+        selected: list[RetrievalResult] = []
+        remaining = list(results)
+        query_vec = np.array(query_embedding, dtype="float32")
+        query_norm = np.linalg.norm(query_vec)
+        if query_norm:
+            query_vec = query_vec / query_norm
+
+        while remaining and len(selected) < top_n:
+            best_idx = 0
+            best_score = float("-inf")
+            for idx, candidate in enumerate(remaining):
+                cand_vec = self._embedding_for_result(candidate)
+                relevance = candidate.rrf_score
+                if cand_vec is not None and query_vec.size == cand_vec.size:
+                    relevance = float(np.dot(query_vec, cand_vec))
+                max_diversity_penalty = 0.0
+                for prior in selected:
+                    prior_vec = self._embedding_for_result(prior)
+                    if cand_vec is not None and prior_vec is not None and cand_vec.size == prior_vec.size:
+                        similarity = float(np.dot(cand_vec, prior_vec))
+                    else:
+                        similarity = self._text_similarity(candidate.content, prior.content)
+                    same_doc_penalty = 0.15 if canonical_id(candidate.document_id) == canonical_id(prior.document_id) else 0.0
+                    max_diversity_penalty = max(max_diversity_penalty, similarity + same_doc_penalty)
+                mmr_score = lambda_mult * relevance - (1.0 - lambda_mult) * max_diversity_penalty
+                if mmr_score > best_score:
+                    best_score = mmr_score
+                    best_idx = idx
+            selected.append(remaining.pop(best_idx))
+        return selected
+
+    async def _rerank_results(
+        self,
+        query_text: str,
+        results: list[RetrievalResult],
+        *,
+        final_k: int,
+    ) -> tuple[list[RetrievalResult], float | None]:
+        if len(results) <= 1 or os.getenv("RAG_DISABLE_RERANK", "0") == "1":
+            return results[:final_k], None
+        original_positions = {result.chunk_id: idx for idx, result in enumerate(results)}
+        candidates = [
+            {
+                "chunk_id": result.chunk_id,
+                "content": result.content,
+                "_result": result,
+                "rrf_score": result.rrf_score,
+                "vector_similarity": result.vector_similarity,
+            }
+            for result in results
+        ]
+        try:
+            rerank_started = time.perf_counter()
+            reranker = get_reranker_service()
+            ranked = await reranker.rerank(query_text, candidates, top_n=len(candidates))
+            rerank_ms = (time.perf_counter() - rerank_started) * 1000
+            out: list[RetrievalResult] = []
+            for idx, candidate in enumerate(ranked):
+                result = candidate["_result"]
+                result.rerank_score = float(candidate.get("rerank_score", 0.0))
+                result.rerank_delta = original_positions.get(result.chunk_id, idx) - idx
+                out.append(result)
+            logger.info("filesystem_rerank_completed", candidates=len(candidates), rerank_ms=round(rerank_ms, 2))
+            return out[:final_k], round(rerank_ms, 2)
+        except Exception as exc:
+            logger.warning("filesystem_rerank_failed_fallback", error=str(exc))
+            return results[:final_k], None
