@@ -6,10 +6,12 @@ import hashlib
 import ipaddress
 import re
 import socket
+import ssl
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 from urllib.parse import urlparse
 
+import httpcore
 import httpx
 import structlog
 import tiktoken
@@ -47,7 +49,12 @@ def _resolve_and_validate_url(url: str) -> tuple[str, str]:
 
     # Single DNS resolution — validate immediately.
     try:
-        ip_addr = socket.gethostbyname(hostname)
+        # Prefer IPv4 for consistency; fall back to IPv6 if unavailable.
+        infos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        if not infos:
+            raise ValueError(f"DNS resolution returned no addresses for {hostname}")
+        # Use the first returned address.
+        ip_addr = infos[0][4][0]
     except socket.gaierror as exc:
         raise ValueError(f"DNS resolution failed for {hostname}: {exc}") from exc
 
@@ -228,21 +235,59 @@ class IngestionWorker:
             # Resolve DNS once, validate the IP, then connect via the pinned IP URL.
             # This prevents TOCTOU DNS rebinding: httpx never performs a second lookup.
             safe_url, host_header = _resolve_and_validate_url(str(source_url))
-            logger.debug("fetching_external_content", url_host=urlparse(str(source_url)).hostname)
+            parsed_original = urlparse(str(source_url))
+            hostname = parsed_original.hostname
+            logger.debug("fetching_external_content", url_host=hostname)
             timeout = httpx.Timeout(15.0, connect=5.0)
-            headers = {"Host": host_header}
-            async with httpx.AsyncClient(
-                timeout=timeout,
-                follow_redirects=False,  # Never follow: a redirect could re-introduce TOCTOU.
-                headers=headers,
-            ) as client:
-                response = await client.get(safe_url)
-                response.raise_for_status()
-                if len(response.content) > MAX_CONTENT_SIZE:
-                    raise ValueError(f"Response exceeds max size of {MAX_CONTENT_SIZE} bytes")
-                return response.text.strip()
 
-            
+            if parsed_original.scheme == "https":
+                # Use httpcore directly so we can set sni_hostname independently of the
+                # URL authority. The URL authority points at the pinned IP (no second DNS
+                # resolution); extensions["sni_hostname"] tells the TLS layer to present
+                # the original hostname for SNI and certificate validation.
+                ssl_ctx = ssl.create_default_context()
+                parsed_ip = urlparse(safe_url)
+                port = parsed_ip.port or 443
+                ip_host = parsed_ip.hostname or ""
+                target = parsed_ip.path or "/"
+                if parsed_ip.query:
+                    target = f"{target}?{parsed_ip.query}"
+                async with httpcore.AsyncConnectionPool(
+                    ssl_context=ssl_ctx,
+                    max_connections=1,
+                ) as core_pool:
+                    core_response = await core_pool.handle_async_request(
+                        httpcore.Request(
+                            method=b"GET",
+                            url=httpcore.URL(
+                                scheme=b"https",
+                                host=ip_host.encode(),  # pinned IP — no re-resolution
+                                port=port,
+                                target=target.encode(),
+                            ),
+                            headers=[(b"host", host_header.encode())],
+                            extensions={"sni_hostname": hostname.encode()},
+                        )
+                    )
+                    body = b"".join([chunk async for chunk in core_response.aiter_raw()])
+                    await core_response.aclose()
+                if core_response.status < 200 or core_response.status >= 300:
+                    raise ValueError(f"HTTP {core_response.status} fetching {hostname}")
+            else:
+                # Plain HTTP: connect to pinned IP directly, no TLS concerns.
+                async with httpx.AsyncClient(
+                    timeout=timeout,
+                    follow_redirects=False,
+                    headers={"Host": host_header},
+                ) as client:
+                    response = await client.get(safe_url)
+                    response.raise_for_status()
+                    body = response.content
+
+            if len(body) > MAX_CONTENT_SIZE:
+                raise ValueError(f"Response exceeds max size of {MAX_CONTENT_SIZE} bytes")
+            return body.decode(errors="replace").strip()
+
         return ""
 
     def chunk_text_with_metadata(
