@@ -22,25 +22,49 @@ logger = structlog.get_logger(__name__)
 
 MAX_CONTENT_SIZE = 10 * 1024 * 1024  # 10MB
 
-def _is_safe_url(url: str) -> bool:
-    """Check if a URL is safe to fetch (prevents basic SSRF)."""
+def _resolve_and_validate_url(url: str) -> tuple[str, str]:
+    """Resolve the hostname once, validate the IP, and return (safe_fetch_url, host_header).
+
+    Prevents DNS rebinding TOCTOU: we pin the resolved IP into the fetch URL so
+    httpx never performs a second DNS lookup that could return a different address.
+    Raises ValueError if the URL targets a blocked host or network.
+    """
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("URL has no hostname")
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Unsupported scheme: {parsed.scheme}")
+
+    # Hard-coded blocklist catches obvious cases before resolution.
+    _blocked = {
+        "localhost", "127.0.0.1", "::1",
+        "metadata.google.internal",
+        "169.254.169.254",  # AWS/GCP/Azure IMDS
+    }
+    if hostname.lower() in _blocked:
+        raise ValueError(f"URL targets a blocked host: {hostname}")
+
+    # Single DNS resolution — validate immediately.
     try:
-        parsed = urlparse(url)
-        if not parsed.hostname:
-            return False
-        if parsed.scheme not in ("http", "https"):
-            return False
-            
-        # Basic blacklist for internal hostnames
-        if parsed.hostname.lower() in ("localhost", "127.0.0.1", "metadata.google.internal"):
-            return False
-            
-        # Resolve and check IP ranges
-        ip_addr = socket.gethostbyname(parsed.hostname)
-        ip = ipaddress.ip_address(ip_addr)
-        return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved)
-    except Exception:
-        return False
+        ip_addr = socket.gethostbyname(hostname)
+    except socket.gaierror as exc:
+        raise ValueError(f"DNS resolution failed for {hostname}: {exc}") from exc
+
+    ip = ipaddress.ip_address(ip_addr)
+    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+        raise ValueError(f"URL resolves to a blocked IP range: {ip_addr}")
+
+    # Build a fetch URL that replaces the hostname with the resolved IP so that
+    # httpx connects directly — no second DNS resolution can occur.
+    port = parsed.port
+    netloc_with_ip = f"[{ip_addr}]:{port}" if ":" in ip_addr else (
+        f"{ip_addr}:{port}" if port else ip_addr
+    )
+    safe_url = parsed._replace(netloc=netloc_with_ip).geturl()
+    # Return both the pinned URL and the original Host header value.
+    host_header = f"{hostname}:{port}" if port else hostname
+    return safe_url, host_header
 
 class IngestionWorker:
     def __init__(self, worker_id: str = "default-worker"):
@@ -201,12 +225,18 @@ class IngestionWorker:
             return metadata["raw_text"]
         source_url = doc.get("source_url")
         if source_url and str(source_url).startswith(("http://", "https://")):
-            if not _is_safe_url(str(source_url)):
-                raise ValueError("URL targets a blocked host or network")
+            # Resolve DNS once, validate the IP, then connect via the pinned IP URL.
+            # This prevents TOCTOU DNS rebinding: httpx never performs a second lookup.
+            safe_url, host_header = _resolve_and_validate_url(str(source_url))
             logger.debug("fetching_external_content", url_host=urlparse(str(source_url)).hostname)
             timeout = httpx.Timeout(15.0, connect=5.0)
-            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-                response = await client.get(str(source_url))
+            headers = {"Host": host_header}
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                follow_redirects=False,  # Never follow: a redirect could re-introduce TOCTOU.
+                headers=headers,
+            ) as client:
+                response = await client.get(safe_url)
                 response.raise_for_status()
                 if len(response.content) > MAX_CONTENT_SIZE:
                     raise ValueError(f"Response exceeds max size of {MAX_CONTENT_SIZE} bytes")

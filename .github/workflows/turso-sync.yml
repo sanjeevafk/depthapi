@@ -21,6 +21,8 @@ jobs:
     if: false  # Remove this line and configure secrets to enable.
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@v4

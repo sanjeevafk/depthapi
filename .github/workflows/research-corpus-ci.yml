@@ -19,6 +19,8 @@ jobs:
   validate:
     if: false  # Remove this line to re-enable. Requires Supabase secrets.
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

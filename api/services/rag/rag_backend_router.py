@@ -1,5 +1,6 @@
 """Switch between filesystem and Supabase/pgvector RAG backends."""
 
+import hashlib
 import json
 import os
 import time
@@ -17,6 +18,13 @@ logger = structlog.get_logger(__name__)
 # Global singleton for filesystem store
 _fs_store: Optional[FilesystemRAGStore] = None
 _TRACE_PATH = Path("results/raw/retrieval_traces.jsonl")
+
+
+def _hash_trace_text(value: str | None) -> str | None:
+    """SHA-256 hash of a string for trace storage, preventing clear-text PII on disk."""
+    if value is None:
+        return None
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:32]
 
 
 def _append_retrieval_trace(payload: dict) -> None:
@@ -126,7 +134,7 @@ async def retrieve_context(query: str, api_key_id: str, **kwargs):
         timings = getattr(backend, "last_retrieval_timings", {}) or {}
         _append_retrieval_trace(
             {
-                "query": query,
+                "query_hash": _hash_trace_text(query),
                 "api_key_id": api_key_id,
                 "backend": "filesystem",
                 "namespaces": namespaces,
@@ -136,7 +144,7 @@ async def retrieve_context(query: str, api_key_id: str, **kwargs):
                 + sum(rough_token_count(str(c.get("content", ""))) for c in selected_contexts),
                 "retrieved": [
                     {
-                        "chunk_text": c.get("content"),
+                        "chunk_text_hash": _hash_trace_text(c.get("content")),
                         "source_doc_id": c.get("document_id"),
                         "chunk_id": c.get("chunk_id"),
                         "similarity_score": c.get("vector_similarity"),
@@ -149,7 +157,7 @@ async def retrieve_context(query: str, api_key_id: str, **kwargs):
                 ],
                 "selected_contexts": [
                     {
-                        "chunk_text": c.get("content"),
+                        "chunk_text_hash": _hash_trace_text(c.get("content")),
                         "source_doc_id": c.get("document_id"),
                         "chunk_id": c.get("chunk_id"),
                         "similarity_score": c.get("vector_similarity"),
@@ -174,7 +182,7 @@ async def retrieve_context(query: str, api_key_id: str, **kwargs):
         retrieval_ms = round((time.perf_counter() - retrieval_started) * 1000, 2)
         _append_retrieval_trace(
             {
-                "query": query,
+                "query_hash": _hash_trace_text(query),
                 "api_key_id": api_key_id,
                 "backend": "pgvector",
                 "retrieval_latency_ms": retrieval_ms,
@@ -183,7 +191,7 @@ async def retrieve_context(query: str, api_key_id: str, **kwargs):
                 + sum(rough_token_count(str(c.get("content", ""))) for c in selected_contexts),
                 "retrieved": [
                     {
-                        "chunk_text": c.get("content"),
+                        "chunk_text_hash": _hash_trace_text(c.get("content")),
                         "source_doc_id": c.get("document_id") or c.get("doc_id"),
                         "chunk_id": c.get("chunk_id") or c.get("id"),
                         "similarity_score": c.get("vector_similarity"),
@@ -196,7 +204,7 @@ async def retrieve_context(query: str, api_key_id: str, **kwargs):
                 ],
                 "selected_contexts": [
                     {
-                        "chunk_text": c.get("content"),
+                        "chunk_text_hash": _hash_trace_text(c.get("content")),
                         "source_doc_id": c.get("document_id") or c.get("doc_id"),
                         "chunk_id": c.get("chunk_id") or c.get("id"),
                         "similarity_score": c.get("vector_similarity"),
