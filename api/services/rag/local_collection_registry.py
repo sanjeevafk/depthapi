@@ -16,6 +16,25 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _safe_collection_path(base_path: Path, api_key_id: str, collection_id: str) -> Path:
+    """Return the canonical namespace directory, raising ValueError on path traversal.
+
+    Resolves both the base and target to their real paths and asserts the target
+    is strictly inside the base directory before any filesystem operation.
+    """
+    resolved_base = base_path.resolve()
+    candidate = (base_path / api_key_id / collection_id).resolve()
+    # is_relative_to requires Python 3.9+; use str prefix check as a fallback.
+    try:
+        candidate.relative_to(resolved_base)
+    except ValueError:
+        raise ValueError(
+            f"Path traversal detected: resolved path {candidate!r} "
+            f"is outside base directory {resolved_base!r}"
+        ) from None
+    return candidate
+
+
 class LocalCollectionRegistry:
     """Persist collection/document metadata for filesystem-backed local mode."""
 
@@ -145,7 +164,7 @@ class LocalCollectionRegistry:
             if found:
                 self._save(payload)
 
-        namespace_dir = Path(base_path) / api_key_id / collection_id
+        namespace_dir = _safe_collection_path(Path(base_path), api_key_id, collection_id)
         if namespace_dir.exists():
             shutil.rmtree(namespace_dir)
             parent = namespace_dir.parent
