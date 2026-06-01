@@ -115,16 +115,20 @@ class FilesystemRAGStore:
             all_chunks = existing_chunks + new_chunks_data
             
             # 3. Update FAISS Index
+            # Use METRIC_INNER_PRODUCT so that dot product on L2-normalised vectors
+            # equals cosine similarity exactly (values in [-1, 1]).
             dim = len(embeddings[0]) if embeddings else 768
             faiss = _load_faiss()
             if paths["vectors"].exists():
                 index = faiss.read_index(str(paths["vectors"]))
             else:
-                # Use HNSW as specified in MVP_DEV_VERTICAL.md
-                index = faiss.IndexHNSWFlat(dim, 32)
+                index = faiss.IndexHNSWFlat(dim, 32, faiss.METRIC_INNER_PRODUCT)
                 index.hnsw.efConstruction = 200
-            
-            index.add(np.array(embeddings).astype("float32"))
+
+            # L2-normalise before adding so stored vectors are unit vectors.
+            vecs = np.array(embeddings, dtype="float32")
+            faiss.normalize_L2(vecs)
+            index.add(vecs)
             
             # 4. Rebuild BM25 (always from scratch for consistency)
             tokenized_corpus = [c["content"].lower().split() for c in all_chunks]
@@ -227,9 +231,10 @@ class FilesystemRAGStore:
 
             dim = len(embeddings[0])
             faiss = _load_faiss()
-            index = faiss.IndexHNSWFlat(dim, 32)
+            index = faiss.IndexHNSWFlat(dim, 32, faiss.METRIC_INNER_PRODUCT)
             index.hnsw.efConstruction = 200
-            vectors = np.array(embeddings).astype("float32")
+            vectors = np.array(embeddings, dtype="float32")
+            faiss.normalize_L2(vectors)
             index.add(vectors)
 
             tokenized_corpus = [c["content"].lower().split() for c in normalized_chunks]
@@ -279,42 +284,43 @@ class FilesystemRAGStore:
             index = data["index"]
             bm25 = data["bm25"]
             
-            # 1. Vector Search (FAISS)
+            # 1. Vector Search (FAISS — METRIC_INNER_PRODUCT on L2-normalised vectors)
+            # D values are cosine similarities in [-1, 1]; higher is more similar.
             faiss = _load_faiss()
-            xq = np.array([query_embedding]).astype("float32")
-            faiss.normalize_L2(xq) # Assuming cosine similarity if index is inner product, 
-                                   # but IndexHNSWFlat uses L2 distance by default.
-                                   # We should use IndexHNSWFlat with InnerProduct for cosine.
-                                   # For MVP, we'll convert L2 to a similarity score.
-            
+            xq = np.array([query_embedding], dtype="float32")
+            faiss.normalize_L2(xq)
+
             D, I = index.search(xq, candidate_pool)
-            
+
             # 2. Keyword Search (BM25)
             tokenized_query = query_text.lower().split()
             bm25_scores = bm25.get_scores(tokenized_query)
-            # Get top indices from BM25
             bm25_top_indices = np.argsort(bm25_scores)[::-1][:candidate_pool]
-            
+
             # 3. RRF Fusion
-            # Create ranks
-            vector_ranks = {idx: rank for rank, idx in enumerate(I[0]) if idx != -1}
-            bm25_ranks = {idx: rank for rank, idx in enumerate(bm25_top_indices)}
-            
-            k = 60 # RRF constant
+            vector_ranks = {int(idx): rank for rank, idx in enumerate(I[0]) if idx != -1}
+            bm25_ranks = {int(idx): rank for rank, idx in enumerate(bm25_top_indices)}
+
+            k = 60  # RRF constant
             combined_indices = set(vector_ranks.keys()) | set(bm25_ranks.keys())
-            
+
+            # Build a fast lookup from FAISS result arrays.
+            faiss_idx_to_score: dict[int, float] = {
+                int(I[0][rank]): float(D[0][rank])
+                for rank in range(len(I[0]))
+                if I[0][rank] != -1
+            }
+
             ns_results = []
             for idx in combined_indices:
                 v_rank = vector_ranks.get(idx, 1e6)
                 b_rank = bm25_ranks.get(idx, 1e6)
-                
+
                 score = (1.0 / (k + v_rank)) + (1.0 / (k + b_rank))
-                
-                # Get similarity (for FAISS L2 distance, smaller is better)
-                # Convert distance to a rough similarity [0, 1]
-                dist = D[0][list(I[0]).index(idx)] if idx in vector_ranks else 2.0
-                similarity = 1.0 / (1.0 + dist)
-                
+
+                # D is a cosine similarity in [-1, 1]; use it directly.
+                similarity = faiss_idx_to_score.get(idx, -1.0)
+
                 if similarity >= min_similarity or b_rank < top_k:
                     chunk = chunks[idx]
                     ns_results.append(RetrievalResult(

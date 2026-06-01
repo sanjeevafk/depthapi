@@ -240,13 +240,17 @@ def route_model_aliases(
 
     if mode == LEARNING_MODE:
         if is_freshness:
+            # Freshness queries need recency; Gemini Flash has broader recent knowledge.
             aliases = [LEARN_GEMINI_FLASH_ALIAS, LEARN_GROQ_FAST_ALIAS, LEARN_OPENROUTER_FALLBACK_ALIAS]
         elif query_tokens < 8 or latency_priority >= 0.8 or complexity < 0.3:
+            # Short / low-complexity queries — minimise latency, Groq is fastest.
             aliases = [LEARN_GROQ_FAST_ALIAS, LEARN_GEMINI_FLASH_ALIAS, LEARN_OPENROUTER_FALLBACK_ALIAS]
         elif is_simple_explain and complexity < 0.5:
+            # Moderate explanation queries — Flash quality is sufficient, still fast.
             aliases = [LEARN_GEMINI_FLASH_ALIAS, LEARN_GROQ_FAST_ALIAS, LEARN_OPENROUTER_FALLBACK_ALIAS]
         else:
-            aliases = [LEARN_GEMINI_FLASH_ALIAS, LEARN_GROQ_FAST_ALIAS, LEARN_OPENROUTER_FALLBACK_ALIAS]
+            # Complex / detailed learning queries — escalate to the Pro-tier model.
+            aliases = [TECH_GEMINI_PRO_ALIAS, LEARN_GEMINI_FLASH_ALIAS, LEARN_GROQ_FAST_ALIAS, LEARN_OPENROUTER_FALLBACK_ALIAS]
     elif mode == TECHNICAL_MODE:
         if prefers_low_latency and complexity < 0.85:
             aliases = [
