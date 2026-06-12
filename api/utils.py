@@ -155,6 +155,19 @@ def requests_depth(text: str) -> bool:
     return any(re.search(pattern, lowered) for pattern in DEPTH_REQUEST_PATTERNS)
 
 
+def canonical_prompt_depth(value: str | None) -> str:
+    """Normalize API depth values to canonical prompt depths."""
+    normalized = (value or "").strip().lower()
+    mapping = {
+        "shallow": "simple",
+        "medium": "accessible",
+        "deep": "technical",
+        "meme": "accessible",
+    }
+    normalized = mapping.get(normalized, normalized)
+    return normalized if normalized in set(PROMPT_DEPTHS) else "accessible"
+
+
 async def with_timeout(
     coro: Awaitable[T],
     timeout_seconds: float,

@@ -187,8 +187,9 @@ async def _lookup_in_db(key_hash: str) -> ApiKeyRecord | None:
 def _build_env_record(raw_key: str) -> ApiKeyRecord:
     """Construct a synthetic ApiKeyRecord for env-mode dev keys."""
     prefix = raw_key[:20] if len(raw_key) >= 20 else raw_key
+    # Generate a valid UUID string so Postgres RPCs don't crash
     return ApiKeyRecord(
-        id=f"dev-{_hash_key(raw_key)[:12]}",
+        id=f"00000000-0000-0000-0000-{_hash_key(raw_key)[:12]}",
         prefix=prefix,
         project_name="Local Development",
         owner_email="local@depthapi.dev",

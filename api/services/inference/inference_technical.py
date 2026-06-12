@@ -18,7 +18,7 @@ from api.services.inference.inference_constants import (
 )
 from api.services.inference.inference_routing import extract_features
 from api.services.inference.inference_search import _append_search_context, _truncate_search_context
-from api.utils import TECHNICAL_MODE
+from api.utils import TECHNICAL_MODE, canonical_prompt_depth
 
 _tech_logger = structlog.get_logger(__name__)
 
@@ -80,10 +80,14 @@ def build_technical_prompt(
     intent: str,
     depth: str,
     diagram_type: str | None,
+    *,
+    reasoning: str = "direct",
+    style: str = "academic",
+    capabilities: frozenset[str] | None = None,
 ) -> str:
     """Assemble a technical prompt from independent prompt axes."""
-    _ = depth
-    task = {
+    valid_tasks = {"explain", "compare", "brainstorm", "analyze", "summarize"}
+    task = intent if intent in valid_tasks else {
         "brainstorm": "brainstorm",
         "compare": "compare",
         "summarize": "summarize",
@@ -102,14 +106,17 @@ def build_technical_prompt(
         }
         return mapping.get(normalized, DiagramType.FLOWCHART_TD)
 
-    needs_diagram = task in {"analyze", "brainstorm"}
+    resolved_capabilities = set(capabilities or ())
+    needs_diagram = "requires_diagram" in resolved_capabilities or task in {"analyze", "brainstorm"}
+    if needs_diagram:
+        resolved_capabilities.add("requires_diagram")
     spec = PromptSpec(
         topic=topic,
-        depth="technical",
+        depth=canonical_prompt_depth(depth),
         task=task,
-        reasoning="direct",
-        style="academic",
-        capabilities=frozenset({"requires_diagram"} if needs_diagram else set()),
+        reasoning=reasoning,
+        style=style,
+        capabilities=frozenset(resolved_capabilities),
     )
     return build_prompt(spec, diagram_type=_map_diagram(diagram_type) if needs_diagram else None)
 
@@ -117,7 +124,8 @@ def build_technical_prompt(
 async def technical_mode_handler(
     topic: str,
     *,
-    build_technical_prompt_fn: Callable[[str, str, str, str | None], str] | None = None,
+    level: str | None = None,
+    build_technical_prompt_fn: Callable[..., str] | None = None,
     detect_intent_and_depth_fn: Callable[[str], dict[str, str]],
     detect_diagram_type_fn: Callable[[str], str | None],
     validate_technical_response_fn: Callable[[str, str], tuple[bool, str]],
@@ -126,22 +134,39 @@ async def technical_mode_handler(
     call_model_fn: Callable[..., Awaitable[str]],
     **kwargs: Any,
 ) -> str:
+    explicit_prompt_spec = kwargs.get("prompt_spec")
+    reasoning = "direct"
+    style = "academic"
+    capabilities: frozenset[str] | None = None
     intent = "explain"
-    depth = "technical"
-    diagram_type = "generic"
-    try:
-        classification = detect_intent_and_depth_fn(topic)
-        intent = str(classification.get("task") or classification.get("intent", "explain"))
-        depth = str(classification.get("depth", "technical"))
-        diagram_type = detect_diagram_type_fn(topic)
-    except Exception as exc:
-        _tech_logger.warning(
-            "technical_classification_failed",
-            error=str(exc),
-            intent=intent,
-            depth=depth,
-            diagram_type=diagram_type,
+    depth = canonical_prompt_depth(level) if level else "technical"
+    diagram_type: str | None = "generic"
+
+    if isinstance(explicit_prompt_spec, PromptSpec):
+        intent = str(explicit_prompt_spec.task or "explain")
+        depth = canonical_prompt_depth(level or explicit_prompt_spec.depth)
+        reasoning = str(explicit_prompt_spec.reasoning or "direct")
+        style = str(explicit_prompt_spec.style or "academic")
+        capabilities = frozenset(explicit_prompt_spec.capabilities)
+        diagram_type = (
+            detect_diagram_type_fn(topic)
+            if "requires_diagram" in capabilities
+            else None
         )
+    else:
+        try:
+            classification = detect_intent_and_depth_fn(topic)
+            intent = str(classification.get("task") or classification.get("intent", "explain"))
+            depth = canonical_prompt_depth(str(classification.get("depth", depth)))
+            diagram_type = detect_diagram_type_fn(topic)
+        except Exception as exc:
+            _tech_logger.warning(
+                "technical_classification_failed",
+                error=str(exc),
+                intent=intent,
+                depth=depth,
+                diagram_type=diagram_type,
+            )
 
     prefetched_search_context = kwargs.pop("_search_context", None)
     rag_context = kwargs.pop("_rag_context", None)
@@ -152,7 +177,15 @@ async def technical_mode_handler(
         else await load_search_context_fn(topic, mode=TECHNICAL_MODE)
     )
     prompt_builder = build_technical_prompt_fn or build_technical_prompt
-    prompt = prompt_builder(topic, intent, depth, diagram_type)
+    prompt = prompt_builder(
+        topic,
+        intent,
+        depth,
+        diagram_type,
+        reasoning=reasoning,
+        style=style,
+        capabilities=capabilities,
+    )
     use_minimal_prompt = False
     if not prompt or not prompt.strip():
         _tech_logger.warning(

@@ -42,8 +42,12 @@ def _resolve_backend_name() -> str:
         return configured
 
     settings = get_settings()
-    has_pgvector = bool(getattr(settings, "supabase_url", "") and getattr(settings, "supabase_secret_key", ""))
-    return "pgvector" if has_pgvector else "filesystem"
+    
+    # Check for ANY configured Supabase: cloud, local, or both
+    has_cloud_pgvector = bool(getattr(settings, "supabase_url", "") and getattr(settings, "supabase_secret_key", ""))
+    has_local_pgvector = bool(getattr(settings, "local_pgvector_url", "") and getattr(settings, "local_pgvector_secret_key", ""))
+    
+    return "pgvector" if (has_cloud_pgvector or has_local_pgvector) else "filesystem"
 
 
 def get_rag_backend():
@@ -63,7 +67,95 @@ def get_rag_backend():
     
     raise ValueError(f"Unknown RAG_BACKEND: {backend}")
 
+def _mock_source_catalog(query_mode: str) -> list[tuple[str, str, float]]:
+    if query_mode == "technical":
+        return [
+            ("Technical Documentation", "depthapi://corpus/technical", 0.97),
+            ("API Reference", "depthapi://docs/api-reference", 0.92),
+            ("Engineering Notes", "depthapi://kb/engineering", 0.87),
+        ]
+    return [
+        ("Trusted Corpus", "depthapi://corpus/conceptual", 0.94),
+        ("Knowledge Base", "depthapi://kb/general", 0.89),
+        ("Web Search", "Web Search / LLM Knowledge", 0.84),
+    ]
+
+
+def _mock_placeholder_paragraphs(query: str, query_mode: str) -> list[str]:
+    topic = " ".join((query or "").strip().split())[:120] or "this topic"
+    if query_mode == "technical":
+        return [
+            f"Architecture overview for {topic}: core components, data flow, and integration boundaries.",
+            f"Implementation patterns for {topic}: configuration, error handling, and operational considerations.",
+            f"Reference material for {topic}: APIs, schemas, and compatibility notes from trusted documentation.",
+        ]
+    return [
+        f"Conceptual foundation for {topic}: definitions, key ideas, and how the pieces fit together.",
+        f"Applied context for {topic}: real-world examples, trade-offs, and common misconceptions.",
+        f"Supplementary notes for {topic}: background material synthesized from trusted sources.",
+    ]
+
+
+def _split_search_content(content: str, max_chunks: int = 3) -> list[str]:
+    paragraphs = [part.strip() for part in content.replace("\r\n", "\n").split("\n\n") if part.strip()]
+    if not paragraphs:
+        cleaned = " ".join(content.split()).strip()
+        return [cleaned[:700]] if cleaned else []
+    if len(paragraphs) <= max_chunks:
+        return paragraphs
+    chunk_size = max(1, len(paragraphs) // max_chunks)
+    merged: list[str] = []
+    for index in range(0, len(paragraphs), chunk_size):
+        merged.append("\n\n".join(paragraphs[index : index + chunk_size]))
+    return merged[:max_chunks]
+
+
+async def _build_mock_contexts(query: str, query_mode: str) -> list[dict]:
+    from api.services.rag.search import search_service
+
+    search_content = ""
+    try:
+        search_content = await search_service.get_search_context(query)
+    except Exception as exc:
+        logger.warning("mock_rag_search_failed", error=str(exc))
+
+    paragraphs = _split_search_content(search_content) if search_content else _mock_placeholder_paragraphs(query, query_mode)
+    sources = _mock_source_catalog(query_mode)
+
+    contexts: list[dict] = []
+    for index, paragraph in enumerate(paragraphs[: len(sources)]):
+        title, source_url, score = sources[index]
+        contexts.append(
+            {
+                "chunk_id": f"mock-{index + 1}",
+                "document_id": f"doc-mock-{index + 1}",
+                "content": paragraph,
+                "citation": {"source_url": source_url, "source_tier": "trusted"},
+                "metadata": {
+                    "section_title": title,
+                    "token_count": len(paragraph.split()),
+                    "mock_rag": True,
+                    "query_mode": query_mode,
+                },
+                "score": score,
+                "vector_similarity": round(max(score - 0.03, 0.0), 2),
+                "rerank_score": score,
+            }
+        )
+    return contexts
+
+
 async def retrieve_context(query: str, api_key_id: str, **kwargs):
+    if str(os.getenv("MOCK_RAG", "0")) == "1":
+        query_mode = str(kwargs.get("query_mode") or "conceptual").strip().lower()
+        if query_mode not in {"conceptual", "technical"}:
+            query_mode = "conceptual"
+        try:
+            return await _build_mock_contexts(query, query_mode)
+        except Exception as exc:
+            logger.warning("mock_rag_build_failed", error=str(exc))
+            return []
+
     backend = get_rag_backend()
     retrieval_started = time.perf_counter()
     
