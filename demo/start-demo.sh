@@ -49,7 +49,7 @@ set -a
 set +a
 
 # Override CORS to allow the demo file to talk to the API
-export ALLOWED_ORIGINS="http://localhost:8000,http://127.0.0.1:8000,null,*"
+export ALLOWED_ORIGINS="http://localhost:8000,http://127.0.0.1:8000"
 export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
 export AUTH_PROVIDER_MODE="${AUTH_PROVIDER_MODE:-env}"
 export DEV_API_KEYS="${DEV_API_KEYS:-sk-depth-local-dev}"
