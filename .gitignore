@@ -75,6 +75,9 @@ evaluation/*.log
 evaluation/*.sh
 uvicorn.log
 results/
+evaluation/run_real_eval.py
+evaluation/test_queries.py
+SETUP_CHECKLIST.sh
 
 # Local ingestion plans and manifests
 scripts/ingest_corpus/*_INGESTION.md
@@ -88,3 +91,7 @@ evaluation/benchmark_corpus_selected.json
 evaluation/run_eval.py
 evaluation/prompt_spec_eval/results/
 evaluation/prompt_spec_eval/*_merged.*
+api/scripts/verify_local_supabase.py
+api/scripts/verify_local_supabase_fixed.py
+.gitignore
+api/scripts/run_rag_queries.py

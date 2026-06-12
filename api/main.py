@@ -15,6 +15,7 @@ from api.routers import (
     query,
     ingest,
     export,
+    demo,
 )
 from api.services.infra.cache import close_redis
 from api.services.infra.redis_safe import redis_circuit_active
@@ -111,6 +112,7 @@ register_exception_handlers(app)
 app.include_router(query.router, prefix="/api")
 app.include_router(ingest.router, prefix="/api")
 app.include_router(export.router, prefix="/api")
+app.include_router(demo.router)
 
 
 @app.get("/api/health", tags=["health"])
