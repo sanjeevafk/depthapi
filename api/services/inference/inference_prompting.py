@@ -7,7 +7,22 @@ import re
 from api.config import get_settings
 from api.logging_config import logger
 from api.services.messaging.token_count import count_prompt_tokens
-from api.utils import requests_depth
+from api.utils import canonical_prompt_depth, requests_depth
+
+# Word caps aligned with prompt_configs/depths/*.json guidance.
+_DEPTH_WORD_LIMITS: dict[str, int] = {
+    "simple": 80,
+    "accessible": 160,
+    "technical": 400,
+    "expert": 0,  # 0 => no post-generation word cap
+}
+
+_DEPTH_MAX_OUTPUT_TOKENS: dict[str, int] = {
+    "simple": 512,
+    "accessible": 1024,
+    "technical": 2048,
+    "expert": 4096,
+}
 
 
 def _normalize_whitespace(text: str) -> str:
@@ -105,10 +120,24 @@ def _enforce_length_constraint(text: str, constraint: tuple[str, int] | None) ->
     return _enforce_word_limit(text, count)
 
 
-def _learning_length_policy(topic: str) -> tuple[int, str | None]:
+def _learning_length_policy(topic: str, depth: str | None = None) -> tuple[int, str | None]:
+    """Return (word_limit, cue). A word_limit of 0 means no post-generation cap."""
+    canonical = canonical_prompt_depth(depth) if depth else None
+    if canonical:
+        limit = _DEPTH_WORD_LIMITS.get(canonical, 160)
+        if limit == 0:
+            return (0, None)
+        return (limit, None)
     if requests_depth(topic):
         return (120, None)
     return (60, None)
+
+
+def _max_output_tokens_for_depth(depth: str | None, *, default: int = 1024) -> int:
+    canonical = canonical_prompt_depth(depth) if depth else None
+    if not canonical:
+        return default
+    return _DEPTH_MAX_OUTPUT_TOKENS.get(canonical, default)
 
 
 def _is_large_input(text: str) -> bool:

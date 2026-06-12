@@ -53,8 +53,13 @@ class PromptOrchestrator:
     def is_large_input(self, text: str) -> bool:
         return _is_large_input(text)
 
-    def learning_length_policy(self, topic: str) -> tuple[int, str | None]:
-        return _learning_length_policy(topic)
+    def learning_length_policy(self, topic: str, depth: str | None = None) -> tuple[int, str | None]:
+        return _learning_length_policy(topic, depth=depth)
+
+    def max_output_tokens_for_depth(self, depth: str | None, *, default: int = 1024) -> int:
+        from api.services.inference.inference_prompting import _max_output_tokens_for_depth
+
+        return _max_output_tokens_for_depth(depth, default=default)
 
     def enforce_word_limit(self, text: str, limit: int, cue: str | None = None) -> str:
         return _enforce_word_limit(text, limit, cue=cue)

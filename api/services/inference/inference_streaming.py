@@ -91,22 +91,13 @@ async def generate_stream_explanation(
         )
 
     if mode == "technical":
-        intent = "explain"
-        depth = "technical"
-        diagram_type = "generic"
-        try:
-            classification = detect_intent_and_depth_fn(topic)
-            intent = str(classification.get("task") or classification.get("intent", "explain"))
-            depth = str(classification.get("depth", "technical"))
-            diagram_type = detect_diagram_type_fn(topic)
-        except Exception as exc:
-            _tech_logger.warning(
-                "technical_stream_classification_failed",
-                error=str(exc),
-                intent=intent,
-                depth=depth,
-                diagram_type=diagram_type,
-            )
+        intent = pre_task
+        depth = _canonical_depth(level) if level else _canonical_depth(pre_depth)
+        diagram_type = (
+            detect_diagram_type_fn(topic)
+            if "requires_diagram" in pre_capabilities
+            else None
+        )
 
         # 1. RAG Retrieval
         rag_context = ""
@@ -120,13 +111,23 @@ async def generate_stream_explanation(
                 query_mode="technical",
             )
             rag_context = format_rag_context(rag_results)
+            if isinstance(route_telemetry_sink, dict):
+                route_telemetry_sink["retrieved_contexts"] = rag_results
         except Exception as exc:
             logger.error(f"technical_stream_rag_failed: {str(exc)}", request_id=kwargs.get("request_id"))
 
         # 2. Web Search
         search_context = await load_search_context_fn(topic, mode="technical")
 
-        prompt = build_technical_prompt_fn(topic, intent, depth, diagram_type)
+        prompt = build_technical_prompt_fn(
+            topic,
+            intent,
+            depth,
+            diagram_type,
+            reasoning=pre_reasoning,
+            style=pre_style,
+            capabilities=frozenset(pre_capabilities),
+        )
         if not prompt or not prompt.strip():
             prompt = TECHNICAL_MINIMAL_PROMPT
 
@@ -264,6 +265,8 @@ async def generate_stream_explanation(
                 query_mode="conceptual",
             )
             rag_context = format_rag_context(rag_results)
+            if isinstance(route_telemetry_sink, dict):
+                route_telemetry_sink["retrieved_contexts"] = rag_results
         except Exception as exc:
             logger.error(f"learn_stream_rag_failed: {str(exc)}", request_id=kwargs.get("request_id"))
 
@@ -306,7 +309,10 @@ async def generate_stream_explanation(
 
         try:
             settings = get_settings()
-            max_tokens = int(getattr(settings, "max_output_tokens_socratic", 1024))
+            max_tokens = prompt_orchestrator.max_output_tokens_for_depth(
+                level,
+                default=int(getattr(settings, "max_output_tokens_socratic", 1024)),
+            )
             async for chunk in stream_chat_completion_fn(
                 model=alias,
                 messages=cast(
@@ -399,9 +405,14 @@ async def generate_stream_explanation(
             else:
                 target_words = count
         elif not is_large_input:
-            target_words, cue = prompt_orchestrator.learning_length_policy(topic)
+            target_words, cue = prompt_orchestrator.learning_length_policy(topic, depth=level)
+            if target_words == 0:
+                target_words = None
         try:
-            max_tokens = int(getattr(get_settings(), "max_output_tokens_learning", 1024))
+            max_tokens = prompt_orchestrator.max_output_tokens_for_depth(
+                level,
+                default=int(getattr(get_settings(), "max_output_tokens_learning", 1024)),
+            )
             async for chunk in stream_chat_completion_fn(
                 model=alias,
                 messages=cast(

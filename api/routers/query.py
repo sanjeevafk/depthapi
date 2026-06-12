@@ -18,6 +18,7 @@ from api.services.inference.inference import generate_explanation, generate_stre
 from api.services.inference.llm_client import get_provider_config_state
 from api.services.inference.llm_errors import LLMError, LLMUnavailable
 from api.services.security.rate_limit import enforce_request_controls, estimate_tokens_for_text
+from api.services.messaging.citation_utils import citations_from_contexts, contexts_from_telemetry
 from api.services.messaging.query_streaming import (
     build_query_stream_replay_response,
     build_query_stream_wait_response,
@@ -261,41 +262,14 @@ async def query_topic(
     contexts: list[dict[str, Any]] = []
     seen_context_ids: set[str] = set()
     for telemetry in level_telemetry.values():
-        retrieved = telemetry.get("retrieved_contexts")
-        if not isinstance(retrieved, list):
-            continue
-        for item in retrieved:
-            if not isinstance(item, dict):
-                continue
-            chunk_id = str(item.get("chunk_id") or item.get("id") or "")
+        for item in contexts_from_telemetry(telemetry):
+            chunk_id = str(item.get("chunk_id") or "")
             if chunk_id and chunk_id in seen_context_ids:
                 continue
             if chunk_id:
                 seen_context_ids.add(chunk_id)
-            citation = item.get("citation") if isinstance(item.get("citation"), dict) else {}
-            contexts.append({
-                "doc_id": item.get("document_id"),
-                "chunk_id": item.get("chunk_id") or item.get("id"),
-                "text": item.get("content", ""),
-                "score": item.get("score"),
-                "vector_similarity": item.get("vector_similarity"),
-                "rerank_score": item.get("rerank_score"),
-                "token_count": item.get("token_count"),
-                "match_source": item.get("match_source"),
-                "source": citation.get("source_url") or citation.get("filename") or citation.get("source_tier"),
-                "metadata": item.get("metadata") or {},
-                "citation": citation,
-            })
-    citations = [
-        {
-            "doc_id": ctx.get("doc_id"),
-            "chunk_id": ctx.get("chunk_id"),
-            "source": ctx.get("source"),
-            "score": ctx.get("score"),
-            "metadata": ctx.get("metadata") or {},
-        }
-        for ctx in contexts
-    ]
+            contexts.append(item)
+    citations = citations_from_contexts(contexts)
 
     queue_time_ms = round((time.perf_counter() - request_started) * 1000, 2)
     model_inference_ms = round(max(model_inference_values), 2) if model_inference_values else None
@@ -365,6 +339,7 @@ async def query_topic_stream(
     await enforce_request_controls(
         user_id=api_key.id,
         client_ip=request.client.host if request.client else "unknown",
+        api_key=api_key,
         estimated_tokens=estimated_tokens,
         mode=mode,
         is_pro=is_pro,

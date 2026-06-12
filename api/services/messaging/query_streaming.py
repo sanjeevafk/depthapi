@@ -17,6 +17,7 @@ from api.services.security.api_key_auth import ApiKeyRecord
 from fastapi.responses import StreamingResponse
 
 from api.logging_config import logger, log_sampled_success
+from api.services.messaging.citation_utils import stream_metadata_payload
 from api.services.messaging.streaming import SseEventBuilder, SSE_RESPONSE_HEADERS
 from api.services.messaging.streaming_orchestrator import (
     close_stream,
@@ -194,6 +195,12 @@ def build_query_stream_response(
                 return builder.emit_json(event, payload)
             return builder.emit(event, payload)
 
+        def emit_result_metadata() -> str | None:
+            payload = stream_metadata_payload(telemetry_sink)
+            if not payload.get("metadata") and not payload.get("citations"):
+                return None
+            return emit("meta", payload)
+
         try:
             yield emit("status", {"status": "Gathering context..."})
             yield emit(
@@ -326,6 +333,9 @@ def build_query_stream_response(
                 full_content = str(fallback_content)
                 for index in range(0, len(full_content), chunk_size):
                     yield emit("chunk", {"chunk": full_content[index : index + chunk_size]})
+                metadata_event = emit_result_metadata()
+                if metadata_event:
+                    yield metadata_event
                 yield emit("done", "[DONE]")
                 if full_content.strip():
                     await cache_set(cache_key_value, {"text": full_content})
@@ -339,6 +349,9 @@ def build_query_stream_response(
                 await cache_set(cache_key_value, {"text": full_content})
             await persist_history(api_key.id, topic, [level], mode)
 
+            metadata_event = emit_result_metadata()
+            if metadata_event:
+                yield metadata_event
             yield emit("done", "[DONE]")
         except Exception as exc:
             logger.error(
@@ -390,6 +403,9 @@ def build_query_stream_response(
                     for index in range(0, len(full_content), chunk_size):
                         record_chunk()
                         yield emit("chunk", {"chunk": full_content[index : index + chunk_size]})
+                    metadata_event = emit_result_metadata()
+                    if metadata_event:
+                        yield metadata_event
                     yield emit("done", "[DONE]")
                     if full_content.strip():
                         await cache_set(cache_key_value, {"text": full_content})
@@ -410,6 +426,9 @@ def build_query_stream_response(
             if full_content.strip():
                 mode_label = "technical " if mode == "technical" else ""
                 yield emit("chunk", {"chunk": f"\n\n[Connection interrupted. Partial {mode_label}response delivered.]"})
+                metadata_event = emit_result_metadata()
+                if metadata_event:
+                    yield metadata_event
                 yield emit("done", "[DONE]")
                 if full_content.strip():
                     await cache_set(cache_key_value, {"text": full_content})

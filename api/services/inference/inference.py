@@ -217,8 +217,8 @@ async def _call_with_quality_escalation(
     )
 
 
-def build_technical_prompt(topic: str, intent: str, depth: str, diagram_type: str | None) -> str:
-    return build_technical_prompt_impl(topic, intent, depth, diagram_type)
+def build_technical_prompt(topic: str, intent: str, depth: str, diagram_type: str | None, **kwargs: Any) -> str:
+    return build_technical_prompt_impl(topic, intent, depth, diagram_type, **kwargs)
 
 
 async def technical_mode_handler(topic: str, **kwargs: Any) -> str:
@@ -376,7 +376,7 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
         raise ValueError(f"Unknown prompt depth '{level}'. Valid depths: {sorted(VALID_PROMPT_DEPTHS)}")
 
     if mode == TECHNICAL_MODE:
-        return await technical_mode_handler(topic, **kwargs)
+        return await technical_mode_handler(topic, level=level, **kwargs)
 
     # --- Classify once into canonical prompt axes; thread scalar task/depth
     # fields where routing still expects them.
@@ -413,7 +413,10 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
         socratic_complexity = float(
             extract_features(topic, mode=mode, level=level, intent=intent, depth=depth).get("complexity", 0.0) or 0.0
         )
-        max_tokens = int(getattr(get_settings(), "max_output_tokens_socratic", 1024))
+        max_tokens = _prompt_orchestrator.max_output_tokens_for_depth(
+            level,
+            default=int(getattr(get_settings(), "max_output_tokens_socratic", 1024)),
+        )
         response = await _call_with_quality_escalation(
             [model] if model else routed_aliases,
             prompt,
@@ -464,7 +467,7 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
     length_constraint = _prompt_orchestrator.extract_length_constraint(topic)
     prompt = _prompt_orchestrator.apply_length_constraints(prompt, length_constraint)
     is_large_input = _prompt_orchestrator.is_large_input(topic)
-    learn_cap, learn_cue = _prompt_orchestrator.learning_length_policy(topic)
+    learn_cap, learn_cue = _prompt_orchestrator.learning_length_policy(topic, depth=level)
 
     routed_aliases = _model_router.route_aliases(
         topic,
@@ -478,7 +481,10 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
     learning_complexity = float(
         extract_features(topic, mode=mode, level=level, intent=intent, depth=depth).get("complexity", 0.0) or 0.0
     )
-    max_tokens = int(getattr(get_settings(), "max_output_tokens_learning", 1024))
+    max_tokens = _prompt_orchestrator.max_output_tokens_for_depth(
+        level,
+        default=int(getattr(get_settings(), "max_output_tokens_learning", 1024)),
+    )
     response = await _call_with_quality_escalation(
         [model] if model else routed_aliases,
         prompt,
@@ -488,7 +494,7 @@ async def generate_explanation(topic: str, level: str, model: str | None = None,
     )
     if length_constraint:
         return _prompt_orchestrator.enforce_response_length(response, length_constraint)
-    if is_large_input:
+    if is_large_input or learn_cap <= 0:
         return response
     return _prompt_orchestrator.enforce_word_limit(response, learn_cap, cue=learn_cue)
 

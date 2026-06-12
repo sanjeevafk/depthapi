@@ -152,7 +152,7 @@ async def test_learning_length_policy_default_adds_cue_when_trimmed(monkeypatch)
     )
 
     words = result.split()
-    assert len(words) <= 60
+    assert len(words) <= 160
     assert result.endswith(".")
 
 
@@ -174,7 +174,7 @@ async def test_learning_length_policy_expanded_allows_more(monkeypatch):
     )
 
     words = result.split()
-    assert len(words) <= 120
+    assert len(words) <= 160
     assert result.endswith(".")
 
 
@@ -386,7 +386,7 @@ async def test_technical_mode_handler_uses_safe_defaults_when_classification_fai
     def fake_detect_intent_and_depth(_topic: str):
         raise RuntimeError("classification failed")
 
-    def fake_build_technical_prompt(topic: str, intent: str, depth: str, diagram_type: str | None) -> str:
+    def fake_build_technical_prompt(topic: str, intent: str, depth: str, diagram_type: str | None, **_kwargs) -> str:
         captured["build_args"] = (topic, intent, depth, diagram_type)
         return "safe prompt"
 

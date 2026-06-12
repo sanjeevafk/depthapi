@@ -36,7 +36,7 @@ async def test_verify_api_key_uses_env_provider_when_dev_keys_configured(monkeyp
 
     assert record.project_name == "Local Development"
     assert record.plan == "enterprise"
-    assert record.id.startswith("dev-")
+    assert record.id.startswith("00000000-0000-")
     assert cached_records and cached_records[0].id == record.id
 
 
