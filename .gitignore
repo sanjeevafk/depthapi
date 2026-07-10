@@ -93,5 +93,7 @@ evaluation/prompt_spec_eval/results/
 evaluation/prompt_spec_eval/*_merged.*
 api/scripts/verify_local_supabase.py
 api/scripts/verify_local_supabase_fixed.py
-api/scripts/verify_local_supabase_fixed.py
-api/scripts/run_rag_queries.pyapi/scripts/run_rag_queries.py
+api/scripts/run_rag_queries.py
+
+# Local codebase analysis artifacts
+.understand-anything/
