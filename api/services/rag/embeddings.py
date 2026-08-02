@@ -1,191 +1,34 @@
-"""Embedding service for DepthAPI.
-Supports OpenAI, Google Gemini, and local BGE models.
-"""
+"""Embedding generation with a deterministic local fallback."""
+from __future__ import annotations
 
-import asyncio
-from typing import List, Optional
+import hashlib
+import math
+from typing import Sequence
 
-import structlog
-from google import genai
-from google.genai import types as genai_types
-from openai import AsyncOpenAI
-from pydantic import SecretStr
-from tenacity import retry, stop_after_attempt, wait_exponential
 from api.config import get_settings
 
-logger = structlog.get_logger(__name__)
+DIMENSION = 768
 
+def _local_embedding(text: str) -> list[float]:
+    vector = [0.0] * DIMENSION
+    for token in text.lower().split():
+        digest = hashlib.sha256(token.encode("utf-8")).digest()
+        index = int.from_bytes(digest[:4], "big") % DIMENSION
+        sign = 1.0 if digest[4] & 1 else -1.0
+        vector[index] += sign
+    norm = math.sqrt(sum(value * value for value in vector)) or 1.0
+    return [round(value / norm, 8) for value in vector]
 
-class EmbeddingService:
-    def __init__(self):
-        settings = get_settings()
-        self.provider = getattr(settings, "embedding_provider", "openai")
-        self.model = getattr(settings, "embedding_model", "text-embedding-3-small")
-        self.dimensions = getattr(settings, "embedding_dimension", 1536)
+def _vector_literal(vector: Sequence[float]) -> str:
+    return "[" + ",".join(str(value) for value in vector) + "]"
 
-        self.reload_clients()
-
-    def reload_clients(self):
-        """Re-initializes all model clients based on current self.provider and self.model."""
-        settings = get_settings()
-        if self.provider == "gemini":
-            api_key = self._resolve_secret(getattr(settings, "gemini_api_key", ""))
-            if not api_key:
-                raise ValueError("GEMINI_API_KEY is required for Gemini embeddings")
-            self.gemini_client = genai.Client(api_key=api_key)
-        elif self.provider == "openai":
-            api_key = self._resolve_secret(getattr(settings, "openai_api_key", ""))
-            if not api_key:
-                raise ValueError("OPENAI_API_KEY is required for OpenAI embeddings")
-            self.openai_client = AsyncOpenAI(api_key=api_key)
-        elif self.provider == "local_bge":
-            device = "cpu"
-            from sentence_transformers import SentenceTransformer
-
-            self.local_model = SentenceTransformer(str(self.model), device=device)
-            logger.info("local_model_loaded", model=self.model, device=device)
-        else:
-            raise ValueError(
-                f"Unsupported embedding provider '{self.provider}'. "
-                "Use one of: gemini, openai, local_bge."
-            )
-
-    def _gemini_model_candidates(self) -> list[str]:
-        model = str(self.model or "").strip().removeprefix("models/")
-        if not model:
-            model = "text-embedding-004"
-        return [model]
-
-    @staticmethod
-    def _resolve_secret(value: object) -> str:
-        if isinstance(value, SecretStr):
-            return value.get_secret_value().strip()
-        return str(value or "").strip()
-
-    @staticmethod
-    def _extract_gemini_embeddings(result: object) -> List[List[float]]:
-        embeddings = getattr(result, "embeddings", None)
-        if embeddings is not None:
-            out: List[List[float]] = []
-            for item in embeddings:
-                values = getattr(item, "values", None)
-                if values is None:
-                    continue
-                out.append([float(v) for v in values])
-            if out:
-                return out
-        raise ValueError("Unrecognized Gemini embedding response shape")
-
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        reraise=True,
-    )
-    async def create_embeddings(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings for a list of strings."""
-        if not texts:
-            return []
-
-        try:
-            cleaned_texts = [t.replace("\n", " ").strip() for t in texts]
-            valid_texts = [t for t in cleaned_texts if t]
-            if not valid_texts:
-                return []
-
-            if self.provider == "gemini":
-                last_err: Exception | None = None
-                for model_name in self._gemini_model_candidates():
-                    try:
-                        result = self.gemini_client.models.embed_content(
-                            model=model_name,
-                            contents=valid_texts,
-                            config=genai_types.EmbedContentConfig(
-                                task_type="RETRIEVAL_DOCUMENT",
-                                output_dimensionality=self.dimensions,
-                            ),
-                        )
-                        vectors = self._extract_gemini_embeddings(result)
-                        if len(vectors) == len(valid_texts):
-                            return vectors
-                        # Some versions may collapse to one vector; keep deterministic behavior.
-                        if len(vectors) == 1 and len(valid_texts) == 1:
-                            return vectors
-                        raise ValueError(
-                            f"Gemini returned {len(vectors)} embeddings for {len(valid_texts)} inputs"
-                        )
-                    except Exception as exc:
-                        last_err = exc
-                        logger.warning(
-                            "gemini_embedding_model_attempt_failed",
-                            model=model_name,
-                            error=str(exc),
-                        )
-                        continue
-                if last_err:
-                    raise last_err
-                raise RuntimeError("No Gemini embedding model candidates available")
-            elif self.provider == "openai":
-                response = await self.openai_client.embeddings.create(
-                    input=valid_texts, model=self.model, dimensions=self.dimensions
-                )
-                return [data.embedding for data in response.data]
-            else:
-                encode_kwargs = {
-                    "normalize_embeddings": True,
-                    "convert_to_numpy": True,
-                    "show_progress_bar": False,
-                    "batch_size": 16,  # Limit CPU memory usage
-                    "precision": "float32",  # float16 unsupported on CPU
-                }
-
-                try:
-                    # Try output_dimensionality when supported by sentence-transformers.
-                    if int(self.dimensions) != 1024:
-                        encode_kwargs["output_dimensionality"] = int(self.dimensions)
-
-                    vectors = await asyncio.to_thread(
-                        self.local_model.encode, valid_texts, **encode_kwargs
-                    )
-                except (TypeError, ValueError):
-                    # Fallback: encode at full dim then slice for Matryoshka models.
-                    del encode_kwargs["output_dimensionality"]
-                    vectors = await asyncio.to_thread(
-                        self.local_model.encode, valid_texts, **encode_kwargs
-                    )
-                    if int(self.dimensions) < vectors.shape[1]:
-                        # Slice and re-normalize.
-                        import numpy as np
-
-                        vectors = vectors[:, : int(self.dimensions)]
-                        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-                        vectors = vectors / np.where(norms == 0, 1, norms)
-
-                out = vectors.tolist()
-                if not out:
-                    return []
-                actual_dim = len(out[0])
-                if actual_dim != int(self.dimensions):
-                    raise ValueError(
-                        f"local_bge dimension mismatch: model produced {actual_dim}, "
-                        f"but EMBEDDING_DIMENSION is {self.dimensions}"
-                    )
-                return [[float(v) for v in row] for row in out]
-
-        except Exception as exc:
-            logger.error(
-                "embedding_failed",
-                provider=self.provider,
-                error=str(exc),
-                model=self.model,
-            )
-            raise
-
-
-_service: Optional[EmbeddingService] = None
-
-
-def get_embedding_service() -> EmbeddingService:
-    global _service
-    if _service is None:
-        _service = EmbeddingService()
-    return _service
+async def embed_texts(texts: Sequence[str]) -> list[str]:
+    settings = get_settings()
+    if settings.embedding_provider.lower() == "openai" and settings.openai_api_key.get_secret_value():
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=settings.openai_api_key.get_secret_value())
+        response = await client.embeddings.create(model=settings.embedding_model, input=list(texts), dimensions=settings.embedding_dimension)
+        if any(len(item.embedding) != settings.embedding_dimension for item in response.data):
+            raise ValueError("Embedding provider returned an unexpected vector dimension")
+        return [_vector_literal(item.embedding) for item in response.data]
+    return [_vector_literal(_local_embedding(text)) for text in texts]

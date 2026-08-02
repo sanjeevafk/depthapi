@@ -8,8 +8,8 @@ services:
     ports: ["5432:5432"]
     volumes:
       - pg_data:/var/lib/postgresql/data
-      - ./db/migrations:/docker-entrypoint-initdb.d/migrations:ro
-      - ./db/seed:/docker-entrypoint-initdb.d/seed:ro
+      - ./db/migrations/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+      - ./db/seed/001_dev_api_key.sql:/docker-entrypoint-initdb.d/002_dev_api_key.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U depthapi"]
       interval: 5s
