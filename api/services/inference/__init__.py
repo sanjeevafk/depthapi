@@ -1,0 +1,1 @@
+"""Single-response inference service."""

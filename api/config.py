@@ -15,8 +15,7 @@ class StreamConfig:
     """
 
     is_prod: bool
-    stream_max_seconds_learning: int
-    stream_max_seconds_technical: int
+    stream_max_seconds: int
     function_duration_cap: int | None
     fallback_budget_seconds: float
     fallback_timeout_seconds: float
@@ -54,14 +53,9 @@ def _compute_stream_config() -> StreamConfig:
 
     return StreamConfig(
         is_prod=is_prod,
-        stream_max_seconds_learning=max(
-            int(getattr(settings, "stream_max_seconds", 25)), 1
-        ),
-        stream_max_seconds_technical=max(
-            int(getattr(settings, "technical_stream_max_seconds", 45)), 25
-        ),
+        stream_max_seconds=max(int(getattr(settings, "stream_max_seconds", 25)), 1),
         function_duration_cap=max(
-            5, int(getattr(settings, "vercel_function_max_duration_seconds", 25)) - 2
+            5, int(getattr(settings, "stream_max_seconds", 25)) - 2
         )
         if is_prod
         else None,
@@ -125,7 +119,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment."""
 
     environment: str = "development"
-    auth_provider_mode: str = "auto"
+    auth_provider_mode: str = "env"
     dev_api_keys: str = Field(
         default="",
         validation_alias=AliasChoices("DEV_API_KEYS", "DEPTHAPI_API_KEYS"),
@@ -143,21 +137,18 @@ class Settings(BaseSettings):
     embedding_dimension: int = 768
 
     stream_max_seconds: int = 30
-    technical_stream_max_seconds: int = 32
     stream_heartbeat_seconds: int = 2
     stream_start_timeout_seconds: int = 5
     technical_stream_start_timeout_seconds: float = 8.0
     stream_idempotency_ttl_seconds: int = 90
     stream_idempotency_stale_seconds: int = 20
     stream_fallback_budget_seconds: int = 8
-    vercel_function_max_duration_seconds: int = 50
     trusted_proxies: str = ""
 
     redis_url: str = "redis://localhost:6379"
-    upstash_redis_rest_url: str = ""
-    upstash_redis_rest_token: str = ""
+    database_url: str = "postgresql://depthapi:depthapi@localhost:5432/depthapi"
     cache_ttl: int = 86400
-    rate_limit_strategy: str = "upstash_redis"
+    rate_limit_strategy: str = "redis"
     rate_limit_per_user: int = 20
     rate_limit_burst: int = 5
     rate_limit_burst_window_seconds: int = 10
@@ -175,27 +166,19 @@ class Settings(BaseSettings):
     message_rate_limit_window_seconds: int = 60
     message_cache_ttl_seconds: int = 3600
     pro_state_cache_ttl_seconds: int = 30
-    free_daily_token_quota_learning: int = 50000
-    free_hourly_token_quota_learning: int = 5000
-    free_rpm_learning: int = 20
-    free_burst_learning: int = 4
     pro_daily_token_quota: int = 200000
     pro_hourly_token_quota: int = 40000
     pro_rpm: int = 30
     pro_burst: int = 10
     anon_daily_token_quota: int = 5000
     anon_rph: int = 10
-    max_output_tokens_learning: int = 2048
-    max_output_tokens_socratic: int = 2048
-    socratic_direct_answer_patterns: str = ""
     conversation_context_max_tokens: int = 1200
     conversation_context_summary_tokens: int = 240
     conversation_context_fetch_limit: int = 80
 
     max_input_chars_api: int = 100000  # Hard cap for API (100K chars)
-    max_input_tokens_learning: int = 10000  # ~40K chars
+    max_input_tokens: int = 15000
     max_input_tokens_technical: int = 15000  # ~60K chars
-    max_input_tokens_socratic: int = 8000  # ~32K chars
 
     large_input_char_threshold: int = (
         5000  # Trigger on 5K+ chars regardless of truncation
@@ -204,13 +187,7 @@ class Settings(BaseSettings):
         5000
     )
     large_input_timeout_extension_multiplier: float = 1.5  # 50% longer for large inputs
-    technical_mode_timeout_extension: float = 1.3  # Additional 30% for technical mode
-
-    supabase_url: str = ""
-    supabase_publishable_key: str = ""
-    supabase_secret_key: SecretStr = SecretStr("")
-    local_pgvector_url: str = ""
-    local_pgvector_secret_key: SecretStr = SecretStr("")
+    technical_mode_timeout_extension: float = 1.3
     tavily_api_key: str = ""
     serper_api_key: str = ""
     exa_api_key: str = ""
@@ -261,10 +238,10 @@ class Settings(BaseSettings):
     @classmethod
     def _normalize_auth_provider_mode(cls, value: object) -> str:
         if value is None:
-            return "auto"
+            return "env"
         normalized = str(value).strip().lower()
-        if normalized not in {"auto", "env", "supabase"}:
-            raise ValueError("auth_provider_mode must be one of: auto, env, supabase.")
+        if normalized != "env":
+            raise ValueError("auth_provider_mode must be env.")
         return normalized
 
     @field_validator("dev_api_keys", mode="before")
@@ -276,8 +253,6 @@ class Settings(BaseSettings):
 
     @field_validator(
         "stream_max_seconds",
-        "technical_stream_max_seconds",
-        "vercel_function_max_duration_seconds",
     )
     @classmethod
     def _validate_stream_caps(cls, value: int) -> int:

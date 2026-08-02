@@ -1,5 +1,0 @@
-{
-  "name": "accessible",
-  "template": "Depth modifier - accessible:\nExplain {topic} to a technically curious professional with adjacent knowledge. Use accurate terms but define any specialized term inline the first time it appears. Prefer short sentences and concrete examples. Avoid expert-only shortcuts, dense jargon, and math-heavy formalisms. If a term must be used, include a 3-8 word definition immediately after it. Keep the explanation practical by tying the mechanism to a real workflow or user action. Target 100-160 words unless a stricter runtime limit is provided.",
-  "metadata": {"axis": "depth"}
-}

@@ -1,5 +1,0 @@
-{
-  "name": "brainstorm",
-  "template": "Task template - brainstorm:\nTopic: {topic}\nGenerate 5 distinct ideas. Each idea must include: Idea, How it works, Tradeoffs, Best when. Ensure ideas use at least three different levers (process, tooling, architecture, policy). Do not converge on a single recommendation or conclude with a single best answer.",
-  "metadata": {"output": "markdown"}
-}

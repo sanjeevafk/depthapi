@@ -1,4 +1,0 @@
-{
-  "name": "conversation_context",
-  "template": "Runtime context - conversation:\nUse this prior conversation summary to avoid repeating questions already answered:\n{conversation_context}"
-}

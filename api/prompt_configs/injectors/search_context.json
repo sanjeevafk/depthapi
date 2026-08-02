@@ -1,4 +1,0 @@
-{
-  "name": "search_context",
-  "template": "Runtime context - search:\nExternal web context and retrieved knowledge may be incomplete.\nSynthesize a concise technical explanation using the retrieved contexts.\nDo not copy passages verbatim. Combine overlapping information.\nPrefer abstraction and explanation over repetition.\nUse grounded technical reasoning.\nOnly include claims supported by retrieved context.\nCite supporting contexts where appropriate.\nIf the context is '[NO CONTEXT RETRIEVED]' or does not contain the answer, respond exactly with: I don't know based on the provided context.\nContext:\n{search_context}"
-}
