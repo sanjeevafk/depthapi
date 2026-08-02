@@ -2,7 +2,7 @@
 
 import sys
 import os
-from main import app
+from api.main import app
 
 api_dir = os.path.dirname(os.path.abspath(__file__))
 if api_dir not in sys.path:

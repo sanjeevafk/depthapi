@@ -1,4 +1,0 @@
-{
-  "name": "guided",
-  "template": "Reasoning mode - guided:\nGuide the reader step by step using a short sequence of ordered steps (2-5). Each step must be actionable and build on the previous step. Include at least one checkpoint question to confirm understanding or choose a branch. End with a single 'Next step:' line that tells the user what to do next. Avoid a generic explanation; the structure must be steps + checkpoint + next step."
-}

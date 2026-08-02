@@ -166,9 +166,7 @@ class PluginRegistry:
 
         # Sinks
         from api.services.rag.pipeline.sinks.local_json_sink import LocalJsonSink
-        from api.services.rag.pipeline.sinks.supabase_vector_sink import SupabaseVectorSink
         
         registry.register_sink("LocalJsonSink", LocalJsonSink)
-        registry.register_sink("SupabaseVectorSink", SupabaseVectorSink)
 
         return registry

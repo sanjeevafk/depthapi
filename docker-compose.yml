@@ -1,77 +1,26 @@
 services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: depthapi
+      POSTGRES_USER: depthapi
+      POSTGRES_PASSWORD: depthapi
+    ports: ["5432:5432"]
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./db/migrations:/docker-entrypoint-initdb.d/migrations:ro
+      - ./db/seed:/docker-entrypoint-initdb.d/seed:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U depthapi"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis-data:/data
+    ports: ["6379:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
-      timeout: 3s
       retries: 5
-
-  api:
-    build:
-      context: .
-      dockerfile: api/Dockerfile
-    depends_on:
-      redis:
-        condition: service_healthy
-    env_file:
-      - path: .env.local
-        required: false
-      - path: .env
-        required: false
-    environment:
-      # Local-first defaults — no credentials needed to boot.
-      # Override by setting a real key in .env.local.
-      ENVIRONMENT: ${ENVIRONMENT:-development}
-      AUTH_PROVIDER_MODE: ${AUTH_PROVIDER_MODE:-env}
-      DEV_API_KEYS: ${DEV_API_KEYS:-sk-depth-local-dev}
-      REDIS_URL: redis://redis:6379/0
-      # Cloud integrations are opt-in — leave blank to run fully local.
-      SUPABASE_URL: ${SUPABASE_URL:-}
-      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:-}
-      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:-}
-      GROQ_API_KEY: ${GROQ_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      SENTRY_ENABLED: ${SENTRY_ENABLED:-false}
-      SENTRY_DSN: ${SENTRY_DSN:-}
-      LOG_USER_HASH_SALT: ${LOG_USER_HASH_SALT:-depthapi-local-dev-salt}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173}
-      PORT: 8000
-    volumes:
-      - ./api:/app
-      - ./data:/app/data
-    ports:
-      - "${PORT:-8000}:8000"
-    command:
-      ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/api/health | grep -q status || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-
-  api-tests:
-    profiles: ["test"]
-    build:
-      context: .
-      dockerfile: api/Dockerfile.test
-    depends_on:
-      redis:
-        condition: service_healthy
-    environment:
-      REDIS_URL: redis://redis:6379/0
-      ENVIRONMENT: test
-      AUTH_PROVIDER_MODE: env
-      DEV_API_KEYS: sk-depth-test-key
-      SENTRY_ENABLED: "false"
-
 volumes:
-  redis-data:
+  pg_data:

@@ -1,4 +1,0 @@
-{
-  "name": "formatting_rules",
-  "template": "Formatting baseline:\nNever reveal internal reasoning steps. Use Markdown only when the selected task or style asks for structure. Complete the final sentence even under length pressure."
-}

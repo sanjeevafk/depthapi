@@ -1,5 +1,0 @@
-{
-  "name": "analyze",
-  "template": "Task template - analyze:\nTopic: {topic}\nAnalyze the system or concept using this structure: Core idea, First principles breakdown, Intuition, Deeper layer, Edge cases / limitations, Connections.",
-  "metadata": {"output": "markdown"}
-}

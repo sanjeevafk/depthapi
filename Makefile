@@ -1,15 +1,14 @@
-ZPYTHON ?= .venv/bin/python
-
-.PHONY: research-corpus test-corpus
-
-research-corpus:
-	$(PYTHON) scripts/ingest_corpus/build_research_corpus.py
-
-publish-research-corpus:
-	$(PYTHON) scripts/ingest_corpus/build_research_corpus.py --publish
-
-publish-hf-low-mem:
-	$(PYTHON) scripts/release/export_to_hf.py
-
-test-corpus:
-	$(PYTHON) -m pytest tests/research_corpus -q
+.PHONY: up down reset shell logs dev
+up:
+	docker compose up -d
+down:
+	docker compose down
+reset:
+	docker compose down -v
+	docker compose up -d
+shell:
+	docker compose exec postgres psql -U depthapi -d depthapi
+logs:
+	docker compose logs -f
+dev:
+	uvicorn api.main:app --reload

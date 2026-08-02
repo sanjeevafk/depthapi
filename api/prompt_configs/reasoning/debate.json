@@ -1,4 +1,0 @@
-{
-  "name": "debate",
-  "template": "Reasoning mode - debate:\nPresent a balanced debate with this exact structure: Side A, Side B, Decision criteria, Conditional conclusion. Each side must have at least two concrete arguments. Make assumptions explicit and state what evidence would change the conclusion. Do not skip either side and do not resolve before presenting both sides."
-}
