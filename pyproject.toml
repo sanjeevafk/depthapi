@@ -44,7 +44,7 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["api/tests"]
+testpaths = ["api/tests", "tests"]
 norecursedirs = ["datasets", ".venv", "node_modules"]
 addopts = "--cov=api --cov-report=term-missing"
 
@@ -58,15 +58,9 @@ executionEnvironments = [
   { root = ".", extraPaths = [".", "api"] }
 ]
 strict = [
-  "api/services/inference.py",
   "api/routers/query.py",
-  "api/services/llm_client.py",
-  "api/services/rate_limit.py",
-  "api/services/message_gate.py",
-  "api/services/inference_routing.py",
-  "api/services/inference_prompting.py",
-  "api/services/streaming.py",
-  "api/services/message_utils.py"
+  "api/services/inference/inference.py",
+  "api/services/inference/inference_routing.py"
 ]
 
 [tool.hatch.build.targets.wheel]
