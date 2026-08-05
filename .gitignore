@@ -97,3 +97,6 @@ api/scripts/run_rag_queries.py
 
 # Local codebase analysis artifacts
 .understand-anything/
+DEAD_CODE_AUDIT.md
+MINI_PROJECT_VISION_AND_DEMO.md
+depthapi-pivot.md
