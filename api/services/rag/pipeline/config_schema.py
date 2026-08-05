@@ -85,14 +85,14 @@ class RoutingRule(BaseModel):
 class SinkConfig(BaseModel):
     """Sink plugin configuration."""
 
-    type: str  # e.g. "SupabaseVectorSink", "LocalJsonSink"
+    type: str  # e.g. "PostgresVectorSink", "LocalJsonSink"
     config: dict[str, Any] = Field(default_factory=dict)
 
     model_config = {"frozen": True, "extra": "forbid"}
 
     @model_validator(mode="after")
     def validate_sink_type(self) -> "SinkConfig":
-        allowed_sinks = {"SupabaseVectorSink", "LocalJsonSink"}
+        allowed_sinks = {"PostgresVectorSink", "LocalJsonSink"}
         if self.type not in allowed_sinks:
             raise ValueError(
                 f"Unknown sink type '{self.type}'. "

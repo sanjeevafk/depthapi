@@ -17,13 +17,13 @@ def main() -> None:
         default=["crawl", "chunk", "dedup", "validate", "export"],
         choices=["crawl", "normalize", "dedup", "chunk", "validate", "export", "publish"],
     )
-    parser.add_argument("--limit", type=int, default=None, help="Limit exported Supabase rows for local iteration")
+    parser.add_argument("--limit", type=int, default=None, help="Limit exported PostgreSQL rows for local iteration")
     parser.add_argument("--publish", action="store_true", help="Publish the rebuilt dataset to Hugging Face")
     parser.add_argument("--hf-repo-id", default="sanjeevafk/depthapi_technical_corpus")
     parser.add_argument("--hf-split", default="train")
     parser.add_argument(
         "--commit-message",
-        default="Refresh dataset from local Supabase research corpus pipeline",
+        default="Refresh dataset from local PostgreSQL research corpus pipeline",
     )
     args = parser.parse_args()
 

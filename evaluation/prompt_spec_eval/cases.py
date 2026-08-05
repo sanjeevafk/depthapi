@@ -1831,11 +1831,6 @@ _STATIC_BENCHMARK_CASES: list[EvalCase] = [
 
 
 def _load_benchmark_cases() -> list[EvalCase]:
-    if os.environ.get("PROMPT_EVAL_USE_SUPABASE", "0") == "1":
-        try:
-            return build_supabase_benchmark_cases(size=10)
-        except Exception as exc:
-            print(f"[prompt_spec_eval] Supabase benchmark load failed: {exc}")
     return _STATIC_BENCHMARK_CASES
 
 
