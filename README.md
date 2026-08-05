@@ -101,4 +101,4 @@ pytest                         # runs api/tests (see note below)
 
 ---
 
-¹ **Work in progress:** DepthAPI is under active development and not yet production-ready. The runtime API surface is minimal (ingest + query), streaming currently buffers responses, the ingest path does not yet use the real chunking pipeline, and several offline scripts reference removed legacy (Supabase/Turso) code. Known dead code and recommended cleanup are tracked in [DEAD_CODE_AUDIT.md](./DEAD_CODE_AUDIT.md).
+¹ **Work in progress:** DepthAPI is under active development and not yet production-ready. The runtime API surface is minimal (ingest + query), streaming currently buffers responses, the ingest path does not yet use the real chunking pipeline, and several offline scripts reference removed legacy (Supabase/Turso) code. 
