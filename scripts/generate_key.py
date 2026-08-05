@@ -6,12 +6,12 @@ Usage:
     python scripts/generate_key.py --project "My App" --email "dev@example.com" --plan starter
 
 This script generates a cryptographically secure API key, hashes it with SHA-256,
-and inserts the record into the Supabase api_keys table.
+and inserts the record into the PostgreSQL api_keys table.
 
 The raw key is printed ONCE and never stored. Copy it immediately.
 
 Requirements:
-    - SUPABASE_URL and SUPABASE_SECRET_KEY must be set in .env or environment.
+    - DATABASE_URL must be set in .env or environment.
     - Run from the repo root: python scripts/generate_key.py ...
 """
 
@@ -71,43 +71,27 @@ def insert_key(
     monthly_token_budget: int | None,
     requests_per_minute: int | None,
 ) -> str:
-    """Insert the hashed key into Supabase. Returns the new row UUID."""
-    from supabase import create_client
+    """Insert the hashed key into PostgreSQL and return its UUID."""
+    import asyncio
+    import asyncpg
 
-    supabase_url = os.environ.get("SUPABASE_URL", "")
-    supabase_secret = os.environ.get("SUPABASE_SECRET_KEY", "")
+    database_url = os.environ.get("DATABASE_URL", "")
+    if not database_url:
+        raise RuntimeError("DATABASE_URL is not set")
 
-    if not supabase_url or not supabase_secret:
-        print(
-            "\n❌  SUPABASE_URL or SUPABASE_SECRET_KEY not set.\n"
-            "    Export them or add them to your .env file.\n",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    async def insert() -> str:
+        connection = await asyncpg.connect(database_url)
+        try:
+            row = await connection.fetchrow(
+                """INSERT INTO api_keys (key_hash, plan, monthly_token_budget)
+                   VALUES ($1, $2, $3) RETURNING id""",
+                hash_key(raw_key), plan, monthly_token_budget or PLAN_BUDGETS[plan],
+            )
+            return str(row["id"])
+        finally:
+            await connection.close()
 
-    client = create_client(supabase_url, supabase_secret)
-
-    key_hash = hash_key(raw_key)
-    prefix = raw_key[:16]  # "sk-depth-a1b2c3d" — safe to display
-
-    record = {
-        "key_hash": key_hash,
-        "prefix": prefix,
-        "project_name": project_name,
-        "owner_email": owner_email,
-        "plan": plan,
-        "monthly_token_budget": monthly_token_budget or PLAN_BUDGETS[plan],
-        "requests_per_minute": requests_per_minute or PLAN_RPM[plan],
-        "is_active": True,
-    }
-
-    response = client.table("api_keys").insert(record).execute()
-    data = getattr(response, "data", None)
-    if not data or not isinstance(data, list) or not data[0].get("id"):
-        print(f"\n❌  Insert failed. Response: {response}\n", file=sys.stderr)
-        sys.exit(1)
-
-    return str(data[0]["id"])
+    return asyncio.run(insert())
 
 
 def main() -> None:
