@@ -15,8 +15,8 @@ API-key authentication, ingestion and query routes, offline chunking pipeline,
 and PostgreSQL-to-Turso replication path are implemented.
 
 The current PostgreSQL development database is empty until the legacy corpus is
-explicitly migrated. The previous local Supabase Docker volume and corpus
-backups must be retained until that migration is validated.
+explicitly migrated. The previous local database volume and corpus backups
+must be retained until that migration is validated.
 
 The test suite currently passes 141 tests. Run the validation script to check
 the local database and execute the suite:
@@ -36,8 +36,8 @@ Start PostgreSQL and Redis:
 docker compose up -d
 ```
 
-If Docker Compose is unavailable, start PostgreSQL with
-`scripts/validate_rag_local.sh` or install the Docker Compose plugin.
+If Docker Compose is unavailable, use `scripts/validate_rag_local.sh` or
+install the Docker Compose plugin.
 
 Start the API:
 
@@ -50,7 +50,16 @@ The database schema is initialized from
 `db/seed/001_dev_api_key.sql`. Set `DATABASE_URL` for a non-default PostgreSQL
 connection and configure an embedding or language-model provider as needed.
 
-## API examples
+## API
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/health` | Liveness probe |
+| `POST /api/ingest` | Store a document and queue it for retrieval |
+| `POST /api/query` | Hybrid vector and lexical retrieval with answer synthesis |
+| `POST /api/query/stream` | Buffered SSE response for compatibility |
+
+All endpoints except `/api/health` require `Authorization: Bearer <api-key>`.
 
 Ingest a document:
 
@@ -84,11 +93,23 @@ python scripts/turso/sync_platform.py --full
 
 Initialize the Turso schema with `scripts/turso/schema.sql` before the first
 replication. Validate row counts, embedding dimensions, metadata, and sample
-retrieval results before retiring the old corpus volume or backups.
+retrieval results before retiring the old database volume or backups.
+
+## Project layout
+
+```text
+api/                 FastAPI application and PostgreSQL adapter
+db/                  PostgreSQL schema and development seed data
+scripts/             Offline ingestion, migration, validation, and replication
+evaluation/          Offline evaluation harnesses
+demo/                Standalone demo server
+tests/               Unit, integration, and quality tests
+```
 
 ## Development checks
 
 ```bash
+pip install -e ".[dev]"
 pytest
 python -m compileall -q api scripts evaluation
 git diff --check
