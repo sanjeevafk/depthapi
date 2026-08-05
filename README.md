@@ -114,3 +114,22 @@ pytest
 python -m compileall -q api scripts evaluation
 git diff --check
 ```
+
+## Code navigation graph
+
+The optional `code-review-graph` tool maintains an ignored structural index in
+`.code-review-graph/`. It can answer symbol, caller, flow, community, and risk
+queries without loading the entire repository into an agent context.
+
+Refresh it manually with:
+
+```bash
+scripts/refresh_code_review_graph.sh
+```
+
+The repository post-commit hook refreshes the graph after five or more commits
+since its last build. Enable the managed hooks once per checkout with:
+
+```bash
+git config core.hooksPath .githooks
+```
