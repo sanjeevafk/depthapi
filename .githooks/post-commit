@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+GRAPH_DB="${ROOT_DIR}/.code-review-graph/graph.db"
+GRAPH_TOOL="${ROOT_DIR}/scripts/refresh_code_review_graph.sh"
+
+[[ -x "${GRAPH_TOOL}" ]] || exit 0
+[[ -f "${GRAPH_DB}" ]] || exit 0
+
+BUILT_SHA="$(sqlite3 "${GRAPH_DB}" "SELECT value FROM metadata WHERE key = 'last_git_head_sha';" 2>/dev/null || true)"
+if [[ -z "${BUILT_SHA}" ]]; then
+  BUILT_SHA="$(sqlite3 "${GRAPH_DB}" "SELECT value FROM metadata WHERE key = 'git_head_sha';" 2>/dev/null || true)"
+fi
+[[ -n "${BUILT_SHA}" ]] || exit 0
+
+COMMITS_SINCE="$(git rev-list --count "${BUILT_SHA}..HEAD" 2>/dev/null || echo 999999)"
+if (( COMMITS_SINCE >= 5 )); then
+  echo "Refreshing code-review graph after ${COMMITS_SINCE} commits"
+  "${GRAPH_TOOL}"
+fi
