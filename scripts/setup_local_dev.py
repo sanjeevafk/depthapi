@@ -39,9 +39,7 @@ SENTRY_ENABLED=false
 SENTRY_DSN=
 
 # Optional cloud features remain disabled in local-first mode
-SUPABASE_URL=
-SUPABASE_PUBLISHABLE_KEY=
-SUPABASE_SECRET_KEY=
+DATABASE_URL=postgresql://depthapi:depthapi@localhost:5432/depthapi
 DODO_API_KEY=
 DODO_WEBHOOK_SECRET=
 """

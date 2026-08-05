@@ -3,7 +3,7 @@ evaluate_retrieval.py — Offline retrieval benchmark for the DepthAPI RAG pipel
 
 Measures: Recall@K, MRR (Mean Reciprocal Rank), nDCG, Hit Rate.
 Loads ground-truth from evaluation/ground_truth.json and runs queries
-against the local chunks.json index (for offline) or live Supabase.
+against the local chunks.json index (offline only).
 
 Usage:
     python scripts/ingest_corpus/evaluate_retrieval.py

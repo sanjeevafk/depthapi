@@ -10,7 +10,6 @@ from typing import Any, Dict, List, Optional
 from analyze_results import analyze_and_report
 from depthapi_client import DepthAPIClient
 from generate_benchmark import generate_benchmark_dataset
-from langchain_baseline import SupabaseCorpusBaseline
 from run_deepeval import evaluate_deepeval
 from run_judge import CustomLLMJudge
 from run_ragas import evaluate_ragas
@@ -483,12 +482,7 @@ async def phase_generation(
         await process_system("depthapi", depth_client)
 
     if compare_baseline:
-        baseline = SupabaseCorpusBaseline()
-
-        await process_system(
-            "langchain_baseline",
-            baseline,
-        )
+        raise ValueError("The legacy remote baseline was retired; use --no-compare-baseline")
 
     return rows
 

@@ -50,7 +50,7 @@ class BenchmarkConfig:
 class PublishConfig:
     repo_id: str = "sanjeevafk/depthapi_technical_corpus"
     split: str = "train"
-    commit_message: str = "Refresh dataset from local Supabase research corpus pipeline"
+    commit_message: str = "Refresh dataset from PostgreSQL research corpus pipeline"
     private: bool = False
 
 

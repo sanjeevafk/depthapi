@@ -1,41 +1,65 @@
 # DepthAPI
 
-> **⚠️ Work in progress** — DepthAPI is under active development and not yet production-ready. The API surface is intentionally minimal, and parts of the repository carry legacy or experimental code. 
+DepthAPI is a local-first retrieval-augmented generation API. PostgreSQL with
+pgvector is the authoritative datastore for documents, chunks, embeddings, and
+full-text search. Redis is available for transient application caching.
 
-Local-first RAG (retrieval-augmented generation) API backed by **PostgreSQL (pgvector)** and **Redis**. Ingest documents, query them with hybrid vector + lexical search, and receive LLM-synthesized answers with citations — all running locally with no mandatory external services.
+Turso/libSQL is an optional downstream edge store for cached, augmented, and
+backup retrieval. It is not a source of truth. Supabase is not required by the
+application or ingestion pipeline.
 
-## Features
+## Current status
 
-- **Hybrid retrieval in SQL** — pgvector cosine similarity + full-text search combined in one Postgres function (`hybrid_search_v5`), with per-API-key tenant isolation.
-- **Zero-dependency mode** — with no API keys configured, embeddings use a deterministic local fallback and the query endpoint returns retrieved source excerpts instead of LLM text.
-- **Hash-only API keys** — credentials are stored as SHA-256 digests, never plaintext.
-- **Offline ingestion pipeline** — plugin-based `Source → Parser → Middleware → Chunker → Sink` orchestrator with incremental/resume modes, source fingerprints, and a dead-letter queue.
-- **Research-corpus pipeline** — crawl → chunk → dedup (minhash + fuzzy n-gram) → validate → benchmark → publish to Hugging Face.
-- **Evaluation harness** — RAGAS, DeepEval, and judge-based prompt-spec evaluation against ground truth.
+The API and local ingestion pipeline are operational. The PostgreSQL schema,
+API-key authentication, ingestion and query routes, offline chunking pipeline,
+and PostgreSQL-to-Turso replication path are implemented.
 
-## Status
+The current PostgreSQL development database is empty until the legacy corpus is
+explicitly migrated. The previous local database volume and corpus backups
+must be retained until that migration is validated.
 
-| Area | State |
-|---|---|
-| `POST /api/ingest`, `POST /api/query` | Functional; minimal by design |
-| Real chunking on the ingest path | **Missing** — `/api/ingest` currently stores each document as a single chunk; the offline chunking pipeline is not wired in |
-| Streaming (`/query/stream`) | Stub — buffers the full response, emits one SSE event |
-| Offline ingestion / evaluation tooling | Most mature part of the repo; some scripts are broken leftovers (see audit) |
-| Legacy Supabase/Turso code | Present but retired; tracked in [DEAD_CODE_AUDIT.md](./DEAD_CODE_AUDIT.md) |
+The test suite currently passes 141 tests. Run the validation script to check
+the local database and execute the suite:
 
+```bash
+scripts/validate_rag_local.sh
+```
 
+The script uses Docker Compose when available and falls back to `docker run`
+for installations without the Compose plugin.
 
 ## Quick start
 
-Requires Docker (PostgreSQL + pgvector, Redis) and Python 3.11+.
+Start PostgreSQL and Redis:
 
 ```bash
-cp .env.example .env   # adjust secrets if needed
-make up                # start postgres + redis
-make dev               # run the API on http://localhost:8000
+docker compose up -d
 ```
 
-The database schema is initialized from `db/migrations/001_schema.sql`; the development API key is seeded from `db/seed/001_dev_api_key.sql` (`sk-depth-dev-local-0000000000000000`).
+If Docker Compose is unavailable, use `scripts/validate_rag_local.sh` or
+install the Docker Compose plugin.
+
+Start the API:
+
+```bash
+python -m uvicorn api.main:app --reload
+```
+
+The database schema is initialized from
+`db/migrations/001_schema.sql`; the development API key seed is in
+`db/seed/001_dev_api_key.sql`. Set `DATABASE_URL` for a non-default PostgreSQL
+connection and configure an embedding or language-model provider as needed.
+
+## API
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/health` | Liveness probe |
+| `POST /api/ingest` | Store a document and queue it for retrieval |
+| `POST /api/query` | Hybrid vector and lexical retrieval with answer synthesis |
+| `POST /api/query/stream` | Buffered SSE response for compatibility |
+
+All endpoints except `/api/health` require `Authorization: Bearer <api-key>`.
 
 Ingest a document:
 
@@ -55,50 +79,38 @@ curl -X POST http://localhost:8000/api/query \
   -d '{"query":"Where is knowledge stored?"}'
 ```
 
-With `OPENAI_API_KEY` configured, responses are synthesized by the configured model; otherwise the API returns retrieved source excerpts.
+## Corpus migration and edge replication
 
-## API
+The research-corpus exporter reads PostgreSQL directly. After importing the
+legacy corpus into PostgreSQL, replicate it to Turso with:
 
-| Endpoint | Description |
-|---|---|
-| `GET /api/health` | Liveness probe |
-| `POST /api/ingest` | Store a document (with optional `collection_id`, `filename`, `source_url`, `metadata`) and index it for retrieval |
-| `POST /api/query` | Hybrid retrieval + answer synthesis, returns `answer`, `contexts`, and `citations` |
-| `POST /api/query/stream` | SSE variant (currently buffered, not true streaming) |
+```bash
+export DATABASE_URL=postgresql://...
+export TURSO_DATABASE_URL=libsql://...
+export TURSO_AUTH_TOKEN=...
+python scripts/turso/sync_platform.py --full
+```
 
-All endpoints except `/api/health` require `Authorization: Bearer <api-key>`.
+Initialize the Turso schema with `scripts/turso/schema.sql` before the first
+replication. Validate row counts, embedding dimensions, metadata, and sample
+retrieval results before retiring the old database volume or backups.
 
 ## Project layout
 
-```
-api/                 FastAPI app: routers, services (inference, rag, security), pg adapter
-db/migrations/       Postgres schema: tables, indexes, hybrid-search functions
-db/seed/             Development API key
-scripts/             Offline ingestion tooling, corpus pipeline, key generation
-evaluation/          RAGAS / DeepEval / judge-based evaluation harness
-demo/                Standalone interactive demo server
+```text
+api/                 FastAPI application and PostgreSQL adapter
+db/                  PostgreSQL schema and development seed data
+scripts/             Offline ingestion, migration, validation, and replication
+evaluation/          Offline evaluation harnesses
+demo/                Standalone demo server
 tests/               Unit, integration, and quality tests
 ```
 
-Key services inside `api/`:
-
-- `services/rag/embeddings.py` — OpenAI embeddings with deterministic local fallback (768-dim)
-- `services/rag/knowledge_retrieval.py` — retrieval service wrapper around the Postgres RPCs
-- `services/inference/inference.py` — LLM answer synthesis with truthful excerpt fallback
-- `services/security/api_key_auth.py` — Bearer key → SHA-256 lookup
-- `services/rag/pipeline/` — offline plugin ingestion orchestrator (used by `scripts/ingest_pipeline.py`)
-
-## Development
+## Development checks
 
 ```bash
-pip install -e ".[dev]"        # or: pip install -r api/requirements-dev.txt
-pytest                         # runs api/tests (see note below)
+pip install -e ".[dev]"
+pytest
+python -m compileall -q api scripts evaluation
+git diff --check
 ```
-
-- **Tests:** live tests live in `api/tests/`; a broader suite lives in `tests/` (unit, integration, quality). Note: the default `pytest` configuration only collects `api/tests` — see the audit (Tier 4) for the config duplication.
-- **Type checking:** `pyright` (config in `pyproject.toml`; the `strict` list is stale — see audit).
-- **Evaluation:** `evaluation/` contains the offline QA harness (RAGAS, DeepEval, judge runs).
-
----
-
-¹ **Work in progress:** DepthAPI is under active development and not yet production-ready. The runtime API surface is minimal (ingest + query), streaming currently buffers responses, the ingest path does not yet use the real chunking pipeline, and several offline scripts reference removed legacy (Supabase/Turso) code. 
