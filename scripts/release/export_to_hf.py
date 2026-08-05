@@ -1,4 +1,4 @@
-"""export_to_hf.py — robust export of Supabase knowledge_chunks to Hugging Face.
+"""export_to_hf.py — robust export of PostgreSQL knowledge_chunks to Hugging Face.
 
 Usage patterns:
 
@@ -142,7 +142,7 @@ def _normalize_row(row: dict[str, Any], collection_name: str = "") -> dict[str, 
         "chunk_index": int(row.get("chunk_order") or 0),
         "retrieved_at": str(meta.get("retrieved_at") or ""),
         "chunker_version": str(
-            meta.get("chunker_version") or meta.get("version") or "supabase-export-v2"
+            meta.get("chunker_version") or meta.get("version") or "postgres-export-v2"
         ),
         "content_hash": content_hash,
         "content": content,
@@ -534,7 +534,7 @@ def main() -> None:
     )
 
     parser = argparse.ArgumentParser(
-        description="Export Supabase chunks to Hugging Face dataset."
+        description="Export PostgreSQL chunks to Hugging Face dataset."
     )
     parser.add_argument(
         "--limit", type=int, default=None, help="Hard cap on exported rows."

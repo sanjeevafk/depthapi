@@ -2,7 +2,7 @@
 
 Pipeline shape in this repo:
 1) Parse + chunk local files into data/rag/trusted/chunks.json
-2) Backfill chunks.json into Supabase via backfill_supabase_rag.py
+2) Load chunks.json into PostgreSQL via the local ingestion pipeline
 
 Usage:
     .venv/bin/python scripts/ingest_corpus/ingest_opea_docs.py

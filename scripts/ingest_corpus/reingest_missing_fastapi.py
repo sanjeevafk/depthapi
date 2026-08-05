@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-reingest_missing_fastapi.py — Re-insert FastAPI chunks missing from Supabase.
+reingest_missing_fastapi.py — Re-insert FastAPI chunks missing from PostgreSQL.
 
 Compares content_hashes already in the 'FastAPI Template - Full Stack' collection
 against chunks.json, then inserts any missing rows into the correct document.

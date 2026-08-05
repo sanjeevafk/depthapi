@@ -27,7 +27,7 @@ The **DepthAPI Technical Corpus** is a curated, high-quality retrieval corpus de
 This dataset was explicitly built to serve as the local ground-truth for the [DepthAPI](https://github.com/sanjeevafk/depthapi) project. 
 
 ### About the DepthAPI Project
-DepthAPI is an enterprise-grade, declarative RAG pipeline built with asynchronous concurrency and Supabase Vector embeddings. It aims to systematize RAG data ingestion by moving away from hardcoded scripts to a configuration-driven architecture, ensuring maximum throughput, observability, and resilience. 
+DepthAPI is an enterprise-grade, declarative RAG pipeline built with asynchronous concurrency and PostgreSQL pgvector embeddings. It aims to systematize RAG data ingestion by moving away from hardcoded scripts to a configuration-driven architecture, ensuring maximum throughput, observability, and resilience.
 
 Key features of DepthAPI include:
 - **Plugin-based Architecture**: Easily extendable ingestion strategies via declarative configurations.
@@ -57,11 +57,11 @@ Key features of the pipeline used to create this dataset:
 - **Concurrent Processing:** Processed using `ConcurrentPipelineOrchestrator` via asynchronous worker pools.
 - **Semantic Chunking:** Processed via `SemanticChunker` (v2) with strict token boundaries and overlap for contextual continuity.
 - **Middleware Extraction:** Handled through custom middleware like `CodeSnippetExtractor` to isolate raw code blocks and attach precise metadata.
-- **Idempotent Upserts:** Deduplicated using SHA-256 content hashing natively within Supabase pgvector tables (`knowledge_chunks`).
+- **Idempotent Upserts:** Deduplicated using SHA-256 content hashing natively within PostgreSQL pgvector tables (`knowledge_chunks`).
 
 ## Data Schema
 
-Each exported Parquet shard normalizes the Supabase relational schema into a flat, Hugging Face compatible format:
+Each exported Parquet shard normalizes the PostgreSQL relational schema into a flat, Hugging Face compatible format:
 
 - `chunk_id`: Unique identifier for the chunk.
 - `source`: The raw file or origin name.

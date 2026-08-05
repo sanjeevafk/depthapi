@@ -7,7 +7,7 @@ from .chunker import DeterministicChunker
 from .config import PipelineConfig
 from .dataset_card import write_dataset_card
 from .deduplication import deduplicate_chunks
-from .exporter import export_supabase_documents
+from .exporter import export_postgres_documents
 from .governance import build_governance_artifacts
 from .io_utils import export_parquet, read_jsonl, write_json
 from .publisher import publish_to_hugging_face
@@ -21,7 +21,7 @@ def run_pipeline(config: PipelineConfig, stages: list[str] | None = None, limit:
     stage_status: dict[str, str] = {}
 
     if "crawl" in enabled:
-        summary["crawl"] = export_supabase_documents(config.raw_export_path, limit=limit)
+        summary["crawl"] = export_postgres_documents(config.raw_export_path, limit=limit)
         stage_status["crawl"] = "completed"
     else:
         stage_status["crawl"] = "skipped"
