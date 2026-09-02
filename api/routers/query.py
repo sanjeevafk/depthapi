@@ -9,6 +9,7 @@ from api.adapters.pg_adapter import execute_rpc
 from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
 from api.services.inference.inference import generate_response
 from api.services.rag.embeddings import embed_texts
+from api.services.rag.reranker import get_reranker_service
 
 router = APIRouter(tags=["query"])
 
@@ -17,6 +18,7 @@ class QueryRequest(BaseModel):
     collection_id: str | None = None
     use_trusted_corpus: bool = True
     bypass_cache: bool = False
+    rerank: bool = True
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
 
 class QueryResponse(BaseModel):
@@ -42,6 +44,13 @@ async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = De
         contexts = await execute_rpc("hybrid_search_trusted_v5" if req.use_trusted_corpus else "hybrid_search_v5", params)
     except Exception as exc:
         raise HTTPException(503, "PostgreSQL retrieval is unavailable") from exc
+
+    if req.rerank and contexts:
+        try:
+            contexts = await get_reranker_service().rerank(req.query, contexts, top_n=5)
+        except Exception:
+            pass
+
     answer = await generate_response(req.query, contexts, req.temperature)
     citations = [{"source": row.get("source_url") or row.get("document_id")} for row in contexts]
     return QueryResponse(answer=answer, contexts=contexts, citations=citations)
