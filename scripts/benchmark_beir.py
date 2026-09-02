@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from collections import defaultdict
 import io
 import json
 import math
@@ -247,11 +248,11 @@ def evaluate(
 
         # 3. Hybrid RRF (k=60)
         t_start = time.perf_counter()
-        rrf_scores: dict[str, float] = {}
+        rrf_scores: dict[str, float] = defaultdict(float)
         for rank, did in enumerate(dense_top_ids):
-            rrf_scores[did] = rrf_scores.get(did, 0.0) + (1.0 / (60.0 + rank + 1))
+            rrf_scores[did] += 1.0 / (60.0 + rank + 1)
         for rank, did in enumerate(lex_top_ids):
-            rrf_scores[did] = rrf_scores.get(did, 0.0) + (1.0 / (60.0 + rank + 1))
+            rrf_scores[did] += 1.0 / (60.0 + rank + 1)
 
         hybrid_ranked = sorted(rrf_scores.keys(), key=lambda d: rrf_scores[d], reverse=True)
         latencies_by_strategy["hybrid_rrf"].append(time.perf_counter() - t_start)

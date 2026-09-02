@@ -3,6 +3,7 @@ Uses Cross-Encoders to re-sort hybrid search results for higher precision.
 """
 
 import asyncio
+import functools
 import os
 from typing import Any, Dict, List
 import structlog
@@ -59,12 +60,7 @@ class RerankerService:
             return candidates[:top_n]
 
 
-_reranker: Any = None
-
-
-def get_reranker_service() -> RerankerService:
-    global _reranker
-    if _reranker is None:
-        _reranker = RerankerService()
-    return _reranker
+@functools.cache
+def get_reranker_service(model_name: str | None = None) -> RerankerService:
+    return RerankerService(model_name=model_name)
 
