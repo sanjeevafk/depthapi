@@ -45,6 +45,12 @@ class IngestResponse(BaseModel):
     status: str
 
 
+PARSER = MarkdownParser()
+TOC_STRIPPER = TocStripper()
+URL_NORMALIZER = UrlNormalizer()
+CHUNKER = SemanticChunker(config={"min_tokens": 1, "max_tokens": 480})
+
+
 def _run_pipeline(
     raw_text: str,
     document_id: UUID,
@@ -65,18 +71,13 @@ def _run_pipeline(
         metadata=user_metadata,
     )
 
-    parser = MarkdownParser()
-    parsed_doc = parser.parse(doc)
-
-    toc_stripper = TocStripper()
-    parsed_doc = toc_stripper.process(parsed_doc)
+    parsed_doc = PARSER.parse(doc)
+    parsed_doc = TOC_STRIPPER.process(parsed_doc)
 
     if source_url:
-        url_normalizer = UrlNormalizer()
-        parsed_doc = url_normalizer.process(parsed_doc)
+        parsed_doc = URL_NORMALIZER.process(parsed_doc)
 
-    chunker = SemanticChunker(config={"min_tokens": 1, "max_tokens": 480})
-    chunks = chunker.chunk(
+    chunks = CHUNKER.chunk(
         doc=parsed_doc,
         dataset_version="api-v1",
         source_name=filename or "api_upload",
@@ -106,8 +107,8 @@ def _run_pipeline(
             token_count=token_count,
             chunk_order=0,
             schema_version=SCHEMA_VERSION,
-            parser_version=parser.version,
-            chunker_version=f"{chunker.name}@{chunker.version}",
+            parser_version=PARSER.version,
+            chunker_version=f"{CHUNKER.name}@{CHUNKER.version}",
             middleware_versions=dict(parsed_doc.middleware_versions),
             source_name=filename or "api_upload",
             source_url=source_url,
@@ -179,19 +180,12 @@ async def ingest(
                     content_hash,
                 )
                 if existing_doc is not None:
-                    existing_queue = await conn.fetchrow(
-                        """SELECT id, status FROM knowledge_ingestion_queue
-                           WHERE document_id = $1
-                           ORDER BY created_at DESC LIMIT 1""",
-                        existing_doc["id"],
-                    )
-                    q_id = existing_queue["id"] if existing_queue else queue_id
-                    status = existing_queue["status"] if existing_queue else "complete"
+                    doc_id_str = str(existing_doc["id"])
                     return IngestResponse(
                         collection_id=str(resolved_collection_id),
-                        document_id=str(existing_doc["id"]),
-                        queue_id=str(q_id),
-                        status=status,
+                        document_id=doc_id_str,
+                        queue_id=doc_id_str,
+                        status="complete",
                     )
 
                 doc, chunks = _run_pipeline(

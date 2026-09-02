@@ -1,6 +1,7 @@
 """Embedding generation with local SentenceTransformer and deterministic fallback."""
 from __future__ import annotations
 
+import functools
 import hashlib
 import logging
 import math
@@ -13,26 +14,22 @@ log = logging.getLogger(__name__)
 DIMENSION = 768
 DEFAULT_LOCAL_MODEL = "BAAI/bge-base-en-v1.5"
 
-_local_transformer: Any = None
 
-
+@functools.cache
 def get_local_transformer(model_name: str = DEFAULT_LOCAL_MODEL) -> Any:
     """Lazy-loaded singleton SentenceTransformer model."""
-    global _local_transformer
-    if _local_transformer is None:
-        try:
-            from sentence_transformers import SentenceTransformer
+    try:
+        from sentence_transformers import SentenceTransformer
 
-            log.info("Loading local embedding model: %s", model_name)
-            _local_transformer = SentenceTransformer(model_name)
-        except Exception as exc:
-            log.warning(
-                "Could not load SentenceTransformer '%s', falling back to hash embeddings: %s",
-                model_name,
-                exc,
-            )
-            return None
-    return _local_transformer
+        log.info("Loading local embedding model: %s", model_name)
+        return SentenceTransformer(model_name)
+    except Exception as exc:
+        log.warning(
+            "Could not load SentenceTransformer '%s', falling back to hash embeddings: %s",
+            model_name,
+            exc,
+        )
+        return None
 
 
 def _local_hash_embedding(text: str) -> list[float]:
@@ -73,7 +70,7 @@ async def embed_texts(texts: Sequence[str]) -> list[str]:
     if model is not None:
         try:
             embeddings = model.encode(list(texts), normalize_embeddings=True)
-            return [_vector_literal([round(float(v), 8) for v in emb]) for emb in embeddings]
+            return [_vector_literal(emb.round(8).tolist()) for emb in embeddings]
         except Exception as exc:
             log.warning("Local neural embedding failed, falling back to hash: %s", exc)
 
