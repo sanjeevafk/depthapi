@@ -6,6 +6,7 @@ maintains index.md and append-only log.md, and integrates with the Rust vault li
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -186,8 +187,8 @@ class WikiVaultManager:
         """
         self._ensure_dirs()
         now_iso = datetime.now(timezone.utc).isoformat()
-        clean_slug = slugify_concept_name(query)[:40]
-        slug = f"synthesis_{clean_slug}"
+        query_hash = hashlib.sha256(query.strip().encode("utf-8")).hexdigest()[:16]
+        slug = f"synthesis_{query_hash}"
 
         ref_concepts = referenced_concepts or []
         concept_links = (
@@ -208,15 +209,12 @@ class WikiVaultManager:
             f"## Context & Concepts\n{concept_links}\n"
         )
 
-        safe_filename = os.path.basename(f"{slug}.md")
-        base_dir = os.path.abspath(str(self.concepts_dir))
-        full_path = os.path.abspath(os.path.join(base_dir, safe_filename))
-
-        if os.path.commonpath([base_dir, full_path]) != base_dir:
+        base_dir = self.concepts_dir.resolve()
+        note_file = base_dir / f"{slug}.md"
+        if not note_file.resolve().is_relative_to(base_dir):
             raise ValueError("Invalid synthesized note path")
 
-        with open(full_path, "w", encoding="utf-8") as f:
-            f.write(content)
+        note_file.write_text(content, encoding="utf-8")
 
         # Ensure index links to it so it is not an orphan
         index_file = self.vault_dir / "index.md"
@@ -244,7 +242,7 @@ class WikiVaultManager:
         return {
             "status": "saved",
             "slug": slug,
-            "path": str(Path(full_path).relative_to(self.vault_dir.resolve())),
+            "path": str(note_file.relative_to(self.vault_dir.resolve())),
         }
 
     def lint_vault(self) -> dict[str, Any]:
