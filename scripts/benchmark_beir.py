@@ -41,6 +41,7 @@ from api.services.rag.graph.concept_extractor import extract_concepts_and_edges
 DATASET_URLS = {
     "scifact": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip",
     "nfcorpus": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/nfcorpus.zip",
+    "hotpotqa": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/hotpotqa.zip",
 }
 
 
@@ -53,15 +54,29 @@ def download_and_extract_dataset(dataset_name: str, cache_dir: Path) -> Path:
         raise ValueError(f"Unknown dataset: {dataset_name}. Available: {list(DATASET_URLS.keys())}")
 
     url = DATASET_URLS[dataset_name]
-    print(f"Downloading {dataset_name} from {url}...")
-    req = urllib.request.Request(url, headers={"User-Agent": "DepthAPI-Benchmark/1.0"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        content = resp.read()
-
-    print(f"Extracting to {cache_dir}...")
     cache_dir.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(io.BytesIO(content)) as z:
+    zip_path = cache_dir / f"{dataset_name}.zip"
+
+    if not zip_path.exists():
+        print(f"Downloading {dataset_name} from {url}...")
+        req = urllib.request.Request(url, headers={"User-Agent": "DepthAPI-Benchmark/1.0"})
+        with urllib.request.urlopen(req, timeout=600) as resp, open(zip_path, "wb") as f_out:
+            downloaded = 0
+            while True:
+                chunk = resp.read(2 * 1024 * 1024)
+                if not chunk:
+                    break
+                f_out.write(chunk)
+                downloaded += len(chunk)
+                if downloaded % (20 * 1024 * 1024) == 0:
+                    print(f"Downloaded {downloaded // (1024 * 1024)} MB...")
+        print(f"Finished downloading {dataset_name} ({downloaded // (1024 * 1024)} MB).")
+
+    print(f"Extracting {zip_path} to {cache_dir}...")
+    with zipfile.ZipFile(zip_path) as z:
         z.extractall(cache_dir)
+
+    return target_dir
 
     return target_dir
 
@@ -118,6 +133,9 @@ def load_beir_data(
                 corpus[doc_id] = text
             elif not limit_docs or (len(corpus) + len(distractors)) < limit_docs:
                 distractors[doc_id] = text
+
+            if limit_docs and len(corpus) == len(needed_doc_ids) and (len(corpus) + len(distractors)) >= limit_docs:
+                break
 
     for did, text in distractors.items():
         if limit_docs and len(corpus) >= limit_docs:
@@ -341,7 +359,7 @@ def evaluate(
 
 def main():
     parser = argparse.ArgumentParser(description="DepthAPI BEIR Retrieval Evaluation")
-    parser.add_argument("--dataset", choices=["scifact", "nfcorpus"], default="scifact")
+    parser.add_argument("--dataset", choices=list(DATASET_URLS.keys()), default="scifact")
     parser.add_argument("--limit-docs", type=int, default=1000, help="Max documents (0 for full)")
     parser.add_argument("--limit-queries", type=int, default=100, help="Max queries (0 for full)")
     parser.add_argument("--rerank", action="store_true", help="Include cross-encoder reranker")
