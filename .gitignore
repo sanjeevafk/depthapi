@@ -23,7 +23,9 @@ tsconfig.node.tsbuildinfo
 vite.config.d.ts
 
 local-docs/
+task-*.md
 datasets/
+
 .vscode/settings.json
 .planning/debug
 test-results/
