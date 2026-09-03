@@ -91,3 +91,29 @@ def test_empty_or_plain_document_graceful_fallback():
     assert len(graph.concepts) == 0
     assert len(graph.edges) == 0
     assert len(graph.chunk_links) == 0
+
+
+def test_extract_with_known_entities():
+    raw_text = "Alabama is bordered by Tennessee to the north and Georgia to the east."
+    chunks = [MockChunk(content=raw_text, chunk_order=0)]
+    graph = extract_concepts_and_edges(
+        raw_text=raw_text,
+        chunks=chunks,
+        document_title="Alabama",
+        known_entities=["Tennessee", "Georgia", "Florida"],
+    )
+
+    names = {c.name for c in graph.concepts}
+    assert "Alabama" in names
+    assert "Tennessee" in names
+    assert "Georgia" in names
+    assert "Florida" not in names
+
+    edges = [(e.source_concept, e.target_concept, e.relation_type) for e in graph.edges]
+    assert ("Alabama", "Tennessee", "references") in edges
+    assert ("Alabama", "Georgia", "references") in edges
+
+    chunk_concepts = {l.concept_name for l in graph.chunk_links}
+    assert "Tennessee" in chunk_concepts
+    assert "Georgia" in chunk_concepts
+
