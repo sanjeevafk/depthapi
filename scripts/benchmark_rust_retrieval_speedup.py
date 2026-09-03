@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
 benchmark_rust_retrieval_speedup.py
-Measures execution latency and throughput speedup of compiled Rust depth_engine
-retrieval functions vs pure Python reference implementations across 10,000 iterations.
+Rigorous micro-benchmark measuring execution latency and percentiles (mean, p50, p95)
+of compiled Rust depth_engine retrieval functions vs pure Python reference implementations.
 """
 from __future__ import annotations
 
+import statistics
 import time
 import depth_engine
-import numpy as np
+from api.services.rag.graph import concept_extractor as py_concept_mod
 from api.services.rag.graph.router import _RELATIONAL_PATTERNS
 
 
@@ -50,80 +51,101 @@ def python_rrf(dense_ranks: list[str], lex_ranks: list[str], k: float = 60.0) ->
     return results
 
 
+def python_crag(scores: list[float], is_reranked: bool = False) -> dict:
+    if not scores:
+        return {"confidence": "insufficient", "is_insufficient": True, "max_score": None}
+    max_score = max(scores)
+    if is_reranked:
+        tier = "low" if max_score < -2.0 else ("medium" if max_score < 0.0 else "high")
+    else:
+        tier = "low" if max_score < 0.012 else ("medium" if max_score < 0.020 else "high")
+    return {"confidence": tier, "is_insufficient": False, "max_score": max_score}
+
+
+def measure(fn, *args, samples: int = 100, inner_iters: int = 200) -> tuple[float, float, float]:
+    latencies = []
+    for _ in range(samples):
+        t0 = time.perf_counter()
+        for _ in range(inner_iters):
+            fn(*args)
+        latencies.append((time.perf_counter() - t0) * 1e6 / inner_iters)
+    p95 = statistics.quantiles(latencies, n=20)[18] if len(latencies) >= 20 else max(latencies)
+    return statistics.mean(latencies), statistics.median(latencies), p95
+
+
 def main() -> None:
-    iterations = 10_000
-    print("=" * 70)
-    print(f"DepthAPI Rust Retrieval Engine Speedup Benchmark ({iterations:,} runs)")
-    print("=" * 70)
+    print("=" * 80)
+    print("DepthAPI Retrieval Engine Benchmark: Compiled Rust vs Pure Python")
+    print("=" * 80)
 
-    # 1. Benchmark Query Intent Router
-    test_query = "How does the ingestion pipeline interact with postgres and what depends on it?"
-    # Warmup
-    for _ in range(100):
-        python_router(test_query)
-        depth_engine.detect_graph_hops(test_query)
+    # 1. Intent Router: Factual Query (worst-case for Python, common case in RAG)
+    factual_q = "What is the recommended python version for local development?"
+    py_mean, py_p50, py_p95 = measure(python_router, factual_q)
+    rs_mean, rs_p50, rs_p95 = measure(depth_engine.detect_graph_hops, factual_q)
+    print(f"\n[1] Intent Classification - Factual (DFA 1-pass vs 11 Python regex checks):")
+    print(f"    Python: mean={py_mean:6.3f} µs | p50={py_p50:6.3f} µs | p95={py_p95:6.3f} µs")
+    print(f"    Rust:   mean={rs_mean:6.3f} µs | p50={rs_p50:6.3f} µs | p95={rs_p95:6.3f} µs")
+    print(f"    --> Speedup: {py_mean / rs_mean:5.1f}x (mean) | {py_p50 / rs_p50:5.1f}x (p50)")
 
-    t0 = time.perf_counter()
-    for _ in range(iterations):
-        python_router(test_query)
-    py_router_time = (time.perf_counter() - t0) * 1e6 / iterations
+    # 2. Intent Router: Relational Query (early-exit in Python)
+    relational_q = "How does the ingestion pipeline interact with postgres and what depends on it?"
+    py_mean, py_p50, py_p95 = measure(python_router, relational_q)
+    rs_mean, rs_p50, rs_p95 = measure(depth_engine.detect_graph_hops, relational_q)
+    print(f"\n[2] Intent Classification - Relational (Early-match pattern):")
+    print(f"    Python: mean={py_mean:6.3f} µs | p50={py_p50:6.3f} µs | p95={py_p95:6.3f} µs")
+    print(f"    Rust:   mean={rs_mean:6.3f} µs | p50={rs_p50:6.3f} µs | p95={rs_p95:6.3f} µs")
+    print(f"    --> Speedup: {py_mean / rs_mean:5.1f}x (mean) | {py_p50 / rs_p50:5.1f}x (p50)")
 
-    t0 = time.perf_counter()
-    for _ in range(iterations):
-        depth_engine.detect_graph_hops(test_query)
-    rust_router_time = (time.perf_counter() - t0) * 1e6 / iterations
+    # 3. Lost-in-the-Middle Permutation (10 contexts)
+    contexts = [{"id": f"chunk_{i}", "score": 1.0 / (i + 1)} for i in range(10)]
+    py_mean, py_p50, py_p95 = measure(python_reorder, contexts)
+    rs_mean, rs_p50, rs_p95 = measure(depth_engine.reorder_lost_in_the_middle, contexts)
+    print(f"\n[3] Lost-in-the-Middle U-shaped Permutation (10 contexts):")
+    print(f"    Python: mean={py_mean:6.3f} µs | p50={py_p50:6.3f} µs | p95={py_p95:6.3f} µs")
+    print(f"    Rust:   mean={rs_mean:6.3f} µs | p50={rs_p50:6.3f} µs | p95={rs_p95:6.3f} µs")
+    print(f"    --> Speedup: {py_mean / rs_mean:5.1f}x (mean) | {py_p50 / rs_p50:5.1f}x (p50)")
 
-    router_speedup = py_router_time / max(rust_router_time, 1e-9)
-    print(f"\n[1] Intent Classification (Compiled RegexSet DFA vs Python Regexes):")
-    print(f"    Python: {py_router_time:.3f} µs/query")
-    print(f"    Rust:   {rust_router_time:.3f} µs/query  --> Speedup: {router_speedup:.1f}x")
+    # 4. CRAG Confidence Gating
+    scores = [2.8, 1.2, 0.4, -0.1, -1.2]
+    py_mean, py_p50, py_p95 = measure(python_crag, scores, True)
+    rs_mean, rs_p50, rs_p95 = measure(depth_engine.evaluate_confidence, scores, True)
+    print(f"\n[4] Corrective RAG Confidence Gating (5 scores):")
+    print(f"    Python: mean={py_mean:6.3f} µs | p50={py_p50:6.3f} µs | p95={py_p95:6.3f} µs")
+    print(f"    Rust:   mean={rs_mean:6.3f} µs | p50={rs_p50:6.3f} µs | p95={rs_p95:6.3f} µs")
+    print(f"    --> Speedup: {py_mean / rs_mean:5.1f}x (mean) | {py_p50 / rs_p50:5.1f}x (p50)")
 
-    # 2. Benchmark Lost-in-the-Middle Reordering (10 candidates)
-    test_contexts = [{"id": f"chunk_{i}", "score": 1.0 / (i + 1)} for i in range(10)]
-    for _ in range(100):
-        python_reorder(test_contexts)
-        depth_engine.reorder_lost_in_the_middle(test_contexts)
+    # 5. Concept & Edge Graph Extraction
+    doc = """
+    # System Architecture Specification
+    DepthAPI is an open cognitive synthesis engine.
+    ## PostgreSQL Storage Engine
+    The database layer manages pgvector indexes and isolation.
+    Depends on [[PostgreSQL]] and [[pgvector]].
+    ### Connection Pool
+    Requires [[Asyncpg]] connection pooler for low-latency queries.
+    ## Cross-Encoder Reranker
+    Uses [[BAAI/bge-reranker-large]] for scoring top candidates.
+    ## Hybrid Retrieval Pipeline
+    Orchestrates dense vector search and BM25 postings.
+    Depends on [[FAISS]] and [[BM25Okapi]].
+    """
+    entities = ["PostgreSQL", "pgvector", "Asyncpg", "FAISS", "BM25Okapi", "DepthAPI"]
 
-    t0 = time.perf_counter()
-    for _ in range(iterations):
-        python_reorder(test_contexts)
-    py_reorder_time = (time.perf_counter() - t0) * 1e6 / iterations
+    def run_py_extractor():
+        py_concept_mod._HAS_DEPTH_ENGINE = False
+        return py_concept_mod.extract_concepts_and_edges(doc, None, "Architecture", None, entities)
 
-    t0 = time.perf_counter()
-    for _ in range(iterations):
-        depth_engine.reorder_lost_in_the_middle(test_contexts)
-    rust_reorder_time = (time.perf_counter() - t0) * 1e6 / iterations
+    def run_rs_extractor():
+        return depth_engine.extract_concepts_and_edges(doc, None, "Architecture", None, entities)
 
-    reorder_speedup = py_reorder_time / max(rust_reorder_time, 1e-9)
-    print(f"\n[2] Lost-in-the-Middle Permutation (10 contexts):")
-    print(f"    Python: {py_reorder_time:.3f} µs/call")
-    print(f"    Rust:   {rust_reorder_time:.3f} µs/call  --> Speedup: {reorder_speedup:.1f}x")
+    py_mean, py_p50, py_p95 = measure(run_py_extractor, samples=50, inner_iters=50)
+    rs_mean, rs_p50, rs_p95 = measure(run_rs_extractor, samples=50, inner_iters=50)
+    print(f"\n[5] AST Concept & Lineage Graph Extraction (Markdown AST + Entity Catalog):")
+    print(f"    Python: mean={py_mean:6.3f} µs | p50={py_p50:6.3f} µs | p95={py_p95:6.3f} µs")
+    print(f"    Rust:   mean={rs_mean:6.3f} µs | p50={rs_p50:6.3f} µs | p95={rs_p95:6.3f} µs")
+    print(f"    --> Speedup: {py_mean / rs_mean:5.1f}x (mean) | {py_p50 / rs_p50:5.1f}x (p50)")
 
-    # 3. Benchmark RRF Fusion (40 dense + 40 lexical = 80 pool candidates)
-    dense_pool = [f"doc_{i}" for i in range(40)]
-    lex_pool = [f"doc_{i}" for i in range(20, 60)]
-    for _ in range(100):
-        python_rrf(dense_pool, lex_pool)
-        depth_engine.fuse_rrf(dense_pool, lex_pool, 60.0)
-
-    t0 = time.perf_counter()
-    for _ in range(iterations):
-        python_rrf(dense_pool, lex_pool)
-    py_rrf_time = (time.perf_counter() - t0) * 1e6 / iterations
-
-    t0 = time.perf_counter()
-    for _ in range(iterations):
-        depth_engine.fuse_rrf(dense_pool, lex_pool, 60.0)
-    rust_rrf_time = (time.perf_counter() - t0) * 1e6 / iterations
-
-    rrf_speedup = py_rrf_time / max(rust_rrf_time, 1e-9)
-    print(f"\n[3] Reciprocal Rank Fusion (80 candidates, k=60):")
-    print(f"    Python: {py_rrf_time:.3f} µs/call")
-    print(f"    Rust:   {rust_rrf_time:.3f} µs/call  --> Speedup: {rrf_speedup:.1f}x")
-
-    print("\n" + "=" * 70)
-    print("Retrieval Engine Benchmark Finished Successfully.")
-    print("=" * 70)
+    print("\n" + "=" * 80)
 
 
 if __name__ == "__main__":
