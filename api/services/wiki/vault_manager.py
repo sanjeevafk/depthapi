@@ -25,8 +25,9 @@ _SLUG_CLEAN_RE = re.compile(r"[^a-zA-Z0-9_-]+")
 
 def slugify_concept_name(name: str) -> str:
     """Normalize a concept name to a safe filename slug."""
-    slug = _SLUG_CLEAN_RE.sub("_", name.strip().lower()).strip("_")
-    return slug if slug else "concept"
+    clean = _SLUG_CLEAN_RE.sub("_", name.strip().lower()).strip("_")
+    safe = os.path.basename(clean) if clean else "concept"
+    return safe
 
 
 class WikiVaultManager:
@@ -84,6 +85,7 @@ class WikiVaultManager:
 
         now_iso = datetime.now(timezone.utc).isoformat()
         exported_files: list[str] = []
+        base_dir = os.path.abspath(str(self.concepts_dir))
 
         # Write each concept note
         for c in concepts:
@@ -119,14 +121,15 @@ class WikiVaultManager:
                 + f"## Related Concepts\n{related_md}\n"
             )
 
-            file_path = self.concepts_dir / f"{slug}.md"
-            resolved_file_path = file_path.resolve()
-            try:
-                resolved_file_path.relative_to(self.concepts_dir.resolve())
-            except ValueError as exc:
-                raise ValueError("Invalid concept note path") from exc
-            resolved_file_path.write_text(content, encoding="utf-8")
-            exported_files.append(str(resolved_file_path.relative_to(self.vault_dir.resolve())))
+            safe_filename = os.path.basename(f"{slug}.md")
+            full_path = os.path.abspath(os.path.join(base_dir, safe_filename))
+            if os.path.commonpath([base_dir, full_path]) != base_dir:
+                raise ValueError("Invalid concept note path")
+
+            with open(full_path, "w", encoding="utf-8") as f:
+                f.write(content)
+
+            exported_files.append(str(Path(full_path).relative_to(self.vault_dir.resolve())))
 
         # Update index.md
         index_lines = [
@@ -183,7 +186,8 @@ class WikiVaultManager:
         """
         self._ensure_dirs()
         now_iso = datetime.now(timezone.utc).isoformat()
-        slug = f"synthesis_{slugify_concept_name(query)[:40]}"
+        clean_slug = slugify_concept_name(query)[:40]
+        slug = f"synthesis_{clean_slug}"
 
         ref_concepts = referenced_concepts or []
         concept_links = (
@@ -204,13 +208,15 @@ class WikiVaultManager:
             f"## Context & Concepts\n{concept_links}\n"
         )
 
-        note_path = self.concepts_dir / f"{slug}.md"
-        resolved_note_path = note_path.resolve()
-        try:
-            resolved_note_path.relative_to(self.concepts_dir.resolve())
-        except ValueError as exc:
-            raise ValueError("Invalid synthesized note path") from exc
-        resolved_note_path.write_text(content, encoding="utf-8")
+        safe_filename = os.path.basename(f"{slug}.md")
+        base_dir = os.path.abspath(str(self.concepts_dir))
+        full_path = os.path.abspath(os.path.join(base_dir, safe_filename))
+
+        if os.path.commonpath([base_dir, full_path]) != base_dir:
+            raise ValueError("Invalid synthesized note path")
+
+        with open(full_path, "w", encoding="utf-8") as f:
+            f.write(content)
 
         # Ensure index links to it so it is not an orphan
         index_file = self.vault_dir / "index.md"
@@ -238,7 +244,7 @@ class WikiVaultManager:
         return {
             "status": "saved",
             "slug": slug,
-            "path": str(resolved_note_path.relative_to(self.vault_dir.resolve())),
+            "path": str(Path(full_path).relative_to(self.vault_dir.resolve())),
         }
 
     def lint_vault(self) -> dict[str, Any]:
@@ -362,70 +368,62 @@ class WikiVaultManager:
         if not self.concepts_dir.exists():
             return []
 
-        concepts_base = self.concepts_dir.resolve()
+        base_dir = self.concepts_dir.resolve()
         results = []
-        for p in sorted(self.concepts_dir.glob("*.md")):
-            resolved_p = p.resolve()
-            try:
-                resolved_p.relative_to(concepts_base)
-            except ValueError:
-                continue
+        for entry in base_dir.iterdir():
+            if entry.is_file() and entry.suffix == ".md":
+                resolved = entry.resolve()
+                if not resolved.is_relative_to(base_dir):
+                    continue
 
-            content = resolved_p.read_text(encoding="utf-8")
-            title = resolved_p.stem
-            c_type = "topic"
-            for line in content.splitlines():
-                if line.startswith("title:"):
-                    title = line.split(":", 1)[1].strip().strip('"\'')
-                elif line.startswith("concept_type:"):
-                    c_type = line.split(":", 1)[1].strip().strip('"\'')
+                content = resolved.read_text(encoding="utf-8")
+                title = resolved.stem
+                c_type = "topic"
+                for line in content.splitlines():
+                    if line.startswith("title:"):
+                        title = line.split(":", 1)[1].strip().strip('"\'')
+                    elif line.startswith("concept_type:"):
+                        c_type = line.split(":", 1)[1].strip().strip('"\'')
 
-            wikilinks = [m.group(1).strip() for m in _WIKILINK_RE.finditer(content)]
-            results.append({
-                "name": title,
-                "slug": resolved_p.stem,
-                "concept_type": c_type,
-                "file_path": str(resolved_p.relative_to(self.vault_dir.resolve())),
-                "links": list(set(wikilinks)),
-            })
+                wikilinks = [m.group(1).strip() for m in _WIKILINK_RE.finditer(content)]
+                results.append({
+                    "name": title,
+                    "slug": resolved.stem,
+                    "concept_type": c_type,
+                    "file_path": str(resolved.relative_to(self.vault_dir.resolve())),
+                    "links": list(set(wikilinks)),
+                })
         return results
 
     def read_concept(self, name_or_slug: str) -> dict[str, Any] | None:
         """Reads concept details and raw markdown content."""
-        slug = slugify_concept_name(name_or_slug)
-        concepts_base = self.concepts_dir.resolve()
-        target = (concepts_base / f"{slug}.md").resolve()
-
-        try:
-            target.relative_to(concepts_base)
-        except ValueError:
+        if not self.concepts_dir.exists():
             return None
 
-        if not target.exists():
-            # Try exact stem match among files strictly inside concepts_dir
-            for p in self.concepts_dir.glob("*.md"):
-                resolved_p = p.resolve()
-                try:
-                    resolved_p.relative_to(concepts_base)
-                except ValueError:
-                    continue
-                if resolved_p.stem.lower() == name_or_slug.lower().strip():
-                    target = resolved_p
-                    break
+        # Clean search keys (used purely for string comparison, never for path construction)
+        target_slug = os.path.basename(slugify_concept_name(name_or_slug))
+        raw_key = os.path.basename(name_or_slug.strip().lower())
 
-        if not target.exists():
+        base_dir = self.concepts_dir.resolve()
+        matched_file: Path | None = None
+
+        for entry in base_dir.iterdir():
+            if entry.is_file() and entry.suffix == ".md":
+                stem_lower = entry.stem.lower()
+                if stem_lower == target_slug or stem_lower == raw_key:
+                    resolved = entry.resolve()
+                    if resolved.is_relative_to(base_dir):
+                        matched_file = resolved
+                        break
+
+        if matched_file is None:
             return None
 
-        try:
-            target.relative_to(concepts_base)
-        except ValueError:
-            return None
-
-        content = target.read_text(encoding="utf-8")
+        content = matched_file.read_text(encoding="utf-8")
         return {
             "name": name_or_slug,
-            "slug": target.stem,
-            "file_path": str(target.relative_to(self.vault_dir.resolve())),
+            "slug": matched_file.stem,
+            "file_path": str(matched_file.relative_to(self.vault_dir.resolve())),
             "content": content,
         }
 
