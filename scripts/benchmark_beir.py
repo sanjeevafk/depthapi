@@ -35,11 +35,13 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from api.services.rag.embeddings import get_local_transformer
+from api.services.rag.graph.concept_extractor import extract_concepts_and_edges
 
 
 DATASET_URLS = {
     "scifact": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip",
     "nfcorpus": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/nfcorpus.zip",
+    "hotpotqa": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/hotpotqa.zip",
 }
 
 
@@ -52,15 +54,29 @@ def download_and_extract_dataset(dataset_name: str, cache_dir: Path) -> Path:
         raise ValueError(f"Unknown dataset: {dataset_name}. Available: {list(DATASET_URLS.keys())}")
 
     url = DATASET_URLS[dataset_name]
-    print(f"Downloading {dataset_name} from {url}...")
-    req = urllib.request.Request(url, headers={"User-Agent": "DepthAPI-Benchmark/1.0"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        content = resp.read()
-
-    print(f"Extracting to {cache_dir}...")
     cache_dir.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(io.BytesIO(content)) as z:
+    zip_path = cache_dir / f"{dataset_name}.zip"
+
+    if not zip_path.exists():
+        print(f"Downloading {dataset_name} from {url}...")
+        req = urllib.request.Request(url, headers={"User-Agent": "DepthAPI-Benchmark/1.0"})
+        with urllib.request.urlopen(req, timeout=600) as resp, open(zip_path, "wb") as f_out:
+            downloaded = 0
+            while True:
+                chunk = resp.read(2 * 1024 * 1024)
+                if not chunk:
+                    break
+                f_out.write(chunk)
+                downloaded += len(chunk)
+                if downloaded % (20 * 1024 * 1024) == 0:
+                    print(f"Downloaded {downloaded // (1024 * 1024)} MB...")
+        print(f"Finished downloading {dataset_name} ({downloaded // (1024 * 1024)} MB).")
+
+    print(f"Extracting {zip_path} to {cache_dir}...")
+    with zipfile.ZipFile(zip_path) as z:
         z.extractall(cache_dir)
+
+    return target_dir
 
     return target_dir
 
@@ -106,24 +122,31 @@ def load_beir_data(
 
     # 3. Load corpus: include all relevant documents, then add distractors up to limit_docs
     corpus: dict[str, str] = {}
-    distractors: dict[str, str] = {}
+    titles: dict[str, str] = {}
+    distractors: dict[str, tuple[str, str]] = {}
 
     with open(data_dir / "corpus.jsonl", "r", encoding="utf-8") as f:
         for line in f:
             doc = json.loads(line)
             doc_id = str(doc["_id"])
-            text = f"{doc.get('title', '')} {doc.get('text', '')}".strip()
+            title = doc.get("title", "").strip()
+            text = f"{title} {doc.get('text', '')}".strip()
             if doc_id in needed_doc_ids:
                 corpus[doc_id] = text
+                titles[doc_id] = title
             elif not limit_docs or (len(corpus) + len(distractors)) < limit_docs:
-                distractors[doc_id] = text
+                distractors[doc_id] = (title, text)
 
-    for did, text in distractors.items():
+            if limit_docs and len(corpus) == len(needed_doc_ids) and (len(corpus) + len(distractors)) >= limit_docs:
+                break
+
+    for did, (t, text) in distractors.items():
         if limit_docs and len(corpus) >= limit_docs:
             break
         corpus[did] = text
+        titles[did] = t
 
-    return corpus, queries, qrels
+    return corpus, queries, qrels, titles
 
 
 def compute_dcg(relevances: list[int], k: int = 10) -> float:
@@ -173,6 +196,7 @@ def evaluate(
     corpus: dict[str, str],
     queries: dict[str, str],
     qrels: dict[str, dict[str, int]],
+    titles: dict[str, str] | None = None,
     cache_path: Path | None = None,
     enable_rerank: bool = False,
 ) -> dict[str, Any]:
@@ -209,13 +233,41 @@ def evaluate(
     print("Building lexical BM25 index...")
     bm25, bm25_doc_ids = build_lexical_index(corpus)
 
+    print("Extracting relational concept graph from corpus...")
+    doc_concepts: dict[str, set[str]] = defaultdict(set)
+    concept_docs: dict[str, set[str]] = defaultdict(set)
+    concept_edges: dict[str, set[str]] = defaultdict(set)
+
+    # Known entities are the document titles with length >= 3
+    entity_catalog = [t for t in (titles or {}).values() if len(t) >= 3]
+
+    for did, doc_text in corpus.items():
+        doc_title = (titles or {}).get(did)
+        graph = extract_concepts_and_edges(
+            raw_text=doc_text,
+            document_title=doc_title,
+            known_entities=entity_catalog,
+        )
+        for c in graph.concepts:
+            c_name = c.name.lower()
+            doc_concepts[did].add(c_name)
+            concept_docs[c_name].add(did)
+        for e in graph.edges:
+            s = e.source_concept.lower()
+            t = e.target_concept.lower()
+            concept_edges[s].add(t)
+            concept_edges[t].add(s)
+
+    total_edges = sum(len(v) for v in concept_edges.values()) // 2
+    print(f"Extracted {len(concept_docs)} concepts and {total_edges} cross-concept edges.")
+
     reranker = None
     if enable_rerank:
         from api.services.rag.reranker import get_reranker_service
 
         reranker = get_reranker_service()
 
-    strategies = ["dense", "lexical", "hybrid_rrf"]
+    strategies = ["dense", "lexical", "hybrid_rrf", "hybrid_graph_1hop", "hybrid_graph_2hop"]
     if enable_rerank:
         strategies.append("hybrid_rrf_rerank")
 
@@ -258,7 +310,44 @@ def evaluate(
         latencies_by_strategy["hybrid_rrf"].append(time.perf_counter() - t_start)
         metrics_by_strategy["hybrid_rrf"].append(compute_metrics(hybrid_ranked, truth))
 
-        # 4. Hybrid RRF + Reranker (optional)
+        # 4. Hybrid Graph 1-hop
+        t_start = time.perf_counter()
+        graph_1hop_scores = dict(rrf_scores)
+        seed_docs = hybrid_ranked[:5]
+        seed_concepts = set()
+        for sdid in seed_docs:
+            seed_concepts.update(doc_concepts[sdid])
+
+        traversed_1hop = set()
+        for sc in seed_concepts:
+            traversed_1hop.update(concept_edges[sc])
+
+        for c in traversed_1hop:
+            for target_did in concept_docs[c]:
+                graph_1hop_scores[target_did] = graph_1hop_scores.get(target_did, 0.0) + (1.0 / (60.0 + 1)) * 0.25
+
+        ranked_1hop = sorted(graph_1hop_scores.keys(), key=lambda d: graph_1hop_scores[d], reverse=True)
+        latencies_by_strategy["hybrid_graph_1hop"].append(time.perf_counter() - t_start)
+        metrics_by_strategy["hybrid_graph_1hop"].append(compute_metrics(ranked_1hop, truth))
+
+        # 5. Hybrid Graph 2-hop
+        t_start = time.perf_counter()
+        graph_2hop_scores = dict(graph_1hop_scores)
+        traversed_2hop = set()
+        for c in traversed_1hop:
+            traversed_2hop.update(concept_edges[c])
+        traversed_2hop.difference_update(seed_concepts)
+        traversed_2hop.difference_update(traversed_1hop)
+
+        for c in traversed_2hop:
+            for target_did in concept_docs[c]:
+                graph_2hop_scores[target_did] = graph_2hop_scores.get(target_did, 0.0) + (1.0 / (60.0 + 2)) * 0.25
+
+        ranked_2hop = sorted(graph_2hop_scores.keys(), key=lambda d: graph_2hop_scores[d], reverse=True)
+        latencies_by_strategy["hybrid_graph_2hop"].append(time.perf_counter() - t_start)
+        metrics_by_strategy["hybrid_graph_2hop"].append(compute_metrics(ranked_2hop, truth))
+
+        # 6. Hybrid RRF + Reranker (optional)
         if enable_rerank and reranker:
             t_start = time.perf_counter()
             top_candidates = [{"id": did, "content": corpus[did]} for did in hybrid_ranked[:10]]
@@ -286,7 +375,7 @@ def evaluate(
 
 def main():
     parser = argparse.ArgumentParser(description="DepthAPI BEIR Retrieval Evaluation")
-    parser.add_argument("--dataset", choices=["scifact", "nfcorpus"], default="scifact")
+    parser.add_argument("--dataset", choices=list(DATASET_URLS.keys()), default="scifact")
     parser.add_argument("--limit-docs", type=int, default=1000, help="Max documents (0 for full)")
     parser.add_argument("--limit-queries", type=int, default=100, help="Max queries (0 for full)")
     parser.add_argument("--rerank", action="store_true", help="Include cross-encoder reranker")
@@ -299,14 +388,14 @@ def main():
     limit_docs = None if args.limit_docs <= 0 else args.limit_docs
     limit_queries = None if args.limit_queries <= 0 else args.limit_queries
 
-    corpus, queries, qrels = load_beir_data(
+    corpus, queries, qrels, titles = load_beir_data(
         data_dir, limit_docs=limit_docs, limit_queries=limit_queries
     )
     print(f"Loaded {len(corpus)} documents and {len(queries)} evaluated test queries.")
 
     cache_path = data_dir / f"embeddings_{len(corpus)}.npz"
     summary = evaluate(
-        corpus, queries, qrels, cache_path=cache_path, enable_rerank=args.rerank
+        corpus, queries, qrels, titles=titles, cache_path=cache_path, enable_rerank=args.rerank
     )
 
     print("\n" + "=" * 65)
