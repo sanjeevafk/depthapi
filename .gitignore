@@ -24,7 +24,9 @@ vite.config.d.ts
 
 local-docs/
 task-*.md
+lessons/
 datasets/
+
 
 .vscode/settings.json
 .planning/debug
