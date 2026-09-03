@@ -12,7 +12,6 @@ from depthapi_client import DepthAPIClient
 from generate_benchmark import generate_benchmark_dataset
 from run_deepeval import evaluate_deepeval
 from run_judge import CustomLLMJudge
-from run_ragas import evaluate_ragas
 
 import argparse
 
@@ -558,15 +557,6 @@ async def phase_evaluation(
                         str(row["id"]),
                     )
 
-                if "ragas" in evals:
-                    out["ragas"] = await asyncio.to_thread(
-                        evaluate_ragas,
-                        row["query"],
-                        row["answer"],
-                        row.get("contexts", []),
-                        str(row["id"]),
-                    )
-
             except Exception as exc:
                 retries += 1
 
@@ -612,7 +602,6 @@ async def phase_evaluation(
                         for k in [
                             "judge",
                             "deepeval",
-                            "ragas",
                         ]
                         if k in out
                     },
@@ -703,7 +692,7 @@ def phase_reporting(results):
             failures[str(et)] += 1
             if str(et) == "api_timeout":
                 timeouts += 1
-        for ev in ["judge", "deepeval", "ragas"]:
+        for ev in ["judge", "deepeval"]:
             v = r.get(ev) or {}
             if isinstance(v, dict) and v.get("error") == "EVAL_FAILED":
                 eval_fail[ev] += 1
