@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from scripts.ingest_corpus.semantic_chunker import HierarchicalSemanticChunker
+from api.services.rag.pipeline.chunkers.legacy.semantic_chunker import HierarchicalSemanticChunker
+
 
 
 class IngestionWorker:

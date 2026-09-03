@@ -322,7 +322,7 @@ class BaseIngestor:
 
         # Near-duplicate filter (SimHash, optional)
         if near_dup_threshold is not None:
-            from scripts.ingest_corpus.neardup_filter import NearDupFilter
+            from api.services.rag.pipeline.chunkers.legacy.neardup_filter import NearDupFilter
             self._near_dup: NearDupFilter | None = NearDupFilter(threshold=near_dup_threshold)
         else:
             self._near_dup = None

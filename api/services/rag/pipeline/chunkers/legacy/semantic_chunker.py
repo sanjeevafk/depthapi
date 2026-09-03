@@ -32,15 +32,16 @@ import logging
 from dataclasses import asdict
 from typing import Any
 
-from scripts.ingest_corpus.ast_splitter import split_fenced_block
-from scripts.ingest_corpus.block_classifier import MarkdownBlock, StructuralBlockClassifier
-from scripts.ingest_corpus.base_ingestor import (
+from .ast_splitter import split_fenced_block
+from .block_classifier import MarkdownBlock, StructuralBlockClassifier
+from .base_ingestor import (
     Chunk,
     clean_text,
     content_hash as make_content_hash,
     make_doc_id,
     rough_token_count,
 )
+
 
 log = logging.getLogger("ingest")
 
