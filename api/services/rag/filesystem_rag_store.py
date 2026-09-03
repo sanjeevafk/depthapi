@@ -20,6 +20,13 @@ from rank_bm25 import BM25Okapi
 from api.services.rag.context_processing import canonical_id, rough_token_count
 from api.services.rag.reranker import get_reranker_service
 
+try:
+    import depth_engine
+    _HAS_DEPTH_ENGINE = True
+except ImportError:
+    depth_engine = None  # type: ignore[assignment]
+    _HAS_DEPTH_ENGINE = False
+
 logger = structlog.get_logger(__name__)
 
 
@@ -298,11 +305,21 @@ class FilesystemRAGStore:
             bm25_top_indices = np.argsort(bm25_scores)[::-1][:candidate_pool]
 
             # 3. RRF Fusion
+            scores_by_idx: dict[int, float] | None = None
+            if _HAS_DEPTH_ENGINE:
+                try:
+                    dense_ids = [str(int(idx)) for idx in I[0] if idx != -1]
+                    lex_ids = [str(int(idx)) for idx in bm25_top_indices]
+                    fused = depth_engine.fuse_rrf(dense_ids, lex_ids, 60.0)
+                    scores_by_idx = {int(doc_id): score for doc_id, score in fused}
+                except Exception:
+                    scores_by_idx = None
+
             vector_ranks = {int(idx): rank for rank, idx in enumerate(I[0]) if idx != -1}
             bm25_ranks = {int(idx): rank for rank, idx in enumerate(bm25_top_indices)}
 
             k = 60  # RRF constant
-            combined_indices = set(vector_ranks.keys()) | set(bm25_ranks.keys())
+            combined_indices = set(scores_by_idx.keys()) if scores_by_idx is not None else (set(vector_ranks.keys()) | set(bm25_ranks.keys()))
 
             # Build a fast lookup from FAISS result arrays.
             faiss_idx_to_score: dict[int, float] = {
@@ -313,10 +330,12 @@ class FilesystemRAGStore:
 
             ns_results = []
             for idx in combined_indices:
-                v_rank = vector_ranks.get(idx, 1e6)
                 b_rank = bm25_ranks.get(idx, 1e6)
-
-                score = (1.0 / (k + v_rank)) + (1.0 / (k + b_rank))
+                if scores_by_idx is not None and idx in scores_by_idx:
+                    score = scores_by_idx[idx]
+                else:
+                    v_rank = vector_ranks.get(idx, 1e6)
+                    score = (1.0 / (k + v_rank)) + (1.0 / (k + b_rank))
 
                 # D is a cosine similarity in [-1, 1]; use it directly.
                 similarity = faiss_idx_to_score.get(idx, -1.0)

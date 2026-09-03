@@ -2,9 +2,12 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use sha2::{Digest, Sha256};
 
+use std::collections::HashMap;
+
 pub mod chunker;
 pub mod models;
 pub mod parser;
+pub mod retrieval;
 
 use chunker::{chunk_markdown as rust_chunk_markdown, ChunkerParams};
 use models::{
@@ -172,7 +175,126 @@ mod depth_engine {
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(bound.unbind())
     }
+
+    /// Reorder contexts into a U-shaped distribution to prevent lost-in-the-middle degradation.
+    #[pyfunction]
+    fn reorder_lost_in_the_middle<'py>(
+        py: Python<'py>,
+        contexts: &Bound<'py, pyo3::types::PySequence>,
+    ) -> PyResult<Bound<'py, pyo3::types::PyList>> {
+        let len = contexts.len()?;
+        if len <= 2 {
+            return contexts.to_list();
+        }
+        let mut items = Vec::with_capacity(len);
+        for i in 0..len {
+            items.push(contexts.get_item(i)?);
+        }
+        let reordered = retrieval::ordering::reorder_lost_in_the_middle(items);
+        pyo3::types::PyList::new(py, reordered)
+    }
+
+    /// High-throughput Reciprocal Rank Fusion with optional Mosaic Negative Query Algebra.
+    #[pyfunction]
+    #[pyo3(signature = (dense_ranks, lex_ranks, k=60.0, negative_terms=None, candidate_texts=None))]
+    fn fuse_rrf(
+        dense_ranks: Vec<String>,
+        lex_ranks: Vec<String>,
+        k: f64,
+        negative_terms: Option<Vec<String>>,
+        candidate_texts: Option<HashMap<String, String>>,
+    ) -> Vec<(String, f64)> {
+        retrieval::rrf::fuse_rrf(dense_ranks, lex_ranks, k, negative_terms, candidate_texts)
+    }
+
+    /// Fast query intent routing using compiled RegexSet DFA automaton (<1 µs).
+    #[pyfunction]
+    fn detect_graph_hops(query: &str) -> u32 {
+        retrieval::router::detect_graph_hops(query)
+    }
+
+    /// Evaluate retrieval confidence (CRAG - Corrective RAG gating).
+    #[pyfunction]
+    #[pyo3(signature = (candidates, is_reranked=false))]
+    fn evaluate_confidence(
+        py: Python,
+        candidates: Bound<'_, PyAny>,
+        is_reranked: bool,
+    ) -> PyResult<Py<PyAny>> {
+        let eval = if let Ok(scores) = candidates.extract::<Vec<f64>>() {
+            retrieval::crag::evaluate_confidence(&scores, is_reranked)
+        } else {
+            let json_vals: Vec<serde_json::Value> = pythonize::depythonize(&candidates)
+                .map_err(|e| PyValueError::new_err(format!("Invalid candidates for confidence evaluation: {e}")))?;
+            retrieval::crag::evaluate_contexts_confidence(&json_vals)
+        };
+        let bound = pythonize::pythonize(py, &eval)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(bound.unbind())
+    }
+
+    /// Normalize context text while preserving technical citations.
+    #[pyfunction]
+    #[pyo3(signature = (text, max_chars=1000))]
+    fn normalize_context_text(text: &str, max_chars: usize) -> String {
+        retrieval::context::normalize_context_text(text, max_chars)
+    }
+
+    /// Compress contexts and enforce total prompt budget.
+    #[pyfunction]
+    #[pyo3(signature = (contexts, max_contexts=3, max_chars_per_context=1000, max_total_chars=3000))]
+    fn compress_contexts(
+        py: Python,
+        contexts: Bound<'_, PyAny>,
+        max_contexts: usize,
+        max_chars_per_context: usize,
+        max_total_chars: usize,
+    ) -> PyResult<Py<PyAny>> {
+        let json_vals: Vec<serde_json::Value> = pythonize::depythonize(&contexts)
+            .map_err(|e| PyValueError::new_err(format!("Invalid contexts list: {e}")))?;
+        let compressed = retrieval::context::compress_contexts(
+            json_vals,
+            max_contexts,
+            max_chars_per_context,
+            max_total_chars,
+        );
+        let bound = pythonize::pythonize(py, &compressed)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(bound.unbind())
+    }
+
+    /// High-speed AST parsing and deterministic concept extraction.
+    #[pyfunction]
+    #[pyo3(signature = (raw_text, chunks=None, document_title=None, user_metadata=None, known_entities=None))]
+    fn extract_concepts_and_edges(
+        py: Python,
+        raw_text: &str,
+        chunks: Option<Bound<'_, PyAny>>,
+        document_title: Option<&str>,
+        user_metadata: Option<Bound<'_, PyAny>>,
+        known_entities: Option<Vec<String>>,
+    ) -> PyResult<Py<PyAny>> {
+        let chunks_json: Option<Vec<serde_json::Value>> = match chunks {
+            Some(c) => Some(pythonize::depythonize(&c).map_err(|e| PyValueError::new_err(e.to_string()))?),
+            None => None,
+        };
+        let user_meta_json: Option<HashMap<String, serde_json::Value>> = match user_metadata {
+            Some(m) => Some(pythonize::depythonize(&m).map_err(|e| PyValueError::new_err(e.to_string()))?),
+            None => None,
+        };
+        let graph = retrieval::concept_extractor::extract_concepts_and_edges(
+            raw_text,
+            chunks_json.as_deref(),
+            document_title,
+            user_meta_json.as_ref(),
+            known_entities.as_deref(),
+        );
+        let bound = pythonize::pythonize(py, &graph)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(bound.unbind())
+    }
 }
+
 
 #[cfg(test)]
 mod tests {
