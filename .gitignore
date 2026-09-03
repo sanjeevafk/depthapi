@@ -100,3 +100,7 @@ api/scripts/run_rag_queries.py
 DEAD_CODE_AUDIT.md
 MINI_PROJECT_VISION_AND_DEMO.md
 depthapi-pivot.md
+
+# Rust build artifacts
+target/
+
