@@ -35,6 +35,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from api.services.rag.embeddings import get_local_transformer
+from api.services.rag.graph.concept_extractor import extract_concepts_and_edges
 
 
 DATASET_URLS = {
@@ -209,13 +210,30 @@ def evaluate(
     print("Building lexical BM25 index...")
     bm25, bm25_doc_ids = build_lexical_index(corpus)
 
+    print("Extracting relational concept graph from corpus...")
+    doc_concepts: dict[str, set[str]] = defaultdict(set)
+    concept_docs: dict[str, set[str]] = defaultdict(set)
+    concept_edges: dict[str, set[str]] = defaultdict(set)
+
+    for did, doc_text in corpus.items():
+        graph = extract_concepts_and_edges(doc_text, document_title=did)
+        for c in graph.concepts:
+            c_name = c.name.lower()
+            doc_concepts[did].add(c_name)
+            concept_docs[c_name].add(did)
+        for e in graph.edges:
+            s = e.source_concept.lower()
+            t = e.target_concept.lower()
+            concept_edges[s].add(t)
+            concept_edges[t].add(s)
+
     reranker = None
     if enable_rerank:
         from api.services.rag.reranker import get_reranker_service
 
         reranker = get_reranker_service()
 
-    strategies = ["dense", "lexical", "hybrid_rrf"]
+    strategies = ["dense", "lexical", "hybrid_rrf", "hybrid_graph_1hop", "hybrid_graph_2hop"]
     if enable_rerank:
         strategies.append("hybrid_rrf_rerank")
 
@@ -258,7 +276,44 @@ def evaluate(
         latencies_by_strategy["hybrid_rrf"].append(time.perf_counter() - t_start)
         metrics_by_strategy["hybrid_rrf"].append(compute_metrics(hybrid_ranked, truth))
 
-        # 4. Hybrid RRF + Reranker (optional)
+        # 4. Hybrid Graph 1-hop
+        t_start = time.perf_counter()
+        graph_1hop_scores = dict(rrf_scores)
+        seed_docs = hybrid_ranked[:5]
+        seed_concepts = set()
+        for sdid in seed_docs:
+            seed_concepts.update(doc_concepts[sdid])
+
+        traversed_1hop = set()
+        for sc in seed_concepts:
+            traversed_1hop.update(concept_edges[sc])
+
+        for c in traversed_1hop:
+            for target_did in concept_docs[c]:
+                graph_1hop_scores[target_did] = graph_1hop_scores.get(target_did, 0.0) + (1.0 / (60.0 + 1)) * 0.25
+
+        ranked_1hop = sorted(graph_1hop_scores.keys(), key=lambda d: graph_1hop_scores[d], reverse=True)
+        latencies_by_strategy["hybrid_graph_1hop"].append(time.perf_counter() - t_start)
+        metrics_by_strategy["hybrid_graph_1hop"].append(compute_metrics(ranked_1hop, truth))
+
+        # 5. Hybrid Graph 2-hop
+        t_start = time.perf_counter()
+        graph_2hop_scores = dict(graph_1hop_scores)
+        traversed_2hop = set()
+        for c in traversed_1hop:
+            traversed_2hop.update(concept_edges[c])
+        traversed_2hop.difference_update(seed_concepts)
+        traversed_2hop.difference_update(traversed_1hop)
+
+        for c in traversed_2hop:
+            for target_did in concept_docs[c]:
+                graph_2hop_scores[target_did] = graph_2hop_scores.get(target_did, 0.0) + (1.0 / (60.0 + 2)) * 0.25
+
+        ranked_2hop = sorted(graph_2hop_scores.keys(), key=lambda d: graph_2hop_scores[d], reverse=True)
+        latencies_by_strategy["hybrid_graph_2hop"].append(time.perf_counter() - t_start)
+        metrics_by_strategy["hybrid_graph_2hop"].append(compute_metrics(ranked_2hop, truth))
+
+        # 6. Hybrid RRF + Reranker (optional)
         if enable_rerank and reranker:
             t_start = time.perf_counter()
             top_candidates = [{"id": did, "content": corpus[did]} for did in hybrid_ranked[:10]]
