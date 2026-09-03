@@ -18,36 +18,6 @@ from structlog.typing import EventDict
 from api.config import get_settings
 
 
-@dataclass
-class RequestTimings:
-    """Track latency breakdown for query requests (all times in milliseconds)."""
-    auth_ms: float = 0.0
-    redis_ms: float = 0.0
-    db_ms: float = 0.0
-    prompt_build_ms: float = 0.0
-    cache_check_ms: float = 0.0
-    idempotency_ms: float = 0.0
-    settings_ms: float = 0.0
-    pre_stream_ms: float = 0.0  # Total before stream starts
-    first_token_ms: float = 0.0  # Time to first token from LLM
-    total_stream_ms: float = 0.0  # Total streaming time
-    
-    def to_dict(self) -> dict[str, float]:
-        """Convert to dictionary for logging."""
-        return {
-            "auth_ms": round(self.auth_ms, 2),
-            "redis_ms": round(self.redis_ms, 2),
-            "db_ms": round(self.db_ms, 2),
-            "prompt_build_ms": round(self.prompt_build_ms, 2),
-            "cache_check_ms": round(self.cache_check_ms, 2),
-            "idempotency_ms": round(self.idempotency_ms, 2),
-            "settings_ms": round(self.settings_ms, 2),
-            "pre_stream_ms": round(self.pre_stream_ms, 2),
-            "first_token_ms": round(self.first_token_ms, 2),
-            "total_stream_ms": round(self.total_stream_ms, 2),
-        }
-
-
 _REDACTED_VALUE = "[REDACTED]"
 _DEFAULT_SUCCESS_SAMPLE_RATE = 0.15
 _SENSITIVE_KEY_PARTS = {
