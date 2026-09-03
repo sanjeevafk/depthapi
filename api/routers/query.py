@@ -13,6 +13,13 @@ from api.services.rag.reranker import get_reranker_service
 from api.services.rag.graph.router import detect_graph_hops
 from api.services.rag.context_processing import reorder_lost_in_the_middle
 
+try:
+    import depth_engine
+    _HAS_DEPTH_ENGINE = True
+except ImportError:
+    depth_engine = None  # type: ignore[assignment]
+    _HAS_DEPTH_ENGINE = False
+
 router = APIRouter(tags=["query"])
 
 class QueryRequest(BaseModel):
@@ -80,6 +87,23 @@ async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = De
     confidence = "high"
     if not contexts:
         confidence = "insufficient"
+    elif _HAS_DEPTH_ENGINE:
+        try:
+            eval_res = depth_engine.evaluate_confidence(contexts, False)
+            confidence = eval_res.get("confidence", "high")
+        except Exception:
+            if any("rerank_score" in c for c in contexts):
+                max_score = max(c.get("rerank_score", -999.0) for c in contexts)
+                if max_score < -2.0:
+                    confidence = "low"
+                elif max_score < 0.0:
+                    confidence = "medium"
+            elif any("score" in c for c in contexts):
+                max_score = max(c.get("score", 0.0) for c in contexts)
+                if max_score < 0.012:
+                    confidence = "low"
+                elif max_score < 0.020:
+                    confidence = "medium"
     elif any("rerank_score" in c for c in contexts):
         max_score = max(c.get("rerank_score", -999.0) for c in contexts)
         if max_score < -2.0:
