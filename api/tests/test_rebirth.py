@@ -30,8 +30,11 @@ class _Connection:
         self.transaction_started = True
         return _Transaction()
 
-    async def fetchrow(self, *_args):
-        return {"id": uuid4()}
+    async def fetchrow(self, *args):
+        statement = args[0] if args else ""
+        if "knowledge_collections" in statement:
+            return {"id": uuid4()}
+        return None
 
     async def execute(self, statement, *_args):
         self.statements.append(statement)
