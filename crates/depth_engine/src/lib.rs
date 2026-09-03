@@ -293,6 +293,19 @@ mod depth_engine {
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(bound.unbind())
     }
+
+    /// High-speed markdown vault scanner detecting broken [[WikiLinks]], orphan concept nodes, and cycles.
+    #[pyfunction]
+    fn lint_wiki_vault(py: Python, vault_dir: &str) -> PyResult<Py<PyAny>> {
+        match retrieval::linter::lint_wiki_vault(vault_dir) {
+            Ok(report) => {
+                let bound = pythonize::pythonize(py, &report)
+                    .map_err(|e| PyValueError::new_err(e.to_string()))?;
+                Ok(bound.unbind())
+            }
+            Err(e) => Err(PyValueError::new_err(e)),
+        }
+    }
 }
 
 
