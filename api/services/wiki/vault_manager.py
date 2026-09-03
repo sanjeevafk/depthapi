@@ -120,8 +120,13 @@ class WikiVaultManager:
             )
 
             file_path = self.concepts_dir / f"{slug}.md"
-            file_path.write_text(content, encoding="utf-8")
-            exported_files.append(str(file_path.relative_to(self.vault_dir)))
+            resolved_file_path = file_path.resolve()
+            try:
+                resolved_file_path.relative_to(self.concepts_dir.resolve())
+            except ValueError as exc:
+                raise ValueError("Invalid concept note path") from exc
+            resolved_file_path.write_text(content, encoding="utf-8")
+            exported_files.append(str(resolved_file_path.relative_to(self.vault_dir.resolve())))
 
         # Update index.md
         index_lines = [
@@ -200,7 +205,12 @@ class WikiVaultManager:
         )
 
         note_path = self.concepts_dir / f"{slug}.md"
-        note_path.write_text(content, encoding="utf-8")
+        resolved_note_path = note_path.resolve()
+        try:
+            resolved_note_path.relative_to(self.concepts_dir.resolve())
+        except ValueError as exc:
+            raise ValueError("Invalid synthesized note path") from exc
+        resolved_note_path.write_text(content, encoding="utf-8")
 
         # Ensure index links to it so it is not an orphan
         index_file = self.vault_dir / "index.md"
@@ -228,7 +238,7 @@ class WikiVaultManager:
         return {
             "status": "saved",
             "slug": slug,
-            "path": str(note_path.relative_to(self.vault_dir)),
+            "path": str(resolved_note_path.relative_to(self.vault_dir.resolve())),
         }
 
     def lint_vault(self) -> dict[str, Any]:
@@ -352,10 +362,17 @@ class WikiVaultManager:
         if not self.concepts_dir.exists():
             return []
 
+        concepts_base = self.concepts_dir.resolve()
         results = []
         for p in sorted(self.concepts_dir.glob("*.md")):
-            content = p.read_text(encoding="utf-8")
-            title = p.stem
+            resolved_p = p.resolve()
+            try:
+                resolved_p.relative_to(concepts_base)
+            except ValueError:
+                continue
+
+            content = resolved_p.read_text(encoding="utf-8")
+            title = resolved_p.stem
             c_type = "topic"
             for line in content.splitlines():
                 if line.startswith("title:"):
@@ -366,9 +383,9 @@ class WikiVaultManager:
             wikilinks = [m.group(1).strip() for m in _WIKILINK_RE.finditer(content)]
             results.append({
                 "name": title,
-                "slug": p.stem,
+                "slug": resolved_p.stem,
                 "concept_type": c_type,
-                "file_path": str(p.relative_to(self.vault_dir)),
+                "file_path": str(resolved_p.relative_to(self.vault_dir.resolve())),
                 "links": list(set(wikilinks)),
             })
         return results
@@ -376,21 +393,39 @@ class WikiVaultManager:
     def read_concept(self, name_or_slug: str) -> dict[str, Any] | None:
         """Reads concept details and raw markdown content."""
         slug = slugify_concept_name(name_or_slug)
-        target = self.concepts_dir / f"{slug}.md"
+        concepts_base = self.concepts_dir.resolve()
+        target = (concepts_base / f"{slug}.md").resolve()
+
+        try:
+            target.relative_to(concepts_base)
+        except ValueError:
+            return None
+
         if not target.exists():
-            # Try exact stem match
+            # Try exact stem match among files strictly inside concepts_dir
             for p in self.concepts_dir.glob("*.md"):
-                if p.stem.lower() == name_or_slug.lower().strip():
-                    target = p
+                resolved_p = p.resolve()
+                try:
+                    resolved_p.relative_to(concepts_base)
+                except ValueError:
+                    continue
+                if resolved_p.stem.lower() == name_or_slug.lower().strip():
+                    target = resolved_p
                     break
+
         if not target.exists():
+            return None
+
+        try:
+            target.relative_to(concepts_base)
+        except ValueError:
             return None
 
         content = target.read_text(encoding="utf-8")
         return {
             "name": name_or_slug,
             "slug": target.stem,
-            "file_path": str(target.relative_to(self.vault_dir)),
+            "file_path": str(target.relative_to(self.vault_dir.resolve())),
             "content": content,
         }
 
