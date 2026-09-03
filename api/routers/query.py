@@ -10,6 +10,7 @@ from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
 from api.services.inference.inference import generate_response
 from api.services.rag.embeddings import embed_texts
 from api.services.rag.reranker import get_reranker_service
+from api.services.rag.graph.router import detect_graph_hops
 
 router = APIRouter(tags=["query"])
 
@@ -20,6 +21,7 @@ class QueryRequest(BaseModel):
     bypass_cache: bool = False
     rerank: bool = True
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    graph_hops: int | None = Field(default=None, ge=0, le=2, description="Number of graph hops (0=disabled, 1=1-hop, 2=2-hop). If None, auto-detected from query intent.")
 
 class QueryResponse(BaseModel):
     answer: str
@@ -34,16 +36,38 @@ async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = De
         collection_filter = UUID(req.collection_id) if req.collection_id else None
     except ValueError as exc:
         raise HTTPException(400, "collection_id must be a UUID") from exc
-    params = {
+
+    if req.graph_hops is None:
+        effective_hops = detect_graph_hops(req.query)
+        graph_mode = "auto"
+    else:
+        effective_hops = req.graph_hops
+        graph_mode = "manual"
+
+    params: dict[str, Any] = {
         "query_text": req.query,
         "query_embedding": (await embed_texts([req.query]))[0],
         "collection_filter": collection_filter,
         "api_key_filter": UUID(_api_key.id),
     }
+    if effective_hops > 0:
+        params["graph_hops"] = effective_hops
+        rpc_fn = "hybrid_search_trusted_with_graph_v5" if req.use_trusted_corpus else "hybrid_search_with_graph_v5"
+    else:
+        rpc_fn = "hybrid_search_trusted_v5" if req.use_trusted_corpus else "hybrid_search_v5"
+
     try:
-        contexts = await execute_rpc("hybrid_search_trusted_v5" if req.use_trusted_corpus else "hybrid_search_v5", params)
-    except Exception as exc:
-        raise HTTPException(503, "PostgreSQL retrieval is unavailable") from exc
+        contexts = await execute_rpc(rpc_fn, params)
+    except Exception:
+        if effective_hops > 0:
+            fallback_params = {k: v for k, v in params.items() if k != "graph_hops"}
+            fallback_fn = "hybrid_search_trusted_v5" if req.use_trusted_corpus else "hybrid_search_v5"
+            try:
+                contexts = await execute_rpc(fallback_fn, fallback_params)
+            except Exception as exc:
+                raise HTTPException(503, "PostgreSQL retrieval is unavailable") from exc
+        else:
+            raise HTTPException(503, "PostgreSQL retrieval is unavailable")
 
     if req.rerank and contexts:
         try:
@@ -53,7 +77,11 @@ async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = De
 
     answer = await generate_response(req.query, contexts, req.temperature)
     citations = [{"source": row.get("source_url") or row.get("document_id")} for row in contexts]
-    return QueryResponse(answer=answer, contexts=contexts, citations=citations)
+    response_metadata = {
+        "graph_hops": effective_hops,
+        "graph_mode": graph_mode,
+    }
+    return QueryResponse(answer=answer, contexts=contexts, citations=citations, metadata=response_metadata)
 
 @router.post("/query/stream")
 async def query_stream(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = Depends(verify_api_key)) -> StreamingResponse:
