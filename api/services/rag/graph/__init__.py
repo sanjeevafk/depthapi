@@ -6,6 +6,7 @@ from api.services.rag.graph.concept_extractor import (
     ExtractedGraph,
     extract_concepts_and_edges,
 )
+from api.services.rag.graph.router import detect_graph_hops
 
 __all__ = [
     "Concept",
@@ -13,4 +14,5 @@ __all__ = [
     "ChunkConceptLink",
     "ExtractedGraph",
     "extract_concepts_and_edges",
+    "detect_graph_hops",
 ]
