@@ -78,8 +78,9 @@ class SemanticChunker(BaseChunker):
             List of Chunk objects with full lineage metadata.
         """
         # Import existing chunker (lazy, to allow optional dependency)
-        from scripts.ingest_corpus.semantic_chunker import HierarchicalSemanticChunker
-        from scripts.ingest_corpus.base_ingestor import make_doc_id
+        from .legacy.semantic_chunker import HierarchicalSemanticChunker
+        from .legacy.base_ingestor import make_doc_id
+
 
         legacy_chunker = HierarchicalSemanticChunker(
             max_tokens=self._max_tokens,

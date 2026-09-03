@@ -12,7 +12,7 @@ import hashlib
 
 import pytest
 
-from scripts.ingest_corpus.base_ingestor import (
+from api.services.rag.pipeline.chunkers.legacy.base_ingestor import (
     BaseIngestor,
     Chunk,
     chunk_id,
@@ -23,6 +23,7 @@ from scripts.ingest_corpus.base_ingestor import (
     split_text,
     split_text_semantic,
 )
+
 
 
 # ─── clean_text ───────────────────────────────────────────────────────────────
@@ -199,7 +200,7 @@ class TestBaseIngestorIntegration:
     def test_make_chunk_returns_chunk_object(self, tmp_path):
         """BaseIngestor._make_chunk returns a Chunk with correct fields."""
         # Redirect DATA_DIR to tmp path to avoid touching production files
-        import scripts.ingest_corpus.base_ingestor as bi_module
+        import api.services.rag.pipeline.chunkers.legacy.base_ingestor as bi_module
         original_data_dir = bi_module.DATA_DIR
         original_chunks_file = bi_module.CHUNKS_FILE
         bi_module.DATA_DIR = tmp_path
@@ -224,7 +225,7 @@ class TestBaseIngestorIntegration:
 
     def test_duplicate_chunks_skipped(self, tmp_path):
         """Same content added twice should only produce one chunk."""
-        import scripts.ingest_corpus.base_ingestor as bi_module
+        import api.services.rag.pipeline.chunkers.legacy.base_ingestor as bi_module
         original_data_dir = bi_module.DATA_DIR
         original_chunks_file = bi_module.CHUNKS_FILE
         bi_module.DATA_DIR = tmp_path
@@ -245,7 +246,7 @@ class TestBaseIngestorIntegration:
 
     def test_too_short_chunks_rejected(self, tmp_path):
         """Text < 50 chars should be rejected."""
-        import scripts.ingest_corpus.base_ingestor as bi_module
+        import api.services.rag.pipeline.chunkers.legacy.base_ingestor as bi_module
         original_data_dir = bi_module.DATA_DIR
         original_chunks_file = bi_module.CHUNKS_FILE
         bi_module.DATA_DIR = tmp_path
