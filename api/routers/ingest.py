@@ -21,10 +21,15 @@ from api.services.rag.pipeline.models import (
     Document,
     QualityScoreInputs,
 )
+from api.services.rag.pipeline.depth_engine_adapter import (
+    has_depth_engine,
+    run_depth_engine_pipeline,
+)
 from api.services.rag.pipeline.parsers.markdown_parser import MarkdownParser
 from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
 
 log = logging.getLogger(__name__)
+
 
 router = APIRouter(tags=["ingest"])
 
@@ -36,6 +41,8 @@ class IngestRequest(BaseModel):
     source_url: str | None = None
     raw_text: str | None = Field(default=None, max_length=100000)
     metadata: dict[str, Any] | None = None
+    engine: str | None = None
+
 
 
 class IngestResponse(BaseModel):
@@ -51,6 +58,23 @@ URL_NORMALIZER = UrlNormalizer()
 CHUNKER = SemanticChunker(config={"min_tokens": 1, "max_tokens": 480})
 
 
+def _should_use_depth_engine(filename: str | None, engine: str | None) -> bool:
+    if not has_depth_engine():
+        return False
+    if engine == "depth-engine":
+        return True
+    if engine == "python":
+        return False
+    if filename:
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        if ext in {
+            "pdf", "docx", "doc", "xlsx", "xls", "pptx", "ppt", "csv",
+            "html", "htm", "odt", "ods", "odp", "rtf", "epub",
+        }:
+            return True
+    return False
+
+
 def _run_pipeline(
     raw_text: str,
     document_id: UUID,
@@ -58,11 +82,29 @@ def _run_pipeline(
     source_url: str | None,
     collection_name: str | None,
     user_metadata: dict[str, Any],
+    engine: str | None = None,
 ) -> tuple[Document, list[Chunk]]:
-    """Process raw text through the declarative pipeline (Parser -> Middleware -> Chunker)."""
+    """Process raw text through depth_engine (Rust native core) or declarative Python pipeline."""
+    if _should_use_depth_engine(filename, engine):
+        try:
+            return run_depth_engine_pipeline(
+                raw_text=raw_text,
+                document_id=document_id,
+                filename=filename,
+                source_url=source_url,
+                collection_name=collection_name,
+                user_metadata=user_metadata,
+                max_tokens=480,
+                min_tokens=1,
+            )
+        except Exception as exc:
+            log.warning("depth_engine processing failed, falling back to Python: %s", exc)
+
     source_uri = source_url or filename or f"direct://upload/{document_id}"
+
     raw_bytes = raw_text.encode("utf-8")
     content_hash = hashlib.sha256(raw_bytes).hexdigest()
+
 
     doc = Document.from_bytes(
         source_uri=source_uri,
@@ -195,7 +237,9 @@ async def ingest(
                     source_url=req.source_url,
                     collection_name=req.collection_name,
                     user_metadata=user_metadata,
+                    engine=req.engine,
                 )
+
 
                 embeddings = await embed_texts([c.content for c in chunks])
                 if len(embeddings) != len(chunks):

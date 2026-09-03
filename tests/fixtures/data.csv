@@ -1,0 +1,4 @@
+service,qps,p95_latency_ms
+ingestion,2500,0.4
+embedding,120,45.0
+retrieval,850,2.1
