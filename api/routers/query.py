@@ -11,6 +11,7 @@ from api.services.inference.inference import generate_response
 from api.services.rag.embeddings import embed_texts
 from api.services.rag.reranker import get_reranker_service
 from api.services.rag.graph.router import detect_graph_hops
+from api.services.rag.context_processing import reorder_lost_in_the_middle
 
 router = APIRouter(tags=["query"])
 
@@ -75,11 +76,37 @@ async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = De
         except Exception:
             pass
 
-    answer = await generate_response(req.query, contexts, req.temperature)
+    # Evaluate retrieval confidence (CRAG - Corrective RAG gating)
+    confidence = "high"
+    if not contexts:
+        confidence = "insufficient"
+    elif any("rerank_score" in c for c in contexts):
+        max_score = max(c.get("rerank_score", -999.0) for c in contexts)
+        if max_score < -2.0:
+            confidence = "low"
+        elif max_score < 0.0:
+            confidence = "medium"
+    elif any("score" in c for c in contexts):
+        max_score = max(c.get("score", 0.0) for c in contexts)
+        if max_score < 0.012:
+            confidence = "low"
+        elif max_score < 0.020:
+            confidence = "medium"
+
+    # Apply Lost-in-the-Middle U-shaped ordering before prompt synthesis
+    ordered_contexts = reorder_lost_in_the_middle(contexts)
+
+    if confidence == "insufficient":
+        answer = "I could not find sufficient matching documentation in your collection to answer this query reliably."
+    else:
+        answer = await generate_response(req.query, ordered_contexts, req.temperature)
+
     citations = [{"source": row.get("source_url") or row.get("document_id")} for row in contexts]
     response_metadata = {
         "graph_hops": effective_hops,
         "graph_mode": graph_mode,
+        "confidence": confidence,
+        "prompt_ordering": "lost_in_the_middle",
     }
     return QueryResponse(answer=answer, contexts=contexts, citations=citations, metadata=response_metadata)
 
