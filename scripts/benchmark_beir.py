@@ -122,27 +122,31 @@ def load_beir_data(
 
     # 3. Load corpus: include all relevant documents, then add distractors up to limit_docs
     corpus: dict[str, str] = {}
-    distractors: dict[str, str] = {}
+    titles: dict[str, str] = {}
+    distractors: dict[str, tuple[str, str]] = {}
 
     with open(data_dir / "corpus.jsonl", "r", encoding="utf-8") as f:
         for line in f:
             doc = json.loads(line)
             doc_id = str(doc["_id"])
-            text = f"{doc.get('title', '')} {doc.get('text', '')}".strip()
+            title = doc.get("title", "").strip()
+            text = f"{title} {doc.get('text', '')}".strip()
             if doc_id in needed_doc_ids:
                 corpus[doc_id] = text
+                titles[doc_id] = title
             elif not limit_docs or (len(corpus) + len(distractors)) < limit_docs:
-                distractors[doc_id] = text
+                distractors[doc_id] = (title, text)
 
             if limit_docs and len(corpus) == len(needed_doc_ids) and (len(corpus) + len(distractors)) >= limit_docs:
                 break
 
-    for did, text in distractors.items():
+    for did, (t, text) in distractors.items():
         if limit_docs and len(corpus) >= limit_docs:
             break
         corpus[did] = text
+        titles[did] = t
 
-    return corpus, queries, qrels
+    return corpus, queries, qrels, titles
 
 
 def compute_dcg(relevances: list[int], k: int = 10) -> float:
@@ -192,6 +196,7 @@ def evaluate(
     corpus: dict[str, str],
     queries: dict[str, str],
     qrels: dict[str, dict[str, int]],
+    titles: dict[str, str] | None = None,
     cache_path: Path | None = None,
     enable_rerank: bool = False,
 ) -> dict[str, Any]:
@@ -233,8 +238,16 @@ def evaluate(
     concept_docs: dict[str, set[str]] = defaultdict(set)
     concept_edges: dict[str, set[str]] = defaultdict(set)
 
+    # Known entities are the document titles with length >= 3
+    entity_catalog = [t for t in (titles or {}).values() if len(t) >= 3]
+
     for did, doc_text in corpus.items():
-        graph = extract_concepts_and_edges(doc_text, document_title=did)
+        doc_title = (titles or {}).get(did)
+        graph = extract_concepts_and_edges(
+            raw_text=doc_text,
+            document_title=doc_title,
+            known_entities=entity_catalog,
+        )
         for c in graph.concepts:
             c_name = c.name.lower()
             doc_concepts[did].add(c_name)
@@ -244,6 +257,9 @@ def evaluate(
             t = e.target_concept.lower()
             concept_edges[s].add(t)
             concept_edges[t].add(s)
+
+    total_edges = sum(len(v) for v in concept_edges.values()) // 2
+    print(f"Extracted {len(concept_docs)} concepts and {total_edges} cross-concept edges.")
 
     reranker = None
     if enable_rerank:
@@ -372,14 +388,14 @@ def main():
     limit_docs = None if args.limit_docs <= 0 else args.limit_docs
     limit_queries = None if args.limit_queries <= 0 else args.limit_queries
 
-    corpus, queries, qrels = load_beir_data(
+    corpus, queries, qrels, titles = load_beir_data(
         data_dir, limit_docs=limit_docs, limit_queries=limit_queries
     )
     print(f"Loaded {len(corpus)} documents and {len(queries)} evaluated test queries.")
 
     cache_path = data_dir / f"embeddings_{len(corpus)}.npz"
     summary = evaluate(
-        corpus, queries, qrels, cache_path=cache_path, enable_rerank=args.rerank
+        corpus, queries, qrels, titles=titles, cache_path=cache_path, enable_rerank=args.rerank
     )
 
     print("\n" + "=" * 65)

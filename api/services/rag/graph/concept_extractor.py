@@ -50,6 +50,7 @@ def extract_concepts_and_edges(
     chunks: Sequence[Any] | None = None,
     document_title: str | None = None,
     user_metadata: dict[str, Any] | None = None,
+    known_entities: Sequence[str] | set[str] | dict[str, str] | None = None,
 ) -> ExtractedGraph:
     """Deterministically extracts concepts, hierarchical/relational edges, and chunk associations."""
     concepts_by_key: dict[str, Concept] = {}
@@ -132,7 +133,22 @@ def extract_concepts_and_edges(
                 rel = "depends_on" if is_dependency else "references"
                 add_edge(current_context, target_name, rel=rel, weight=1.0)
 
-    # 3. Map chunks to concepts (only if concepts were discovered)
+    # 3. Match known entity mentions across text if entity catalog provided
+    if known_entities:
+        raw_text_lower = raw_text.lower()
+        context_concept = heading_stack[-1][1] if heading_stack else root_name
+        for entity in known_entities:
+            ent_norm = _normalize_concept_name(entity)
+            if not ent_norm or len(ent_norm) < 3:
+                continue
+            if root_name and ent_norm.lower() == root_name.lower():
+                continue
+            if ent_norm.lower() in raw_text_lower:
+                target_name = add_concept(ent_norm, c_type="entity")
+                if context_concept and target_name:
+                    add_edge(context_concept, target_name, rel="references", weight=1.0)
+
+    # 4. Map chunks to concepts (only if concepts were discovered)
     if concepts_by_key and chunks:
         for idx, chunk in enumerate(chunks):
             linked_for_chunk: set[str] = set()
@@ -183,6 +199,28 @@ def extract_concepts_and_edges(
                             metadata={"source": "inline_wikilink"},
                         )
                     )
+
+            # Detect mentions of known entities in chunk content
+            if known_entities:
+                c_content_lower = c_content.lower()
+                for entity in known_entities:
+                    ent_norm = _normalize_concept_name(entity)
+                    if not ent_norm or len(ent_norm) < 3:
+                        continue
+                    if root_name and ent_norm.lower() == root_name.lower():
+                        continue
+                    if ent_norm.lower() not in linked_for_chunk and ent_norm.lower() in c_content_lower:
+                        target_name = add_concept(ent_norm, c_type="entity")
+                        if target_name:
+                            linked_for_chunk.add(ent_norm.lower())
+                            chunk_links.append(
+                                ChunkConceptLink(
+                                    chunk_index=idx,
+                                    concept_name=target_name,
+                                    confidence=0.75,
+                                    metadata={"source": "entity_mention"},
+                                )
+                            )
 
     return ExtractedGraph(
         concepts=list(concepts_by_key.values()),
