@@ -10,7 +10,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 from api.adapters.pg_adapter import init_pool, close_pool
 from api.config import get_settings
-from api.routers import query, ingest
+from api.routers import query, ingest, wiki
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -36,6 +36,7 @@ async def security_headers(_request: Request, call_next):
 
 app.include_router(query.router, prefix="/api")
 app.include_router(ingest.router, prefix="/api")
+app.include_router(wiki.router, prefix="/api")
 
 @app.get("/api/health")
 async def health():
