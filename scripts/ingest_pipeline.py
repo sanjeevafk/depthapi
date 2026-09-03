@@ -99,19 +99,14 @@ def _run_sync(args: argparse.Namespace) -> int:
 
 
 def _run_async(args: argparse.Namespace) -> int:
-    from api.services.rag.pipeline.concurrent_orchestrator import ConcurrentPipelineOrchestrator
-    from api.services.rag.pipeline.orchestrator import IngestionMode
+    from api.services.rag.pipeline.orchestrator import IngestionMode, PipelineOrchestrator
 
-    orchestrator = ConcurrentPipelineOrchestrator(
-        max_concurrent_docs=args.max_concurrent,
-    )
+    orchestrator = PipelineOrchestrator()
     mode = IngestionMode(args.mode)
-    result = asyncio.run(
-        orchestrator.ingest_async(
-            config_path=args.config,
-            mode=mode,
-            run_id=args.run_id,
-        )
+    result = orchestrator.ingest(
+        config_path=args.config,
+        mode=mode,
+        run_id=args.run_id,
     )
     _print_result(result)
     return 0 if result.error_rate <= 0.01 else 1
