@@ -71,9 +71,7 @@ class DepthAPIClient:
                 mapped_spec["capabilities"].append("requires_citations")
 
         payload = {
-            "topic": query,
-            "prompt_spec": mapped_spec,
-            "mode": "chat",
+            "query": query,
             "bypass_cache": True,
         }
 
@@ -102,8 +100,7 @@ class DepthAPIClient:
             )
             response.raise_for_status()
             res_json = response.json()
-            explanations = res_json.get("explanations", {})
-            answer = next(iter(explanations.values()), "") if explanations else ""
+            answer = res_json.get("answer", "")
             contexts = res_json.get("contexts") or []
             return {
                 "answer": answer,
