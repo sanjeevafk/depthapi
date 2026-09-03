@@ -5,6 +5,13 @@ import re
 from typing import Any, Sequence
 from pydantic import BaseModel, Field
 
+try:
+    import depth_engine
+    _HAS_DEPTH_ENGINE = True
+except ImportError:
+    depth_engine = None  # type: ignore[assignment]
+    _HAS_DEPTH_ENGINE = False
+
 
 class Concept(BaseModel):
     name: str
@@ -53,6 +60,33 @@ def extract_concepts_and_edges(
     known_entities: Sequence[str] | set[str] | dict[str, str] | None = None,
 ) -> ExtractedGraph:
     """Deterministically extracts concepts, hierarchical/relational edges, and chunk associations."""
+    if _HAS_DEPTH_ENGINE:
+        try:
+            chunks_data = None
+            if chunks is not None:
+                chunks_data = [
+                    c.model_dump()
+                    if hasattr(c, "model_dump")
+                    else dict(c)
+                    if isinstance(c, dict)
+                    else {
+                        "content": getattr(c, "content", ""),
+                        "metadata": getattr(c, "metadata", {}) or {},
+                    }
+                    for c in chunks
+                ]
+            entities_list = list(known_entities) if known_entities else None
+            res = depth_engine.extract_concepts_and_edges(
+                raw_text=raw_text,
+                chunks=chunks_data,
+                document_title=document_title,
+                user_metadata=user_metadata,
+                known_entities=entities_list,
+            )
+            return ExtractedGraph.model_validate(res)
+        except Exception:
+            pass
+
     concepts_by_key: dict[str, Concept] = {}
     edges_set: set[tuple[str, str, str]] = set()
     edges: list[ConceptEdge] = []

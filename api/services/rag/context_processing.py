@@ -6,6 +6,13 @@ import re
 import unicodedata
 from typing import Any
 
+try:
+    import depth_engine
+    _HAS_DEPTH_ENGINE = True
+except ImportError:
+    depth_engine = None  # type: ignore[assignment]
+    _HAS_DEPTH_ENGINE = False
+
 
 _DECORATIVE_MD_RE = re.compile(r"(?m)^\s*(?:-{3,}|\*{3,}|_{3,})\s*$")
 _MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
@@ -32,6 +39,12 @@ def canonical_id(value: Any) -> str:
 
 def normalize_context_text(text: str, *, max_chars: int = 1000) -> str:
     """Compress context while preserving technical meaning and citations."""
+    if _HAS_DEPTH_ENGINE:
+        try:
+            return depth_engine.normalize_context_text(text, max_chars)
+        except Exception:
+            pass
+
     value = str(text or "")
     value = _DECORATIVE_MD_RE.sub("", value)
     value = _MD_LINK_RE.sub(r"\1 (\2)", value)
@@ -68,6 +81,19 @@ def compress_contexts(
     max_total_chars: int = 3000,
 ) -> list[dict[str, Any]]:
     """Normalize selected contexts and enforce a total prompt budget."""
+    if _HAS_DEPTH_ENGINE:
+        try:
+            return list(
+                depth_engine.compress_contexts(
+                    contexts,
+                    max_contexts=max_contexts,
+                    max_chars_per_context=max_chars_per_context,
+                    max_total_chars=max_total_chars,
+                )
+            )
+        except Exception:
+            pass
+
     compressed: list[dict[str, Any]] = []
     total_chars = 0
     seen_texts: set[str] = set()
@@ -109,6 +135,12 @@ def reorder_lost_in_the_middle(contexts: list[dict[str, Any]]) -> list[dict[str,
     """
     if len(contexts) <= 2:
         return list(contexts)
+
+    if _HAS_DEPTH_ENGINE:
+        try:
+            return list(depth_engine.reorder_lost_in_the_middle(contexts))
+        except Exception:
+            pass
 
     reordered: list[dict[str, Any]] = [None] * len(contexts)  # type: ignore[list-item]
     left = 0

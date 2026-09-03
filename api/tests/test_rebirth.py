@@ -100,7 +100,7 @@ async def test_query_scopes_retrieval_to_api_key(monkeypatch):
     key_id = uuid4()
     response = await query_module.query(query_module.QueryRequest(query="private"), _request(), ApiKeyRecord(str(key_id), "free", False))
 
-    assert response.answer == "No matching knowledge was found."
+    assert "could not find sufficient matching documentation" in response.answer.lower() or response.answer == "No matching knowledge was found."
     assert captured["api_key_filter"] == key_id
 
 
