@@ -3,10 +3,11 @@ Unit tests for OKF Cognitive Depth (Levels 1-5) and compounding Q&A wiki loop.
 """
 from __future__ import annotations
 
-import tempfile
 import shutil
-from unittest.mock import AsyncMock, patch
+import tempfile
+from unittest.mock import AsyncMock
 from uuid import uuid4
+
 import pytest
 from starlette.requests import Request
 

@@ -3,9 +3,9 @@ import os
 import re
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 EVAL_LOG_DIR = Path("results/eval_logs")
 EVAL_LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -20,10 +20,10 @@ def call_evaluator_model(
     prompt: str,
     *,
     json_mode: bool = True,
-    model: Optional[str] = None,
-    provider: Optional[str] = None,
-    max_retries: Optional[int] = None,
-    max_backoff_s: Optional[float] = None,
+    model: str | None = None,
+    provider: str | None = None,
+    max_retries: int | None = None,
+    max_backoff_s: float | None = None,
 ) -> str:
     import httpx
 
@@ -94,14 +94,14 @@ def log_eval_failure(
     evaluator: str,
     metric_name: str,
     prompt_name: str,
-    sample_id: Optional[str],
+    sample_id: str | None,
     model: str,
     retry_count: int,
     exception: str,
     raw_response: str,
 ) -> None:
     payload = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "evaluator": evaluator,
         "metric_name": metric_name,
         "prompt_name": prompt_name,
@@ -116,7 +116,7 @@ def log_eval_failure(
         f.write(json.dumps(payload, ensure_ascii=True) + "\n")
 
 
-def extract_json_text(raw: str) -> Optional[str]:
+def extract_json_text(raw: str) -> str | None:
     text = (raw or "").strip()
     if not text:
         return None
@@ -127,7 +127,7 @@ def extract_json_text(raw: str) -> Optional[str]:
     return m.group(0) if m else None
 
 
-def parse_json_with_repair(raw: str) -> Optional[Dict[str, Any]]:
+def parse_json_with_repair(raw: str) -> dict[str, Any] | None:
     cand = extract_json_text(raw)
     if not cand:
         return None

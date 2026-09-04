@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+
 import pytest
 
 from api.services.rag import embeddings as emb_module

@@ -4,9 +4,10 @@ test_depth_engine.py — Unit tests for compiled Rust depth_engine and its Pytho
 from __future__ import annotations
 
 import uuid
-import pytest
 
 import depth_engine
+import pytest
+
 from api.routers.ingest import _run_pipeline
 from api.services.rag.pipeline.depth_engine_adapter import (
     get_engine_version,

@@ -16,10 +16,10 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime
 
-import pytest
-
 from api.services.rag.pipeline.chunkers.semantic_chunker import SemanticChunker
-from api.services.rag.pipeline.middleware.ascii_diagram_preserver import AsciiDiagramPreserver
+from api.services.rag.pipeline.middleware.ascii_diagram_preserver import (
+    AsciiDiagramPreserver,
+)
 from api.services.rag.pipeline.middleware.toc_stripper import TocStripper
 from api.services.rag.pipeline.middleware.url_normalizer import UrlNormalizer
 from api.services.rag.pipeline.models import (

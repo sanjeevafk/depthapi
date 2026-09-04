@@ -16,7 +16,6 @@ from api.services.rag.pipeline.config_schema import DatasetConfig
 from api.services.rag.pipeline.error_handler import ErrorHandler
 from api.services.rag.pipeline.models import ErrorRecord
 
-
 MINIMAL_YAML = textwrap.dedent("""\
     name: "Test Dataset"
     version: "v1.0"

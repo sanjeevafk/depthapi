@@ -1,8 +1,8 @@
 """Unit tests for query endpoint with RRF and reranking toggle."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
+
 import pytest
 from starlette.requests import Request
 

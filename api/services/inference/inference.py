@@ -1,7 +1,9 @@
 """Mode-free response generation for retrieved contexts."""
 from collections.abc import AsyncIterator
 from typing import Any
+
 from api.config import get_settings
+
 
 def _fallback_response(contexts: list[dict[str, Any]]) -> str:
     if not contexts:

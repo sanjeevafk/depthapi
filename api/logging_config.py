@@ -9,14 +9,12 @@ import random
 import re
 import sys
 import uuid
-from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 import structlog
 from structlog.typing import EventDict
 
 from api.config import get_settings
-
 
 _REDACTED_VALUE = "[REDACTED]"
 _DEFAULT_SUCCESS_SAMPLE_RATE = 0.15

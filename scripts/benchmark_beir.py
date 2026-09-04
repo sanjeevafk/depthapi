@@ -14,18 +14,15 @@ Usage:
 from __future__ import annotations
 
 import argparse
-from collections import defaultdict
-import io
 import json
 import math
-import os
 import sys
 import time
 import urllib.request
 import zipfile
-from dataclasses import dataclass, field
+from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any
 
 import numpy as np
 
@@ -36,7 +33,6 @@ if str(REPO_ROOT) not in sys.path:
 
 from api.services.rag.embeddings import get_local_transformer
 from api.services.rag.graph.concept_extractor import extract_concepts_and_edges
-
 
 DATASET_URLS = {
     "scifact": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip",
@@ -106,7 +102,7 @@ def load_beir_data(
         for line in f:
             q = json.loads(line)
             qid = str(q["_id"])
-            if qid in all_qrels and all_qrels[qid]:
+            if all_qrels.get(qid):
                 all_queries[qid] = q["text"]
 
     # Select queries

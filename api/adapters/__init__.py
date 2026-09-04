@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import wraps
-from typing import TypeVar, ParamSpec
+from typing import ParamSpec, TypeVar
 
 from api.logging_config import logger
 

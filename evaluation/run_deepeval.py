@@ -1,7 +1,7 @@
 import os
 import random
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 from eval_utils import call_evaluator_model, log_eval_failure
 
@@ -9,9 +9,9 @@ from eval_utils import call_evaluator_model, log_eval_failure
 def evaluate_deepeval(
     query: str,
     answer: str,
-    context: List[str],
+    context: list[str],
     sample_id: str = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Run AnswerRelevancy + Faithfulness via DeepEval.
 
     The inner LLM is wired to ``call_evaluator_model`` so all traffic goes

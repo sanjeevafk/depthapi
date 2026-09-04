@@ -16,12 +16,10 @@ from api.services.rag.pipeline.models import (
     Chunk,
     Document,
     ErrorRecord,
-    IngestionResult,
     ParsedDocument,
     QualityScoreInputs,
     SourceFingerprint,
 )
-
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
 

@@ -2,8 +2,14 @@ node_modules
 .venv
 .git
 .github
+.agent
+.code-review-graph
 dist
 build
+target
+datasets
+data
+backups
 coverage
 playwright-report
 test-results

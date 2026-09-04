@@ -11,8 +11,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from api.services.rag.pipeline.models import ParsedDocument, Chunk
-
+from api.services.rag.pipeline.models import Chunk, ParsedDocument
 
 SAMPLE_MARKDOWN = """\
 # System Design

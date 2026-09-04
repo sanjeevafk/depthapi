@@ -1,7 +1,7 @@
 import json
 import random
 import uuid
-from typing import List, Dict, Any
+from typing import Any
 
 TECHNICAL_QUERIES = [
     "How does asyncio event loop work in Python?",
@@ -24,15 +24,15 @@ TECHNICAL_QUERIES = [
     "What local RAG setting limits the selected contexts before synthesis to reduce token bloat?",
 ]
 
-def generate_benchmark_dataset(size: int = 120) -> List[Dict[str, Any]]:
+def generate_benchmark_dataset(size: int = 120) -> list[dict[str, Any]]:
     """Generate a diverse benchmark dataset with PromptSpec combinations."""
     dataset = []
-    
+
     # Stratified sampling parameters
     depths = ["surface", "detailed", "expert", "academic"]
     tones = ["objective", "educational", "critical", "concise"]
     formats = ["markdown", "bullet_points", "essay", "code_heavy"]
-    
+
     for i in range(size):
         query = random.choice(TECHNICAL_QUERIES) + f" (Variant {i})"
         prompt_spec = {
@@ -41,7 +41,7 @@ def generate_benchmark_dataset(size: int = 120) -> List[Dict[str, Any]]:
             "format": random.choice(formats),
             "include_citations": random.choice([True, False])
         }
-        
+
         is_blind = query in TECHNICAL_QUERIES[-8:]
         dataset.append({
             "id": str(uuid.uuid4()),
@@ -54,7 +54,7 @@ def generate_benchmark_dataset(size: int = 120) -> List[Dict[str, Any]]:
             "category": "llm_blind" if is_blind else "technical",
             "difficulty": "hard" if is_blind else random.choice(["easy", "medium", "hard"]),
         })
-        
+
     return dataset
 
 if __name__ == "__main__":

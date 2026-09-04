@@ -43,7 +43,7 @@ import sys
 import time
 from collections import Counter
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -76,7 +76,7 @@ LOG = logging.getLogger("export_to_hf")
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _run_tag() -> str:
@@ -237,10 +237,9 @@ def _db_connection(
 
 
 def _pg_fetchall(sql: str, params: tuple[Any, ...] = ()) -> list[tuple[Any, ...]]:
-    with _db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
-            return cur.fetchall()
+    with _db_connection() as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        return cur.fetchall()
 
 
 def _pg_list_collections() -> dict[str, str]:
@@ -336,71 +335,70 @@ def _export_shards(
     # Track the maximum created_at seen so we can update the watermark
     max_created_at: datetime | None = None
 
-    with _db_connection() as conn:
-        with conn.cursor(
-            "export_cursor", cursor_factory=psycopg2.extras.RealDictCursor
-        ) as cur:
-            cur.itersize = 2000
-            cur.execute(sql, params or ())
+    with _db_connection() as conn, conn.cursor(
+        "export_cursor", cursor_factory=psycopg2.extras.RealDictCursor
+    ) as cur:
+        cur.itersize = 2000
+        cur.execute(sql, params or ())
 
-            for pg_row in cur:
-                content = pg_row.get("content")
-                if skip_empty_content and not _is_nonempty_content(content):
-                    skipped_empty += 1
-                    continue
+        for pg_row in cur:
+            content = pg_row.get("content")
+            if skip_empty_content and not _is_nonempty_content(content):
+                skipped_empty += 1
+                continue
 
-                row_created_at = pg_row.get("created_at")
-                if row_created_at and (
-                    max_created_at is None or row_created_at > max_created_at
-                ):
-                    max_created_at = row_created_at
+            row_created_at = pg_row.get("created_at")
+            if row_created_at and (
+                max_created_at is None or row_created_at > max_created_at
+            ):
+                max_created_at = row_created_at
 
-                row: dict[str, Any] = {
-                    "id": pg_row.get("id"),
-                    "document_id": pg_row.get("document_id"),
-                    "content": content,
-                    "content_hash": pg_row.get("content_hash"),
-                    "chunk_order": pg_row.get("chunk_order"),
-                    "metadata": pg_row.get("metadata") or {},
-                }
+            row: dict[str, Any] = {
+                "id": pg_row.get("id"),
+                "document_id": pg_row.get("document_id"),
+                "content": content,
+                "content_hash": pg_row.get("content_hash"),
+                "chunk_order": pg_row.get("chunk_order"),
+                "metadata": pg_row.get("metadata") or {},
+            }
 
-                try:
-                    normalized = _normalize_row(
-                        row, collection_name=str(pg_row.get("collection_name") or "")
-                    )
-                except Exception as exc:
-                    skipped_invalid += 1
-                    LOG.warning("Skipping malformed row %s: %s", row.get("id"), exc)
-                    continue
+            try:
+                normalized = _normalize_row(
+                    row, collection_name=str(pg_row.get("collection_name") or "")
+                )
+            except Exception as exc:
+                skipped_invalid += 1
+                LOG.warning("Skipping malformed row %s: %s", row.get("id"), exc)
+                continue
 
-                buffer.append(normalized)
+            buffer.append(normalized)
 
-                if len(rows_for_manifest) < 5000:
-                    rows_for_manifest.append(
-                        {
-                            "source": normalized["source"],
-                            "source_url": normalized["source_url"],
-                            "upstream_license": normalized["upstream_license"],
-                            "retrieved_at": normalized["retrieved_at"],
-                            "collection_name": normalized["collection_name"],
-                        }
-                    )
+            if len(rows_for_manifest) < 5000:
+                rows_for_manifest.append(
+                    {
+                        "source": normalized["source"],
+                        "source_url": normalized["source_url"],
+                        "upstream_license": normalized["upstream_license"],
+                        "retrieved_at": normalized["retrieved_at"],
+                        "collection_name": normalized["collection_name"],
+                    }
+                )
 
-                licenses[normalized["upstream_license"]] += 1
-                source_counts[normalized["source"]] += 1
-                total_rows += 1
+            licenses[normalized["upstream_license"]] += 1
+            source_counts[normalized["source"]] += 1
+            total_rows += 1
 
-                if len(buffer) >= shard_size:
-                    shard_path = (
-                        output_dir / f"train-{run_tag}-{shard_index:05d}.parquet"
-                    )
-                    export_parquet_shard(shard_path, buffer)
-                    LOG.info("Wrote %s (%s rows)", shard_path.name, len(buffer))
-                    buffer = []
-                    shard_index += 1
+            if len(buffer) >= shard_size:
+                shard_path = (
+                    output_dir / f"train-{run_tag}-{shard_index:05d}.parquet"
+                )
+                export_parquet_shard(shard_path, buffer)
+                LOG.info("Wrote %s (%s rows)", shard_path.name, len(buffer))
+                buffer = []
+                shard_index += 1
 
-                if limit is not None and total_rows >= limit:
-                    break
+            if limit is not None and total_rows >= limit:
+                break
 
     if buffer:
         shard_path = output_dir / f"train-{run_tag}-{shard_index:05d}.parquet"
@@ -449,7 +447,11 @@ def _publish_folder(
     repo_subdir: str = "",
 ) -> dict[str, Any]:
     _load_env()
-    from huggingface_hub import CommitOperationAdd, CommitOperationDelete, HfApi  # type: ignore
+    from huggingface_hub import (  # type: ignore
+        CommitOperationAdd,
+        CommitOperationDelete,
+        HfApi,
+    )
 
     api = HfApi(token=_hf_token())
     api.create_repo(

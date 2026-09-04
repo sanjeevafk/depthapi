@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 import traceback
 import uuid
 from datetime import UTC, datetime
@@ -32,18 +31,13 @@ from typing import Any
 from api.services.rag.pipeline.config_schema import DatasetConfig
 from api.services.rag.pipeline.error_handler import ErrorHandler
 from api.services.rag.pipeline.interfaces import (
-    BaseChunker,
-    BaseMiddleware,
-    BaseParser,
     BaseSink,
     BaseSource,
 )
 from api.services.rag.pipeline.models import (
-    Chunk,
     Document,
     ErrorRecord,
     IngestionResult,
-    ParsedDocument,
     SourceFingerprint,
 )
 from api.services.rag.pipeline.registry import PluginRegistry

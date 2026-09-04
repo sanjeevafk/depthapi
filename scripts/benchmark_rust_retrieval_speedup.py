@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import statistics
 import time
+
 import depth_engine
+
 from api.services.rag.graph import concept_extractor as py_concept_mod
 from api.services.rag.graph.router import _RELATIONAL_PATTERNS
 
@@ -82,7 +84,7 @@ def main() -> None:
     factual_q = "What is the recommended python version for local development?"
     py_mean, py_p50, py_p95 = measure(python_router, factual_q)
     rs_mean, rs_p50, rs_p95 = measure(depth_engine.detect_graph_hops, factual_q)
-    print(f"\n[1] Intent Classification - Factual (DFA 1-pass vs 11 Python regex checks):")
+    print("\n[1] Intent Classification - Factual (DFA 1-pass vs 11 Python regex checks):")
     print(f"    Python: mean={py_mean:6.3f} µs | p50={py_p50:6.3f} µs | p95={py_p95:6.3f} µs")
     print(f"    Rust:   mean={rs_mean:6.3f} µs | p50={rs_p50:6.3f} µs | p95={rs_p95:6.3f} µs")
     print(f"    --> Speedup: {py_mean / rs_mean:5.1f}x (mean) | {py_p50 / rs_p50:5.1f}x (p50)")
@@ -91,7 +93,7 @@ def main() -> None:
     relational_q = "How does the ingestion pipeline interact with postgres and what depends on it?"
     py_mean, py_p50, py_p95 = measure(python_router, relational_q)
     rs_mean, rs_p50, rs_p95 = measure(depth_engine.detect_graph_hops, relational_q)
-    print(f"\n[2] Intent Classification - Relational (Early-match pattern):")
+    print("\n[2] Intent Classification - Relational (Early-match pattern):")
     print(f"    Python: mean={py_mean:6.3f} µs | p50={py_p50:6.3f} µs | p95={py_p95:6.3f} µs")
     print(f"    Rust:   mean={rs_mean:6.3f} µs | p50={rs_p50:6.3f} µs | p95={rs_p95:6.3f} µs")
     print(f"    --> Speedup: {py_mean / rs_mean:5.1f}x (mean) | {py_p50 / rs_p50:5.1f}x (p50)")
@@ -100,7 +102,7 @@ def main() -> None:
     contexts = [{"id": f"chunk_{i}", "score": 1.0 / (i + 1)} for i in range(10)]
     py_mean, py_p50, py_p95 = measure(python_reorder, contexts)
     rs_mean, rs_p50, rs_p95 = measure(depth_engine.reorder_lost_in_the_middle, contexts)
-    print(f"\n[3] Lost-in-the-Middle U-shaped Permutation (10 contexts):")
+    print("\n[3] Lost-in-the-Middle U-shaped Permutation (10 contexts):")
     print(f"    Python: mean={py_mean:6.3f} µs | p50={py_p50:6.3f} µs | p95={py_p95:6.3f} µs")
     print(f"    Rust:   mean={rs_mean:6.3f} µs | p50={rs_p50:6.3f} µs | p95={rs_p95:6.3f} µs")
     print(f"    --> Speedup: {py_mean / rs_mean:5.1f}x (mean) | {py_p50 / rs_p50:5.1f}x (p50)")
@@ -109,7 +111,7 @@ def main() -> None:
     scores = [2.8, 1.2, 0.4, -0.1, -1.2]
     py_mean, py_p50, py_p95 = measure(python_crag, scores, True)
     rs_mean, rs_p50, rs_p95 = measure(depth_engine.evaluate_confidence, scores, True)
-    print(f"\n[4] Corrective RAG Confidence Gating (5 scores):")
+    print("\n[4] Corrective RAG Confidence Gating (5 scores):")
     print(f"    Python: mean={py_mean:6.3f} µs | p50={py_p50:6.3f} µs | p95={py_p95:6.3f} µs")
     print(f"    Rust:   mean={rs_mean:6.3f} µs | p50={rs_p50:6.3f} µs | p95={rs_p95:6.3f} µs")
     print(f"    --> Speedup: {py_mean / rs_mean:5.1f}x (mean) | {py_p50 / rs_p50:5.1f}x (p50)")
@@ -140,7 +142,7 @@ def main() -> None:
 
     py_mean, py_p50, py_p95 = measure(run_py_extractor, samples=50, inner_iters=50)
     rs_mean, rs_p50, rs_p95 = measure(run_rs_extractor, samples=50, inner_iters=50)
-    print(f"\n[5] AST Concept & Lineage Graph Extraction (Markdown AST + Entity Catalog):")
+    print("\n[5] AST Concept & Lineage Graph Extraction (Markdown AST + Entity Catalog):")
     print(f"    Python: mean={py_mean:6.3f} µs | p50={py_p50:6.3f} µs | p95={py_p95:6.3f} µs")
     print(f"    Rust:   mean={rs_mean:6.3f} µs | p50={rs_p50:6.3f} µs | p95={rs_p95:6.3f} µs")
     print(f"    --> Speedup: {py_mean / rs_mean:5.1f}x (mean) | {py_p50 / rs_p50:5.1f}x (p50)")

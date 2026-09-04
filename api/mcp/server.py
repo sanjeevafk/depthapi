@@ -10,12 +10,12 @@ import asyncio
 import json
 import sys
 from typing import Any
-from uuid import UUID
 
-from api.services.wiki.vault_manager import get_vault_manager
+from api.routers.query import QueryRequest
+from api.routers.query import query as execute_query
 from api.services.rag.graph.concept_extractor import extract_concepts_and_edges
 from api.services.security.api_key_auth import ApiKeyRecord
-from api.routers.query import QueryRequest, query as execute_query
+from api.services.wiki.vault_manager import get_vault_manager
 
 try:
     import depth_engine
@@ -160,7 +160,7 @@ class DepthApiMcpServer:
         except Exception as exc:
             return {
                 "isError": True,
-                "content": [{"type": "text", "text": f"Error executing tool '{name}': {str(exc)}"}],
+                "content": [{"type": "text", "text": f"Error executing tool '{name}': {exc!s}"}],
             }
 
     async def _tool_query(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -210,7 +210,7 @@ class DepthApiMcpServer:
                 }
             return {
                 "isError": True,
-                "content": [{"type": "text", "text": f"Query execution failed: {str(exc)}"}],
+                "content": [{"type": "text", "text": f"Query execution failed: {exc!s}"}],
             }
 
     async def _tool_ingest(self, args: dict[str, Any]) -> dict[str, Any]:

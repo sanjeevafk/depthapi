@@ -36,11 +36,11 @@ def _estimate_confidence(content: str) -> float:
         return 0.5
 
     lines = content.splitlines()
-    non_empty = [l for l in lines if l.strip()]
+    non_empty = [line for line in lines if line.strip()]
     if not non_empty:
         return 0.5
 
-    has_headers = any(l.startswith("#") for l in non_empty)
+    has_headers = any(line.startswith("#") for line in non_empty)
     has_paragraphs = len(non_empty) > 5
     has_code_blocks = "```" in content
 

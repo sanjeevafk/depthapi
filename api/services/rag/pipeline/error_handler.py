@@ -20,7 +20,7 @@ import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
-from api.services.rag.pipeline.config_schema import DatasetConfig, ErrorPolicyConfig
+from api.services.rag.pipeline.config_schema import DatasetConfig
 from api.services.rag.pipeline.models import ErrorRecord
 
 log = logging.getLogger(__name__)

@@ -1,7 +1,7 @@
 """Configuration and environment variables."""
 
-from dataclasses import dataclass
 from functools import lru_cache
+
 from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 

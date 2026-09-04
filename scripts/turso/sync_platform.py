@@ -13,7 +13,7 @@ import hashlib
 import json
 import os
 import struct
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import asyncpg
@@ -53,7 +53,7 @@ def sync(*, full: bool = False) -> int:
 
     rows = asyncio.run(_read_postgres(database_url, full))
     edge = libsql.connect(turso_url, auth_token=turso_token, isolation_level=None)
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     for row in rows:
         metadata = row.get("metadata") or {}
         if isinstance(metadata, str):

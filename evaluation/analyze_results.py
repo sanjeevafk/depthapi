@@ -2,7 +2,7 @@ import json
 import re
 import unicodedata
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import Any
 
 import pandas as pd
 
@@ -130,7 +130,7 @@ def _citation_ids(row: pd.Series, key: str) -> list[str]:
     return values
 
 
-def analyze_and_report(results: List[Dict[str, Any]], output_dir: str):
+def analyze_and_report(results: list[dict[str, Any]], output_dir: str):
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     raw_path = Path(output_dir) / "raw_results.json"
     with open(raw_path, "w") as f:

@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pandas as pd
 
-from evaluation.analyze_results import _expected_ids, _mrr, _precision_at_k, _recall_at_k, _retrieved_ids
+from evaluation.analyze_results import (
+    _expected_ids,
+    _mrr,
+    _precision_at_k,
+    _recall_at_k,
+    _retrieved_ids,
+)
 
 
 def test_retrieval_metric_ids_are_canonicalized_across_aliases():

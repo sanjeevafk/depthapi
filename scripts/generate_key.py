@@ -73,6 +73,7 @@ def insert_key(
 ) -> str:
     """Insert the hashed key into PostgreSQL and return its UUID."""
     import asyncio
+
     import asyncpg
 
     database_url = os.environ.get("DATABASE_URL", "")
@@ -139,7 +140,7 @@ def main() -> None:
     print(f"  Key ID        : {row_id}")
     print(f"  Prefix        : {raw_key[:16]}...")
     print()
-    print(f"  RAW KEY (copy now — shown once only):")
+    print("  RAW KEY (copy now — shown once only):")
     print()
     print(f"    {raw_key}")
     print()
