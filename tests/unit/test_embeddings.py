@@ -32,6 +32,8 @@ async def test_embed_texts_produces_768_dim_normalized_vectors():
 
 @pytest.mark.asyncio
 async def test_semantic_similarity_ranking():
+    if emb_module.get_local_transformer() is None:
+        pytest.skip("neural embedding model unavailable; hash fallback carries no semantics")
     texts = ["puppy", "dog", "quantum physics equations"]
     results = await emb_module.embed_texts(texts)
 
