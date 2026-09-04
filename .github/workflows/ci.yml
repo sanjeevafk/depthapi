@@ -18,7 +18,9 @@ jobs:
           pip install -e ".[dev]"
           pip install ruff maturin
       - name: Build depth_engine
-        run: maturin develop --manifest-path crates/depth_engine/Cargo.toml
+        run: |
+          maturin build --manifest-path crates/depth_engine/Cargo.toml --out dist
+          pip install dist/*.whl
       - name: Lint
         run: ruff check api tests
       - name: Compile
