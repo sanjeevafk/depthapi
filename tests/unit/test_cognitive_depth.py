@@ -87,7 +87,7 @@ async def test_cognitive_depth_3_scoped_hybrid(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_cognitive_depth_5_deep_graph_and_forced_rerank(monkeypatch):
-    """Depth 5 enforces 2-hop graph traversal and cross-encoder rerank."""
+    """Depth 5 with manual graph_hops=2 traverses the graph and forces rerank."""
     rpc_params = None
     rerank_executed = False
 
@@ -114,14 +114,47 @@ async def test_cognitive_depth_5_deep_graph_and_forced_rerank(monkeypatch):
     monkeypatch.setattr(query_module, "generate_response", AsyncMock(return_value="Deep answer"))
 
     # Even with rerank=False in request, depth=5 forces rerank
-    req = query_module.QueryRequest(query="Complete system architecture deep dive", depth=5, rerank=False)
+    req = query_module.QueryRequest(
+        query="Complete system architecture deep dive", depth=5, rerank=False, graph_hops=2
+    )
     res = await query_module.query(req, _dummy_request(), ApiKeyRecord(str(uuid4()), "pro", True))
 
     assert res.metadata["cognitive_depth"] == 5
     assert res.metadata["graph_hops"] == 2
+    assert res.metadata["graph_mode"] == "manual"
     assert rpc_params.get("graph_hops") == 2
     assert rerank_executed is True
     assert res.metadata["prompt_ordering"] == "lost_in_the_middle"
+
+
+@pytest.mark.asyncio
+async def test_cognitive_depth_5_graph_off_without_intent(monkeypatch):
+    """Depth 5 no longer forces graph traversal; intent-free queries stay flat."""
+    rpc_fns: list[str] = []
+
+    async def fake_rpc(fn_name, params):
+        rpc_fns.append(fn_name)
+        return [{"content": "Flat context", "document_id": str(uuid4()), "score": 0.05}]
+
+    async def fake_embed(texts):
+        return ["[" + ",".join(["0"] * 768) + "]"]
+
+    class FakeReranker:
+        async def rerank(self, query: str, candidates: list, top_n: int = 7):
+            return candidates[:top_n]
+
+    monkeypatch.setattr(query_module, "execute_rpc", fake_rpc)
+    monkeypatch.setattr(query_module, "embed_texts", fake_embed)
+    monkeypatch.setattr(query_module, "get_reranker_service", lambda: FakeReranker())
+    monkeypatch.setattr(query_module, "generate_response", AsyncMock(return_value="Deep answer"))
+
+    req = query_module.QueryRequest(query="Explain quantum mechanics", depth=5, rerank=False)
+    res = await query_module.query(req, _dummy_request(), ApiKeyRecord(str(uuid4()), "pro", True))
+
+    assert res.metadata["graph_hops"] == 0
+    assert res.metadata["graph_mode"] == "auto"
+    assert "dense_search_v5" in rpc_fns
+    assert not any("graph" in fn for fn in rpc_fns)
 
 
 @pytest.mark.asyncio
