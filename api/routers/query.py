@@ -1,5 +1,6 @@
 """Single, mode-free RAG query endpoint with OKF cognitive depth tuning."""
 import json
+import logging
 from typing import Any
 from uuid import UUID
 
@@ -8,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from api.adapters.pg_adapter import execute_rpc, get_pool
-from api.services.inference.inference import generate_response
+from api.services.inference.inference import generate_response, generate_stream_response
 from api.services.rag.context_processing import reorder_lost_in_the_middle
 from api.services.rag.embeddings import embed_texts
 from api.services.rag.graph.router import detect_graph_hops
@@ -24,6 +25,8 @@ except ImportError:
     _HAS_DEPTH_ENGINE = False
 
 router = APIRouter(tags=["query"])
+
+log = logging.getLogger(__name__)
 
 
 class QueryRequest(BaseModel):
@@ -61,6 +64,38 @@ class QueryResponse(BaseModel):
 
 @router.post("/query", response_model=QueryResponse)
 async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = Depends(verify_api_key)) -> QueryResponse:
+    contexts, ordered_contexts, response_metadata, collection_filter, confidence = await _retrieve(req, _api_key)
+
+    if confidence == "insufficient":
+        answer = "I could not find sufficient matching documentation in your collection to answer this query reliably."
+    else:
+        answer = await generate_response(req.query, ordered_contexts, req.temperature)
+
+    # Compounding Q&A loop: on save_to_wiki=True, save synthesized insight back to vault
+    if req.save_to_wiki and answer and confidence != "insufficient":
+        try:
+            ref_concepts = [
+                c.get("concept_name")
+                for c in contexts
+                if c.get("concept_name")
+            ]
+            get_vault_manager().save_qa_insight(
+                query=req.query,
+                answer=answer,
+                collection_id=str(collection_filter) if collection_filter else None,
+                referenced_concepts=ref_concepts,
+            )
+        except Exception as exc:
+            log.warning("save_to_wiki failed: %s", exc)
+
+    citations = [{"source": row.get("source_url") or str(row.get("document_id") or "unknown")} for row in contexts]
+    return QueryResponse(answer=answer, contexts=contexts, citations=citations, metadata=response_metadata)
+
+
+async def _retrieve(
+    req: QueryRequest, _api_key: ApiKeyRecord
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], UUID | None, str]:
+    """Shared retrieval/rerank/confidence pipeline for query + query/stream."""
     try:
         collection_filter = UUID(req.collection_id) if req.collection_id else None
     except ValueError as exc:
@@ -88,7 +123,8 @@ async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = De
         try:
             pool = get_pool()
             async with pool.acquire() as conn:
-                pattern = f"%{req.query.strip()}%"
+                escaped = req.query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                pattern = f"%{escaped}%"
                 concept_rows = await conn.fetch(
                     """
                     SELECT c.id, c.name, c.concept_type, c.description, c.metadata
@@ -96,7 +132,7 @@ async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = De
                     JOIN knowledge_collections k ON k.id = c.collection_id
                     WHERE k.api_key_id = $1
                       AND ($2::uuid IS NULL OR c.collection_id = $2::uuid)
-                      AND (c.name ILIKE $3 OR c.description ILIKE $3)
+                      AND (c.name ILIKE $3 ESCAPE '\\' OR c.description ILIKE $3 ESCAPE '\\')
                     LIMIT $4
                     """,
                     UUID(_api_key.id),
@@ -115,8 +151,8 @@ async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = De
                         }
                         for r in concept_rows
                     ]
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("Concept lookup failed, falling back to vault: %s", exc)
 
         # If DB had no concept hits, check local vault
         if not contexts:
@@ -185,8 +221,8 @@ async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = De
         try:
             top_n = 7 if req.depth == 5 else 5
             contexts = await get_reranker_service().rerank(req.query, contexts, top_n=top_n)
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("Rerank failed, using retrieval order: %s", exc)
 
     # Evaluate retrieval confidence (CRAG - Corrective RAG gating)
     confidence = "high"
@@ -225,29 +261,6 @@ async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = De
     # Apply Lost-in-the-Middle U-shaped ordering before prompt synthesis
     ordered_contexts = reorder_lost_in_the_middle(contexts)
 
-    if confidence == "insufficient":
-        answer = "I could not find sufficient matching documentation in your collection to answer this query reliably."
-    else:
-        answer = await generate_response(req.query, ordered_contexts, req.temperature)
-
-    # Compounding Q&A loop: on save_to_wiki=True, save synthesized insight back to vault
-    if req.save_to_wiki and answer and confidence != "insufficient":
-        try:
-            ref_concepts = [
-                c.get("concept_name")
-                for c in contexts
-                if c.get("concept_name")
-            ]
-            get_vault_manager().save_qa_insight(
-                query=req.query,
-                answer=answer,
-                collection_id=str(collection_filter) if collection_filter else None,
-                referenced_concepts=ref_concepts,
-            )
-        except Exception:
-            pass
-
-    citations = [{"source": row.get("source_url") or row.get("document_id")} for row in contexts]
     response_metadata = {
         "depth": req.depth,
         "cognitive_depth": req.depth,
@@ -257,14 +270,47 @@ async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = De
         "confidence": confidence,
         "prompt_ordering": "lost_in_the_middle",
     }
-    return QueryResponse(answer=answer, contexts=contexts, citations=citations, metadata=response_metadata)
+    return contexts, ordered_contexts, response_metadata, collection_filter, confidence
 
 
 @router.post("/query/stream")
 async def query_stream(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = Depends(verify_api_key)) -> StreamingResponse:
-    response = await query(req, request, _api_key)
-    payload = json.dumps(response.model_dump(), default=str)
+    contexts, ordered_contexts, response_metadata, collection_filter, confidence = await _retrieve(req, _api_key)
+    citations = [{"source": row.get("source_url") or str(row.get("document_id") or "unknown")} for row in contexts]
+
     async def events():
-        yield f"data: {payload}\n\n"
+        # Heartbeat comment keeps proxies from closing idle streams.
+        yield ": stream start\n\n"
+        if confidence == "insufficient":
+            answer = "I could not find sufficient matching documentation in your collection to answer this query reliably."
+            yield f"data: {json.dumps({'delta': answer}, default=str)}\n\n"
+            final = {"answer": answer, "contexts": contexts, "citations": citations, "metadata": response_metadata}
+            yield f"data: {json.dumps(final, default=str)}\n\n"
+        else:
+            parts: list[str] = []
+            async for token in generate_stream_response(req.query, ordered_contexts, req.temperature):
+                parts.append(token)
+                yield f"data: {json.dumps({'delta': token}, default=str)}\n\n"
+                if await request.is_disconnected():
+                    break
+            answer = "".join(parts)
+            if req.save_to_wiki and answer:
+                try:
+                    ref_concepts = [c.get("concept_name") for c in contexts if c.get("concept_name")]
+                    get_vault_manager().save_qa_insight(
+                        query=req.query,
+                        answer=answer,
+                        collection_id=str(collection_filter) if collection_filter else None,
+                        referenced_concepts=ref_concepts,
+                    )
+                except Exception as exc:
+                    log.warning("save_to_wiki failed: %s", exc)
+            final = {"answer": answer, "contexts": contexts, "citations": citations, "metadata": response_metadata}
+            yield f"data: {json.dumps(final, default=str)}\n\n"
         yield "data: [DONE]\n\n"
-    return StreamingResponse(events(), media_type="text/event-stream")
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

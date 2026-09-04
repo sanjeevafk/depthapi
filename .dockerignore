@@ -21,3 +21,8 @@ test-results
 **/.mypy_cache
 **/.ruff_cache
 **/*.tsbuildinfo
+.env*
+.env.local
+.envrc
+*.pem
+*.key

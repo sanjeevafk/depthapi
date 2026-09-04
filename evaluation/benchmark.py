@@ -479,7 +479,7 @@ async def phase_generation(
         await process_system("depthapi", depth_client)
 
     if compare_baseline:
-        raise ValueError("The legacy remote baseline was retired; use --no-compare-baseline")
+        print("WARNING: legacy remote baseline was retired; skipping baseline (Baseline=nan).")
 
     return rows
 
@@ -718,8 +718,10 @@ async def run_benchmark(
     timeout_s: float,
     resume: bool,
     skip_existing: bool,
+    seed: int = 42,
 ):
     ensure_dirs()
+    random.seed(seed)
 
     dataset_path = Path("benchmark_corpus.json")
 
@@ -833,7 +835,13 @@ async def run_benchmark(
         min_required = max(2, int(size * 0.4))
         if len(filtered) < min_required:
             raise RuntimeError(
-                f"preflight_rejected_too_many_rows: kept={len(filtered)} required={min_required}"
+                f"preflight_rejected_too_many_rows: kept={len(filtered)} required={min_required} "
+                f"(requested size={size}; survivorship-bias warning: only validate_generation_row passes were kept)"
+            )
+        if len(filtered) < size:
+            print(
+                f"WARNING: preflight shrank dataset {len(filtered)}/{size} "
+                f"(min_required={min_required}); metrics are survivorship-biased."
             )
         dataset = filtered[:size]
 
@@ -894,6 +902,8 @@ if __name__ == "__main__":
         action="store_true",
     )
 
+    parser.add_argument("--seed", type=int, default=42)
+
     args = parser.parse_args()
     evals = args.evals if args.evals is not None else ["judge"]
     evals = [e.strip().lower() for e in evals if isinstance(e, str) and e.strip()]
@@ -909,5 +919,6 @@ if __name__ == "__main__":
             timeout_s=args.timeout_s,
             resume=args.resume,
             skip_existing=args.skip_existing,
+            seed=args.seed,
         )
     )
