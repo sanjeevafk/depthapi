@@ -20,6 +20,7 @@ else
       -v "$ROOT_DIR/db/migrations/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro" \
       -v "$ROOT_DIR/db/migrations/002_concepts_graph.sql:/docker-entrypoint-initdb.d/002_concepts_graph.sql:ro" \
       -v "$ROOT_DIR/db/migrations/003_fixes.sql:/docker-entrypoint-initdb.d/003_fixes.sql:ro" \
+      -v "$ROOT_DIR/db/migrations/004_dense_search.sql:/docker-entrypoint-initdb.d/004_dense_search.sql:ro" \
       -v "$ROOT_DIR/db/seed/001_dev_api_key.sql:/docker-entrypoint-initdb.d/004_dev_api_key.sql:ro" \
       pgvector/pgvector:pg17
   else

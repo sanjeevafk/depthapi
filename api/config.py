@@ -37,6 +37,15 @@ class Settings(BaseSettings):
     stream_fallback_budget_seconds: int = 8
     trusted_proxies: str = ""
 
+    # Retrieval strategy: dense-first with hybrid fallback.
+    dense_hit_min_results: int = 5
+    dense_hit_min_similarity: float = 0.5
+    rerank_skip_similarity: float = 0.8
+
+    # Query-result cache (Redis) and per-key daily token quotas.
+    query_cache_ttl_seconds: int = 3600
+    quota_enabled: bool = True
+
     redis_url: str = "redis://localhost:6379"
     database_url: str = "postgresql://depthapi:depthapi@localhost:5432/depthapi"
     cache_ttl: int = 86400

@@ -26,6 +26,7 @@ _ALLOWED_RPC_FUNCTIONS = frozenset({
     "hybrid_search_trusted_v5",
     "hybrid_search_with_graph_v5",
     "hybrid_search_trusted_with_graph_v5",
+    "dense_search_v5",
     "queue_document",
     "dequeue_document",
     "complete_document",

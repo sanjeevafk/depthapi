@@ -9,7 +9,13 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from api.adapters.pg_adapter import execute_rpc, get_pool
-from api.services.inference.inference import generate_response, generate_stream_response
+from api.config import get_settings
+from api.services import cache as query_cache
+from api.services.inference.inference import (
+    generate_response,
+    generate_stream_response,
+    has_citation_markers,
+)
 from api.services.rag.context_processing import reorder_lost_in_the_middle
 from api.services.rag.embeddings import embed_texts
 from api.services.rag.graph.router import detect_graph_hops
@@ -29,6 +35,27 @@ router = APIRouter(tags=["query"])
 log = logging.getLogger(__name__)
 
 
+def _confidence_from_scores(contexts: list[dict[str, Any]]) -> str:
+    """Map retrieval scores to a confidence band.
+
+    Dense cosine similarity (~0.3-1.0) and hybrid RRF-fused scores (<0.05)
+    live on different scales, so each uses its own thresholds.
+    """
+    if any(c.get("match_source") == "dense" for c in contexts):
+        top = max((c.get("score") or 0.0) for c in contexts)
+        if top < 0.55:
+            return "low"
+        if top < 0.7:
+            return "medium"
+        return "high"
+    top = max(c.get("score", 0.0) for c in contexts)
+    if top < 0.012:
+        return "low"
+    if top < 0.020:
+        return "medium"
+    return "high"
+
+
 class QueryRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=8000)
     collection_id: str | None = None
@@ -46,7 +73,7 @@ class QueryRequest(BaseModel):
         default=3,
         ge=1,
         le=5,
-        description="Cognitive depth level (1-2: direct concept summaries, 3-4: scoped hybrid 1-hop, 5: deep 2-hop graph + rerank).",
+        description="Cognitive depth level (1-2: direct concept summaries, 3-4: dense-first hybrid, 5: deep retrieval + forced rerank; graph hops only on detected intent or manual override).",
     )
     save_to_wiki: bool = Field(
         default=False,
@@ -64,6 +91,30 @@ class QueryResponse(BaseModel):
 
 @router.post("/query", response_model=QueryResponse)
 async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = Depends(verify_api_key)) -> QueryResponse:
+    settings = get_settings()
+    model = settings.llm_model
+    # save_to_wiki has a side effect, so it never reads or populates the cache.
+    use_cache = not req.bypass_cache and not req.save_to_wiki
+    ckey = query_cache.cache_key(
+        _api_key.id, req.query, req.collection_id, req.depth, req.temperature,
+        req.rerank, req.use_trusted_corpus, req.graph_hops, model,
+    )
+    if settings.quota_enabled:
+        query_cache.check_quota(_api_key.id, _api_key.is_pro, query_cache.count_tokens(req.query, model))
+    if use_cache:
+        hit = query_cache.get_cached(ckey)
+        if hit is not None:
+            try:
+                cached_resp = QueryResponse(**hit)
+            except Exception as exc:
+                log.warning("Cached payload invalid, treating as miss: %s", exc)
+                cached_resp = None
+            if cached_resp is not None:
+                if settings.quota_enabled:
+                    query_cache.consume_quota(_api_key.id, query_cache.count_tokens(req.query, model))
+                cached_resp.cached = True
+                return cached_resp
+
     contexts, ordered_contexts, response_metadata, collection_filter, confidence = await _retrieve(req, _api_key)
 
     if confidence == "insufficient":
@@ -89,7 +140,18 @@ async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = De
             log.warning("save_to_wiki failed: %s", exc)
 
     citations = [{"source": row.get("source_url") or str(row.get("document_id") or "unknown")} for row in contexts]
-    return QueryResponse(answer=answer, contexts=contexts, citations=citations, metadata=response_metadata)
+    response_metadata["citations_enforced"] = (
+        not contexts or confidence == "insufficient" or has_citation_markers(answer)
+    )
+    resp = QueryResponse(answer=answer, contexts=contexts, citations=citations, metadata=response_metadata)
+    if settings.quota_enabled:
+        query_cache.consume_quota(
+            _api_key.id,
+            query_cache.count_tokens(req.query, model) + query_cache.count_tokens(answer, model),
+        )
+    if use_cache:
+        query_cache.put_cached(ckey, resp.model_dump())
+    return resp
 
 
 async def _retrieve(
@@ -101,16 +163,15 @@ async def _retrieve(
     except ValueError as exc:
         raise HTTPException(400, "collection_id must be a UUID") from exc
 
-    # Determine graph hops and mode based on cognitive depth and request params
+    # Determine graph hops: explicit override wins; depths 1-2 never traverse;
+    # otherwise follow the intent router. Graph expansion is off by default and
+    # only engages on detected lineage/dependency intent or manual override.
     if req.graph_hops is not None:
         effective_hops = req.graph_hops
         graph_mode = "manual"
     elif req.depth in (1, 2):
         effective_hops = 0
         graph_mode = "concept_direct"
-    elif req.depth == 5:
-        effective_hops = 2
-        graph_mode = "auto"
     else:
         effective_hops = detect_graph_hops(req.query)
         graph_mode = "auto"
@@ -183,48 +244,87 @@ async def _retrieve(
                     for c in vault_matches
                 ]
 
-    # Cognitive Depth 3-5 or fallback when Depths 1-2 found no concept notes
+    # Cognitive Depth 3-5 or fallback when Depths 1-2 found no concept notes.
+    # Dense-first: a strong dense hit is used directly; the hybrid (dense +
+    # lexical RRF) functions serve as the backstop when dense coverage is weak.
+    retrieval_mode = "concept" if contexts else "dense"
     if not contexts:
-        params: dict[str, Any] = {
-            "query_text": req.query,
-            "query_embedding": (await embed_texts([req.query]))[0],
+        settings = get_settings()
+        query_embedding = (await embed_texts([req.query]))[0]
+        base_params: dict[str, Any] = {
             "collection_filter": collection_filter,
             "api_key_filter": UUID(_api_key.id),
         }
-        if effective_hops > 0:
-            params["graph_hops"] = effective_hops
-            rpc_fn = "hybrid_search_trusted_with_graph_v5" if req.use_trusted_corpus else "hybrid_search_with_graph_v5"
+        dense_contexts: list[dict[str, Any]] = []
+        if effective_hops == 0:
+            try:
+                dense_contexts = await execute_rpc(
+                    "dense_search_v5", {"query_embedding": query_embedding, **base_params}
+                )
+                for row in dense_contexts:
+                    row["match_source"] = "dense"
+            except Exception as exc:
+                log.warning("Dense search failed, falling back to hybrid: %s", exc)
+                dense_contexts = []
+
+        dense_top = max((c.get("score", 0.0) or 0.0) for c in dense_contexts) if dense_contexts else 0.0
+        if len(dense_contexts) >= settings.dense_hit_min_results and dense_top >= settings.dense_hit_min_similarity:
+            contexts = dense_contexts[:10]
+            retrieval_mode = "dense"
         else:
-            rpc_fn = "hybrid_search_trusted_v5" if req.use_trusted_corpus else "hybrid_search_v5"
-
-        try:
-            raw_contexts = await execute_rpc(rpc_fn, params)
-            if req.depth in (1, 2):
-                contexts = raw_contexts[:(1 if req.depth == 1 else 2)]
-            else:
-                contexts = raw_contexts
-        except Exception:
+            retrieval_mode = "hybrid"
+            params: dict[str, Any] = {
+                "query_text": req.query,
+                "query_embedding": query_embedding,
+                **base_params,
+            }
             if effective_hops > 0:
-                fallback_params = {k: v for k, v in params.items() if k != "graph_hops"}
-                fallback_fn = "hybrid_search_trusted_v5" if req.use_trusted_corpus else "hybrid_search_v5"
-                try:
-                    contexts = await execute_rpc(fallback_fn, fallback_params)
-                except Exception as exc:
-                    raise HTTPException(503, "PostgreSQL retrieval is unavailable") from exc
+                params["graph_hops"] = effective_hops
+                rpc_fn = "hybrid_search_trusted_with_graph_v5" if req.use_trusted_corpus else "hybrid_search_with_graph_v5"
             else:
-                raise HTTPException(503, "PostgreSQL retrieval is unavailable")
+                rpc_fn = "hybrid_search_trusted_v5" if req.use_trusted_corpus else "hybrid_search_v5"
 
-    # Reranking: Depths 1-2 bypass reranking for sub-200ms latency.
-    # Depth 5 forces cross-encoder rerank; Depth 3-4 respects req.rerank.
-    should_rerank = (req.depth == 5) or (req.rerank and req.depth >= 3)
+            try:
+                raw_contexts = await execute_rpc(rpc_fn, params)
+                if req.depth in (1, 2):
+                    contexts = raw_contexts[:(1 if req.depth == 1 else 2)]
+                else:
+                    contexts = raw_contexts
+            except Exception:
+                if effective_hops > 0:
+                    fallback_params = {k: v for k, v in params.items() if k != "graph_hops"}
+                    fallback_fn = "hybrid_search_trusted_v5" if req.use_trusted_corpus else "hybrid_search_v5"
+                    try:
+                        contexts = await execute_rpc(fallback_fn, fallback_params)
+                    except Exception as exc:
+                        raise HTTPException(503, "PostgreSQL retrieval is unavailable") from exc
+                else:
+                    raise HTTPException(503, "PostgreSQL retrieval is unavailable")
+
+    # Reranking: depths 1-2 skip for sub-200ms latency; depth 5 forces it.
+    # At depths 3-4 the cross-encoder runs as a rescue for marginal hits, but
+    # is skipped on clear dense matches (cosine similarity at/above the
+    # threshold) where reordering adds latency without measurable gain.
+    def _clear_dense_hit(rows: list[dict[str, Any]]) -> bool:
+        threshold = get_settings().rerank_skip_similarity
+        return any(
+            (row.get("match_source") == "dense") and ((row.get("score") or 0.0) >= threshold)
+            for row in rows
+        )
+
+    rerank_applied = False
+    should_rerank = (req.depth == 5) or (req.rerank and req.depth >= 3 and not _clear_dense_hit(contexts))
     if should_rerank and contexts:
         try:
             top_n = 7 if req.depth == 5 else 5
             contexts = await get_reranker_service().rerank(req.query, contexts, top_n=top_n)
+            rerank_applied = True
         except Exception as exc:
             log.warning("Rerank failed, using retrieval order: %s", exc)
 
-    # Evaluate retrieval confidence (CRAG - Corrective RAG gating)
+    # Evaluate retrieval confidence (CRAG - Corrective RAG gating).
+    # Score scales differ by source: cosine similarity (~0.3-1.0) for dense
+    # hits versus small RRF-fused scores for hybrid/graph retrieval.
     confidence = "high"
     if not contexts:
         confidence = "insufficient"
@@ -240,11 +340,7 @@ async def _retrieve(
                 elif max_score < 0.0:
                     confidence = "medium"
             elif any("score" in c for c in contexts):
-                max_score = max(c.get("score", 0.0) for c in contexts)
-                if max_score < 0.012:
-                    confidence = "low"
-                elif max_score < 0.020:
-                    confidence = "medium"
+                confidence = _confidence_from_scores(contexts)
     elif any("rerank_score" in c for c in contexts):
         max_score = max(c.get("rerank_score", -999.0) for c in contexts)
         if max_score < -2.0:
@@ -252,11 +348,7 @@ async def _retrieve(
         elif max_score < 0.0:
             confidence = "medium"
     elif any("score" in c for c in contexts):
-        max_score = max(c.get("score", 0.0) for c in contexts)
-        if max_score < 0.012:
-            confidence = "low"
-        elif max_score < 0.020:
-            confidence = "medium"
+        confidence = _confidence_from_scores(contexts)
 
     # Apply Lost-in-the-Middle U-shaped ordering before prompt synthesis
     ordered_contexts = reorder_lost_in_the_middle(contexts)
@@ -269,12 +361,56 @@ async def _retrieve(
         "graph_mode": graph_mode,
         "confidence": confidence,
         "prompt_ordering": "lost_in_the_middle",
+        "retrieval_mode": retrieval_mode,
+        "rerank_applied": rerank_applied,
     }
     return contexts, ordered_contexts, response_metadata, collection_filter, confidence
 
 
 @router.post("/query/stream")
 async def query_stream(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = Depends(verify_api_key)) -> StreamingResponse:
+    settings = get_settings()
+    model = settings.llm_model
+    use_cache = not req.bypass_cache and not req.save_to_wiki
+    ckey = query_cache.cache_key(
+        _api_key.id, req.query, req.collection_id, req.depth, req.temperature,
+        req.rerank, req.use_trusted_corpus, req.graph_hops, model,
+    )
+    if settings.quota_enabled:
+        query_cache.check_quota(_api_key.id, _api_key.is_pro, query_cache.count_tokens(req.query, model))
+    replay: QueryResponse | None = None
+    if use_cache:
+        hit = query_cache.get_cached(ckey)
+        if hit is not None:
+            try:
+                replay = QueryResponse(**hit)
+                replay.cached = True
+            except Exception as exc:
+                log.warning("Cached payload invalid, treating as miss: %s", exc)
+                replay = None
+        if replay is not None:
+            if settings.quota_enabled:
+                query_cache.consume_quota(_api_key.id, query_cache.count_tokens(req.query, model))
+
+            async def replay_events():
+                yield ": stream start\n\n"
+                yield f"data: {json.dumps({'delta': replay.answer}, default=str)}\n\n"
+                final = {
+                    "answer": replay.answer,
+                    "contexts": replay.contexts,
+                    "citations": replay.citations,
+                    "cached": True,
+                    "metadata": replay.metadata,
+                }
+                yield f"data: {json.dumps(final, default=str)}\n\n"
+                yield "data: [DONE]\n\n"
+
+            return StreamingResponse(
+                replay_events(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
     contexts, ordered_contexts, response_metadata, collection_filter, confidence = await _retrieve(req, _api_key)
     citations = [{"source": row.get("source_url") or str(row.get("document_id") or "unknown")} for row in contexts]
 
@@ -283,6 +419,7 @@ async def query_stream(req: QueryRequest, request: Request, _api_key: ApiKeyReco
         yield ": stream start\n\n"
         if confidence == "insufficient":
             answer = "I could not find sufficient matching documentation in your collection to answer this query reliably."
+            response_metadata["citations_enforced"] = True
             yield f"data: {json.dumps({'delta': answer}, default=str)}\n\n"
             final = {"answer": answer, "contexts": contexts, "citations": citations, "metadata": response_metadata}
             yield f"data: {json.dumps(final, default=str)}\n\n"
@@ -294,6 +431,11 @@ async def query_stream(req: QueryRequest, request: Request, _api_key: ApiKeyReco
                 if await request.is_disconnected():
                     break
             answer = "".join(parts)
+            # No retry on the streaming path (it would double latency and repeat
+            # deltas); enforcement retry lives on POST /api/query. Flag it here.
+            response_metadata["citations_enforced"] = (
+                not contexts or confidence == "insufficient" or has_citation_markers(answer)
+            )
             if req.save_to_wiki and answer:
                 try:
                     ref_concepts = [c.get("concept_name") for c in contexts if c.get("concept_name")]
@@ -307,8 +449,14 @@ async def query_stream(req: QueryRequest, request: Request, _api_key: ApiKeyReco
                     log.warning("save_to_wiki failed: %s", exc)
             final = {"answer": answer, "contexts": contexts, "citations": citations, "metadata": response_metadata}
             yield f"data: {json.dumps(final, default=str)}\n\n"
+        if settings.quota_enabled:
+            query_cache.consume_quota(
+                _api_key.id,
+                query_cache.count_tokens(req.query, model) + query_cache.count_tokens(answer, model),
+            )
+        if use_cache:
+            query_cache.put_cached(ckey, final)
         yield "data: [DONE]\n\n"
-
     return StreamingResponse(
         events(),
         media_type="text/event-stream",
