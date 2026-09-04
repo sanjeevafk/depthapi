@@ -21,7 +21,8 @@ Design invariants (all enforced by these interfaces):
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 from api.services.rag.pipeline.models import (
     Chunk,
@@ -29,7 +30,6 @@ from api.services.rag.pipeline.models import (
     ParsedDocument,
     SourceFingerprint,
 )
-
 
 # ─── Source ───────────────────────────────────────────────────────────────────
 

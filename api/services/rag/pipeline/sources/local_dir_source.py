@@ -15,9 +15,10 @@ from __future__ import annotations
 import hashlib
 import logging
 import mimetypes
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from api.services.rag.pipeline.interfaces import BaseSource
 from api.services.rag.pipeline.models import Document, SourceFingerprint

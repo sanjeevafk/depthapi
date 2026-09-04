@@ -1,7 +1,6 @@
 """Unit tests for Lost-in-the-Middle context ordering."""
 from __future__ import annotations
 
-import pytest
 from api.services.rag.context_processing import reorder_lost_in_the_middle
 
 

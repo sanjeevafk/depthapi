@@ -18,7 +18,7 @@ The current PostgreSQL development database is empty until the legacy corpus is
 explicitly migrated. The previous local database volume and corpus backups
 must be retained until that migration is validated.
 
-The test suite currently passes 141 tests. Run the validation script to check
+The test suite currently passes 190 tests across unit, integration, and security checks. Run the validation script to check
 the local database and execute the suite:
 
 ```bash

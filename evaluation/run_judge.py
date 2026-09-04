@@ -1,15 +1,21 @@
 import asyncio
 import os
-from typing import Dict, Any, List
+from typing import Any
 
-from eval_utils import EVALUATOR_MODEL, MAX_RETRIES, call_evaluator_model, log_eval_failure, parse_json_with_repair
+from eval_utils import (
+    EVALUATOR_MODEL,
+    MAX_RETRIES,
+    call_evaluator_model,
+    log_eval_failure,
+    parse_json_with_repair,
+)
 
 
 class CustomLLMJudge:
     def __init__(self):
         self.model = os.environ.get("EVALUATOR_MODEL", EVALUATOR_MODEL)
 
-    async def evaluate(self, query: str, answer: str, context: List[str], prompt_spec: Dict[str, Any] = None, sample_id: str = None) -> Dict[str, Any]:
+    async def evaluate(self, query: str, answer: str, context: list[str], prompt_spec: dict[str, Any] = None, sample_id: str = None) -> dict[str, Any]:
         normalized_context = []
         for c in context or []:
             if isinstance(c, str):

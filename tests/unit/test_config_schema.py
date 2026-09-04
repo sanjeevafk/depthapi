@@ -13,11 +13,7 @@ import pytest
 
 from api.services.rag.pipeline.config_schema import (
     DatasetConfig,
-    ErrorPolicyConfig,
-    RoutingRule,
-    SourceConfig,
 )
-
 
 VALID_YAML = textwrap.dedent("""\
     name: "System Design Primer"

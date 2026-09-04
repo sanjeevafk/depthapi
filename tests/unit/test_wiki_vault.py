@@ -5,14 +5,13 @@ from __future__ import annotations
 
 import shutil
 import tempfile
-from pathlib import Path
-from unittest.mock import AsyncMock, patch
+
 import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app
 from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
-from api.services.wiki.vault_manager import WikiVaultManager, get_vault_manager
+from api.services.wiki.vault_manager import WikiVaultManager
 
 
 @pytest.fixture

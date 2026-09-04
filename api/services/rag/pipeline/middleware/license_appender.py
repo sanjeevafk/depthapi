@@ -44,5 +44,5 @@ class LicenseAppender(BaseMiddleware):
             new_content=doc.markdown_content,
             config=self._config,
         )
-        
+
         return doc_updated.model_copy(update={"metadata": new_metadata})

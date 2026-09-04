@@ -20,17 +20,15 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
-from typing import Optional
 
 import structlog
-
 
 # ─── Public API ───────────────────────────────────────────────────────────────
 
 
 def configure_logging(
     log_level: str = "INFO",
-    log_file: Optional[Path] = None,
+    log_file: Path | None = None,
     json_output: bool = True,
 ) -> None:
     """

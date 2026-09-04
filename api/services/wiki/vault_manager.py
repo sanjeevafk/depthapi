@@ -5,11 +5,11 @@ maintains index.md and append-only log.md, and integrates with the Rust vault li
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import os
-from pathlib import Path
 import re
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 try:
@@ -84,7 +84,7 @@ class WikiVaultManager:
             if src_name and tgt_name:
                 out_edges.setdefault(src_name.lower(), []).append((tgt_name, rel_type))
 
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         exported_files: list[str] = []
         base_dir = os.path.abspath(str(self.concepts_dir))
 
@@ -186,7 +186,7 @@ class WikiVaultManager:
         Creates/updates synthesis note and records in log.md.
         """
         self._ensure_dirs()
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         query_hash = hashlib.sha256(query.strip().encode("utf-8")).hexdigest()[:16]
         slug = f"synthesis_{query_hash}"
 

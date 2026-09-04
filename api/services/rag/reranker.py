@@ -5,7 +5,8 @@ Uses Cross-Encoders to re-sort hybrid search results for higher precision.
 import asyncio
 import functools
 import os
-from typing import Any, Dict, List
+from typing import Any
+
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -29,8 +30,8 @@ class RerankerService:
         return self.model
 
     async def rerank(
-        self, query: str, candidates: List[Dict[str, Any]], top_n: int = 10
-    ) -> List[Dict[str, Any]]:
+        self, query: str, candidates: list[dict[str, Any]], top_n: int = 10
+    ) -> list[dict[str, Any]]:
         """
         Re-scores and re-sorts candidates based on the query.
         Falls back gracefully to original candidate order if the model is unavailable.

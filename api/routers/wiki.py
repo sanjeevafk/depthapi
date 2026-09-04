@@ -5,7 +5,8 @@ from __future__ import annotations
 
 from typing import Any
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query
+
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from api.adapters.pg_adapter import get_pool

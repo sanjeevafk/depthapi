@@ -1,8 +1,11 @@
 """API-key authentication against local PostgreSQL."""
-from dataclasses import dataclass
 import hashlib
+from dataclasses import dataclass
+
 from fastapi import Header, HTTPException
+
 from api.adapters.pg_adapter import fetch_one
+
 
 @dataclass(frozen=True)
 class ApiKeyRecord:

@@ -1,20 +1,18 @@
+import argparse
 import asyncio
 import hashlib
 import json
 import random
-import time
 import re
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from analyze_results import analyze_and_report
 from depthapi_client import DepthAPIClient
 from generate_benchmark import generate_benchmark_dataset
 from run_deepeval import evaluate_deepeval
 from run_judge import CustomLLMJudge
-
-import argparse
-
 
 RESULTS_DIR = Path("results")
 RAW_DIR = RESULTS_DIR / "raw"
@@ -50,7 +48,7 @@ def ensure_dirs():
         p.mkdir(parents=True, exist_ok=True)
 
 
-def stable_hash(payload: Dict[str, Any]) -> str:
+def stable_hash(payload: dict[str, Any]) -> str:
     text = json.dumps(
         payload,
         sort_keys=True,
@@ -60,7 +58,7 @@ def stable_hash(payload: Dict[str, Any]) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def append_jsonl(path: Path, item: Dict[str, Any]):
+def append_jsonl(path: Path, item: dict[str, Any]):
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(item, ensure_ascii=False) + "\n")
 
@@ -165,7 +163,7 @@ def log_phase_event(
     sample_id: str,
     system: str,
     phase: str,
-    payload: Dict[str, Any],
+    payload: dict[str, Any],
 ):
     append_jsonl(
         PHASE_EVENTS_PATH,
@@ -197,7 +195,7 @@ def is_retryable(error: Exception) -> bool:
     return any(term in t for term in retryable_terms)
 
 
-def validate_generation_row(row: Dict[str, Any]) -> bool:
+def validate_generation_row(row: dict[str, Any]) -> bool:
     answer = (row.get("answer") or "").strip()
 
     contexts = row.get("contexts") or []
@@ -256,7 +254,7 @@ def sanitize_query(raw_query: str, max_len: int = 200) -> str:
 
 
 async def retry_async(fn, *args, timeout_s=45.0, **kwargs):
-    last_exc: Optional[Exception] = None
+    last_exc: Exception | None = None
 
     for attempt in range(MAX_RETRIES + 1):
         try:
@@ -284,7 +282,7 @@ async def retry_async(fn, *args, timeout_s=45.0, **kwargs):
 
 
 async def generate_one(
-    item: Dict[str, Any],
+    item: dict[str, Any],
     system: str,
     client: Any,
 ):
@@ -327,13 +325,13 @@ async def generate_one(
 
 
 async def phase_generation(
-    dataset: List[Dict[str, Any]],
+    dataset: list[dict[str, Any]],
     compare_baseline: bool,
     max_concurrency: int,
     timeout_s: float,
     resume: bool,
     skip_existing: bool,
-    preflight_rows: Optional[Dict[str, Dict[str, Any]]] = None,
+    preflight_rows: dict[str, dict[str, Any]] | None = None,
 ):
     rows = {}
 
@@ -487,8 +485,8 @@ async def phase_generation(
 
 
 async def phase_evaluation(
-    rows: Dict[str, Dict[str, Any]],
-    evals: List[str],
+    rows: dict[str, dict[str, Any]],
+    evals: list[str],
     max_concurrency: int,
     timeout_s: float,
     skip_existing: bool,
@@ -714,7 +712,7 @@ def phase_reporting(results):
 
 async def run_benchmark(
     size: int,
-    evals: List[str],
+    evals: list[str],
     compare_baseline: bool,
     max_concurrency: int,
     timeout_s: float,
@@ -736,11 +734,11 @@ async def run_benchmark(
     # Strict preflight to reject weak/invalid rows before spending eval quota.
     async with DepthAPIClient() as preflight:
         filtered = []
-        preflight_rows: Dict[str, Dict[str, Any]] = {}
+        preflight_rows: dict[str, dict[str, Any]] = {}
         seen_ids = {str(item.get("id")) for item in dataset}
         dataset_cursor = len(dataset)
 
-        async def try_admit(item: Dict[str, Any]) -> bool:
+        async def try_admit(item: dict[str, Any]) -> bool:
             raw_query = str(item["query"])
             query = sanitize_query(raw_query, max_len=200)
             try:

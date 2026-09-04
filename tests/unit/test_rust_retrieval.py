@@ -1,15 +1,8 @@
 """Unit tests for compiled Rust retrieval engine bindings in depth_engine."""
 from __future__ import annotations
 
-import pytest
 import depth_engine
-from api.services.rag.context_processing import (
-    compress_contexts,
-    normalize_context_text,
-    reorder_lost_in_the_middle,
-)
-from api.services.rag.graph.concept_extractor import extract_concepts_and_edges
-from api.services.rag.graph.router import detect_graph_hops
+import pytest
 
 
 def test_reorder_lost_in_the_middle_parity():

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from urllib.parse import urlparse, urlunparse, urlencode, parse_qs
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from api.services.rag.pipeline.interfaces import BaseMiddleware
 from api.services.rag.pipeline.models import ParsedDocument

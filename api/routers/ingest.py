@@ -14,6 +14,10 @@ from api.adapters.pg_adapter import get_pool
 from api.services.rag.embeddings import embed_texts
 from api.services.rag.graph.concept_extractor import extract_concepts_and_edges
 from api.services.rag.pipeline.chunkers.semantic_chunker import SemanticChunker
+from api.services.rag.pipeline.depth_engine_adapter import (
+    has_depth_engine,
+    run_depth_engine_pipeline,
+)
 from api.services.rag.pipeline.middleware.toc_stripper import TocStripper
 from api.services.rag.pipeline.middleware.url_normalizer import UrlNormalizer
 from api.services.rag.pipeline.models import (
@@ -21,10 +25,6 @@ from api.services.rag.pipeline.models import (
     Chunk,
     Document,
     QualityScoreInputs,
-)
-from api.services.rag.pipeline.depth_engine_adapter import (
-    has_depth_engine,
-    run_depth_engine_pipeline,
 )
 from api.services.rag.pipeline.parsers.markdown_parser import MarkdownParser
 from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key

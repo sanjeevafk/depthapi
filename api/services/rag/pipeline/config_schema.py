@@ -16,7 +16,6 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field, model_validator
 
-
 # ─── Sub-schemas ──────────────────────────────────────────────────────────────
 
 class SourceConfig(BaseModel):
@@ -28,7 +27,7 @@ class SourceConfig(BaseModel):
     model_config = {"frozen": True, "extra": "forbid"}
 
     @model_validator(mode="after")
-    def validate_source_type(self) -> "SourceConfig":
+    def validate_source_type(self) -> SourceConfig:
         allowed_sources = {
             "LocalDirSource",
             "GitRepoSource",
@@ -76,7 +75,7 @@ class RoutingRule(BaseModel):
     model_config = {"frozen": True, "extra": "forbid"}
 
     @model_validator(mode="after")
-    def validate_mime_type(self) -> "RoutingRule":
+    def validate_mime_type(self) -> RoutingRule:
         if "/" not in self.mime_type:
             raise ValueError(f"Invalid MIME type: '{self.mime_type}' (must contain '/')")
         return self
@@ -91,7 +90,7 @@ class SinkConfig(BaseModel):
     model_config = {"frozen": True, "extra": "forbid"}
 
     @model_validator(mode="after")
-    def validate_sink_type(self) -> "SinkConfig":
+    def validate_sink_type(self) -> SinkConfig:
         allowed_sinks = {"PostgresVectorSink", "LocalJsonSink"}
         if self.type not in allowed_sinks:
             raise ValueError(
@@ -113,7 +112,7 @@ class ErrorPolicyConfig(BaseModel):
     model_config = {"frozen": True, "extra": "forbid"}
 
     @model_validator(mode="after")
-    def validate_severity(self) -> "ErrorPolicyConfig":
+    def validate_severity(self) -> ErrorPolicyConfig:
         allowed = {"INFO", "WARN", "ERROR", "FATAL"}
         if self.severity not in allowed:
             raise ValueError(f"Invalid severity '{self.severity}'. Allowed: {allowed}")
@@ -154,13 +153,13 @@ class DatasetConfig(BaseModel):
     model_config = {"frozen": True, "extra": "forbid"}
 
     @model_validator(mode="after")
-    def validate_routing_not_empty(self) -> "DatasetConfig":
+    def validate_routing_not_empty(self) -> DatasetConfig:
         if not self.routing:
             raise ValueError("'routing' must contain at least one rule.")
         return self
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "DatasetConfig":
+    def from_yaml(cls, path: str | Path) -> DatasetConfig:
         """Load and validate a dataset config from a YAML file."""
         path = Path(path)
         if not path.exists():

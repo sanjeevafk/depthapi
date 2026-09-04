@@ -16,8 +16,6 @@ Run:
 from __future__ import annotations
 
 import json
-import shutil
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -25,7 +23,6 @@ import pytest
 from api.services.rag.pipeline.config_schema import DatasetConfig
 from api.services.rag.pipeline.models import Chunk, IngestionResult
 from api.services.rag.pipeline.orchestrator import IngestionMode, PipelineOrchestrator
-
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
 

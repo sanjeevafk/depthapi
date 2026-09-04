@@ -87,7 +87,7 @@ def run_depth_engine_pipeline(
     p_doc_raw = native_res["parsed_doc"]
     chunks_raw = native_res["chunks"]
 
-    parsed_doc = ParsedDocument(
+    _parsed_doc = ParsedDocument(
         doc_id=p_doc_raw["doc_id"],
         source_uri=p_doc_raw["source_uri"],
         markdown_content=p_doc_raw["markdown_content"],

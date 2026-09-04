@@ -1,10 +1,11 @@
-import asyncio
+from typing import Any
+
 import httpx
-from typing import Dict, Any, Optional
+
 
 class DepthAPIClient:
     """Async client for interacting with DepthAPI."""
-    
+
     def __init__(self, base_url: str = "http://127.0.0.1:8000"):
         import os
         base_url = os.getenv("DEPTHAPI_BASE_URL", base_url)
@@ -27,7 +28,7 @@ class DepthAPIClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.close()
 
-    async def query(self, query: str, prompt_spec: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def query(self, query: str, prompt_spec: dict[str, Any] | None = None) -> dict[str, Any]:
         """
         Query DepthAPI with an optional PromptSpec.
         """
@@ -115,4 +116,4 @@ class DepthAPIClient:
                 detail = f": {response.json()}"
             except Exception:
                 pass
-            return {"error": f"{str(e)}{detail}", "answer": "Error fetching from API", "contexts": [], "citations": [], "metadata": {}}
+            return {"error": f"{e!s}{detail}", "answer": "Error fetching from API", "contexts": [], "citations": [], "metadata": {}}

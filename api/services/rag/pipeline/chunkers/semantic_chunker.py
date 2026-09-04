@@ -12,10 +12,10 @@ from typing import Any
 
 from api.services.rag.pipeline.interfaces import BaseChunker
 from api.services.rag.pipeline.models import (
+    SCHEMA_VERSION,
     Chunk,
     ParsedDocument,
     QualityScoreInputs,
-    SCHEMA_VERSION,
 )
 
 log = logging.getLogger(__name__)

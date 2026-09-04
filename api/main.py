@@ -1,6 +1,7 @@
 """DepthAPI application."""
-from contextlib import asynccontextmanager
 import os
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -8,9 +9,11 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
-from api.adapters.pg_adapter import init_pool, close_pool
+
+from api.adapters.pg_adapter import close_pool, init_pool
 from api.config import get_settings
-from api.routers import query, ingest, wiki
+from api.routers import ingest, query, wiki
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -18,7 +21,7 @@ async def lifespan(_app: FastAPI):
     yield
     await close_pool()
 
-app = FastAPI(title="DepthAPI", version="3.0.0", lifespan=lifespan)
+app = FastAPI(title="DepthAPI", version="0.1.0", lifespan=lifespan)
 limiter = Limiter(key_func=get_remote_address, default_limits=["120/minute"])
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, lambda _request, _exc: JSONResponse(status_code=429, content={"error": "rate limit exceeded"}))

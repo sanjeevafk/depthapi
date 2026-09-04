@@ -1,9 +1,6 @@
 """Unit tests for deterministic concept extraction and graph resolution."""
 from api.services.rag.graph.concept_extractor import (
     extract_concepts_and_edges,
-    Concept,
-    ConceptEdge,
-    ChunkConceptLink,
 )
 
 

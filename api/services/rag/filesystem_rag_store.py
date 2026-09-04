@@ -3,14 +3,14 @@ filesystem_rag_store.py — High-performance local RAG using FAISS + BM25.
 Designed for the DepthAPI Developer Vertical MVP.
 """
 
+import hashlib
 import json
 import os
 import pickle
-import hashlib
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 import structlog
@@ -39,29 +39,29 @@ def _load_faiss() -> Any:
 @dataclass
 class RetrievalResult:
     chunk_id: str
-    document_id: Optional[str]
+    document_id: str | None
     content: str
     source_name: str
-    source_url: Optional[str]
+    source_url: str | None
     chunk_order: int
-    section_title: Optional[str]
+    section_title: str | None
     token_count: int
     rrf_score: float
     vector_similarity: float
     namespace: str
-    rerank_score: Optional[float] = None
-    rerank_delta: Optional[int] = None
-    metadata: Dict[str, Any] | None = None
+    rerank_score: float | None = None
+    rerank_delta: int | None = None
+    metadata: dict[str, Any] | None = None
 
 class FilesystemRAGStore:
     def __init__(self, base_path: str = "data/rag"):
         self.base_path = Path(base_path)
         self.base_path.mkdir(parents=True, exist_ok=True)
         # Cache for loaded namespaces: {namespace: {"index": faiss_index, "bm25": bm25_obj, "chunks": list}}
-        self._cache: Dict[str, Dict[str, Any]] = {}
+        self._cache: dict[str, dict[str, Any]] = {}
         self.last_retrieval_timings: dict[str, float | None] = {}
 
-    def _get_ns_paths(self, namespace: str) -> Dict[str, Path]:
+    def _get_ns_paths(self, namespace: str) -> dict[str, Path]:
         ns_dir = self.base_path / namespace
         ns_dir.mkdir(parents=True, exist_ok=True)
         return {
@@ -76,16 +76,16 @@ class FilesystemRAGStore:
     async def ingest(
         self,
         namespace: str,
-        chunks: List[str],
-        embeddings: List[List[float]],
-        metadata: List[Dict[str, Any]],
+        chunks: list[str],
+        embeddings: list[list[float]],
+        metadata: list[dict[str, Any]],
     ) -> int:
         """
         Ingest chunks and embeddings into a namespace.
         Rebuilds BM25 and updates FAISS index.
         """
         paths = self._get_ns_paths(namespace)
-        
+
         with FileLock(str(paths["lock"])):
             # 1. Load existing chunks
             existing_chunks = []
@@ -118,9 +118,9 @@ class FilesystemRAGStore:
                         "chunking_version": meta.get("chunking_version", "v3-semantic-local"),
                     },
                 })
-            
+
             all_chunks = existing_chunks + new_chunks_data
-            
+
             # 3. Update FAISS Index
             # Use METRIC_INNER_PRODUCT so that dot product on L2-normalised vectors
             # equals cosine similarity exactly (values in [-1, 1]).
@@ -136,20 +136,20 @@ class FilesystemRAGStore:
             vecs = np.array(embeddings, dtype="float32")
             faiss.normalize_L2(vecs)
             index.add(vecs)
-            
+
             # 4. Rebuild BM25 (always from scratch for consistency)
             tokenized_corpus = [c["content"].lower().split() for c in all_chunks]
             bm25 = BM25Okapi(tokenized_corpus)
-            
+
             # 5. Save all
             with open(paths["chunks"], "w", encoding="utf-8") as f:
                 json.dump(all_chunks, f, indent=2)
-            
+
             faiss.write_index(index, str(paths["vectors"]))
-            
+
             with open(paths["bm25"], "wb") as f:
                 pickle.dump(bm25, f)
-            
+
             # Update manifest
             manifest = {
                 "total_chunks": len(all_chunks),
@@ -162,7 +162,7 @@ class FilesystemRAGStore:
             # Invalidate cache
             if namespace in self._cache:
                 del self._cache[namespace]
-            
+
             return len(all_chunks)
 
     def load_namespace(self, namespace: str):
@@ -179,16 +179,16 @@ class FilesystemRAGStore:
             return
 
         logger.info("loading_rag_namespace", namespace=namespace)
-        
+
         with open(paths["chunks"], "r", encoding="utf-8") as f:
             chunks = json.load(f)
-        
+
         faiss = _load_faiss()
         index = faiss.read_index(str(paths["vectors"]))
-        
+
         with open(paths["bm25"], "rb") as f:
             bm25 = pickle.load(f)
-            
+
         self._cache[namespace] = {
             "chunks": chunks,
             "index": index,
@@ -270,34 +270,34 @@ class FilesystemRAGStore:
 
     async def retrieve(
         self,
-        query_embedding: List[float],
+        query_embedding: list[float],
         query_text: str,
-        namespaces: List[str],
+        namespaces: list[str],
         top_k: int = 5,
         min_similarity: float = 0.65,
-    ) -> List[RetrievalResult]:
+    ) -> list[RetrievalResult]:
         """Hybrid search across namespaces, then MMR and cross-encoder reranking."""
         retrieval_started = time.perf_counter()
-        all_results: List[RetrievalResult] = []
+        all_results: list[RetrievalResult] = []
         candidate_pool = max(top_k * 4, int(os.getenv("RAG_CANDIDATE_POOL", "20")))
-        
+
         for ns in namespaces:
             self.load_namespace(ns)
             if ns not in self._cache:
                 continue
-            
+
             data = self._cache[ns]
             chunks = data["chunks"]
             index = data["index"]
             bm25 = data["bm25"]
-            
+
             # 1. Vector Search (FAISS — METRIC_INNER_PRODUCT on L2-normalised vectors)
             # D values are cosine similarities in [-1, 1]; higher is more similar.
             faiss = _load_faiss()
             xq = np.array([query_embedding], dtype="float32")
             faiss.normalize_L2(xq)
 
-            D, I = index.search(xq, candidate_pool)
+            D, faiss_indices = index.search(xq, candidate_pool)
 
             # 2. Keyword Search (BM25)
             tokenized_query = query_text.lower().split()
@@ -308,14 +308,14 @@ class FilesystemRAGStore:
             scores_by_idx: dict[int, float] | None = None
             if _HAS_DEPTH_ENGINE:
                 try:
-                    dense_ids = [str(int(idx)) for idx in I[0] if idx != -1]
+                    dense_ids = [str(int(idx)) for idx in faiss_indices[0] if idx != -1]
                     lex_ids = [str(int(idx)) for idx in bm25_top_indices]
                     fused = depth_engine.fuse_rrf(dense_ids, lex_ids, 60.0)
                     scores_by_idx = {int(doc_id): score for doc_id, score in fused}
                 except Exception:
                     scores_by_idx = None
 
-            vector_ranks = {int(idx): rank for rank, idx in enumerate(I[0]) if idx != -1}
+            vector_ranks = {int(idx): rank for rank, idx in enumerate(faiss_indices[0]) if idx != -1}
             bm25_ranks = {int(idx): rank for rank, idx in enumerate(bm25_top_indices)}
 
             k = 60  # RRF constant
@@ -323,9 +323,9 @@ class FilesystemRAGStore:
 
             # Build a fast lookup from FAISS result arrays.
             faiss_idx_to_score: dict[int, float] = {
-                int(I[0][rank]): float(D[0][rank])
-                for rank in range(len(I[0]))
-                if I[0][rank] != -1
+                int(faiss_indices[0][rank]): float(D[0][rank])
+                for rank in range(len(faiss_indices[0]))
+                if faiss_indices[0][rank] != -1
             }
 
             ns_results = []
@@ -356,7 +356,7 @@ class FilesystemRAGStore:
                         namespace=ns,
                         metadata={**dict(chunk.get("metadata") or {}), "embedding": chunk.get("embedding")},
                     ))
-            
+
             all_results.extend(ns_results)
 
         # Final sort by RRF score, then diversify and rerank.

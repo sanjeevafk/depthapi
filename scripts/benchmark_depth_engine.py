@@ -7,13 +7,13 @@ and benchmarks end-to-end ingestion throughput and p50/p95 latency.
 from __future__ import annotations
 
 import io
-import os
 import time
 import zipfile
 from pathlib import Path
 from typing import Any
 
 import depth_engine
+
 from api.services.rag.pipeline.chunkers.semantic_chunker import SemanticChunker
 from api.services.rag.pipeline.models import Document
 from api.services.rag.pipeline.parsers.markdown_parser import MarkdownParser

@@ -20,9 +20,9 @@ Metric events can be extracted from log files:
 from __future__ import annotations
 
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Generator, Optional
 
 import structlog
 
@@ -50,18 +50,18 @@ class LatencyStats:
         return sum(self._samples)
 
     @property
-    def min_ms(self) -> Optional[float]:
+    def min_ms(self) -> float | None:
         return min(self._samples) if self._samples else None
 
     @property
-    def max_ms(self) -> Optional[float]:
+    def max_ms(self) -> float | None:
         return max(self._samples) if self._samples else None
 
     @property
-    def avg_ms(self) -> Optional[float]:
+    def avg_ms(self) -> float | None:
         return self.total_ms / self.count if self._samples else None
 
-    def percentile(self, p: float) -> Optional[float]:
+    def percentile(self, p: float) -> float | None:
         """Return the p-th percentile (0-100) from samples."""
         if not self._samples:
             return None

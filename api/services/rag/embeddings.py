@@ -5,7 +5,8 @@ import functools
 import hashlib
 import logging
 import math
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from api.config import get_settings
 

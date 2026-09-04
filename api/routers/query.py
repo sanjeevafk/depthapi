@@ -2,16 +2,18 @@
 import json
 from typing import Any
 from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+
 from api.adapters.pg_adapter import execute_rpc, get_pool
-from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
 from api.services.inference.inference import generate_response
-from api.services.rag.embeddings import embed_texts
-from api.services.rag.reranker import get_reranker_service
-from api.services.rag.graph.router import detect_graph_hops
 from api.services.rag.context_processing import reorder_lost_in_the_middle
+from api.services.rag.embeddings import embed_texts
+from api.services.rag.graph.router import detect_graph_hops
+from api.services.rag.reranker import get_reranker_service
+from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
 from api.services.wiki.vault_manager import get_vault_manager
 
 try:

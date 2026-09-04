@@ -20,7 +20,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
-
 # ─── Version constants ────────────────────────────────────────────────────────
 SCHEMA_VERSION = "1.0.0"
 
@@ -69,7 +68,7 @@ class Document(BaseModel):
         mime_type: str,
         source_last_modified: datetime | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> "Document":
+    ) -> Document:
         """Factory: auto-compute doc_id and content hash."""
         source_content_hash = hashlib.sha256(raw_content).hexdigest()
         doc_id = hashlib.sha256(source_uri.encode()).hexdigest()
@@ -123,7 +122,7 @@ class ParsedDocument(BaseModel):
         middleware_version: str,
         new_content: str,
         config: dict[str, Any] | None = None,
-    ) -> "ParsedDocument":
+    ) -> ParsedDocument:
         """
         Return a new ParsedDocument with the named middleware applied.
         Tracks lineage and recomputes config hash.
@@ -246,7 +245,7 @@ class Chunk(BaseModel):
         return hashlib.sha256(key.encode()).hexdigest()
 
     @model_validator(mode="after")
-    def compute_quality_score_from_inputs(self) -> "Chunk":
+    def compute_quality_score_from_inputs(self) -> Chunk:
         """If quality_inputs provided, recompute quality_score for consistency."""
         if self.quality_inputs is not None:
             computed = self.quality_inputs.compute_score()
