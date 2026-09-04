@@ -51,15 +51,17 @@ def reset_client() -> None:
     _client = None
 
 
-def cache_key(api_key_id: str, query: str, collection_id: str | None, depth: int,
+def cache_key(tenant_id: str, query: str, collection_id: str | None, depth: int,
               temperature: float, rerank: bool, use_trusted: bool,
               graph_hops: int | None, llm_model: str) -> str:
+    """Generate a deterministic Redis cache key scoped by tenant/API key ID."""
     material = "|".join([
-        f"v{CACHE_VERSION}", api_key_id, query.strip(),
+        f"v{CACHE_VERSION}", query.strip(),
         collection_id or "", str(depth), f"{temperature:.2f}",
         str(rerank), str(use_trusted), str(graph_hops), llm_model,
     ])
-    return "depthapi:q:" + hashlib.sha256(material.encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(material.encode("utf-8"), usedforsecurity=False).hexdigest()
+    return f"depthapi:q:{tenant_id}:{digest}"
 
 
 def get_cached(key: str) -> dict[str, Any] | None:
@@ -108,12 +110,12 @@ def count_tokens(text: str, model: str) -> int:
         return 0
 
 
-def _quota_redis_key(api_key_id: str) -> str:
+def _quota_redis_key(tenant_id: str) -> str:
     day = datetime.now(timezone.utc).strftime("%Y%m%d")
-    return f"depthapi:quota:{api_key_id}:{day}"
+    return f"depthapi:quota:{tenant_id}:{day}"
 
 
-def check_quota(api_key_id: str, is_pro: bool, estimated_tokens: int) -> None:
+def check_quota(tenant_id: str, is_pro: bool, estimated_tokens: int) -> None:
     """Raise 429 when the key would exceed its daily token budget. Fail-open."""
     limit = quota_limit(is_pro)
     if limit <= 0:
@@ -122,7 +124,7 @@ def check_quota(api_key_id: str, is_pro: bool, estimated_tokens: int) -> None:
     if client is None:
         return
     try:
-        used = int(client.get(_quota_redis_key(api_key_id)) or 0)
+        used = int(client.get(_quota_redis_key(tenant_id)) or 0)
     except Exception as exc:
         log.warning("Quota read failed, allowing request: %s", exc)
         return
@@ -130,14 +132,14 @@ def check_quota(api_key_id: str, is_pro: bool, estimated_tokens: int) -> None:
         raise HTTPException(429, "Daily token quota exceeded")
 
 
-def consume_quota(api_key_id: str, tokens: int) -> None:
+def consume_quota(tenant_id: str, tokens: int) -> None:
     if tokens <= 0:
         return
     client = get_client()
     if client is None:
         return
     try:
-        key = _quota_redis_key(api_key_id)
+        key = _quota_redis_key(tenant_id)
         client.incrby(key, tokens)
         client.expire(key, 172800)
     except Exception as exc:
