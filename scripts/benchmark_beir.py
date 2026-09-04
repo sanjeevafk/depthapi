@@ -180,12 +180,17 @@ def compute_metrics(
 
 
 def build_lexical_index(corpus: dict[str, str]):
-    """Build lightweight token-based BM25 index."""
-    from rank_bm25 import BM25Okapi
+    """Build lightweight token-based BM25 index.
+
+    Tokenization is intentionally plain lowercase whitespace splitting so
+    lexical scores stay comparable across runs (no stemming).
+    """
+    import bm25s
 
     doc_ids = list(corpus.keys())
     tokenized_corpus = [corpus[did].lower().split() for did in doc_ids]
-    bm25 = BM25Okapi(tokenized_corpus)
+    bm25 = bm25s.BM25()
+    bm25.index(tokenized_corpus)
     return bm25, doc_ids
 
 
