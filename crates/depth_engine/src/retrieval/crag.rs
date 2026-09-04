@@ -54,6 +54,11 @@ pub fn evaluate_confidence(scores: &[f64], is_reranked: bool) -> ConfidenceEvalu
 }
 
 /// Helper to evaluate confidence directly from a vector of context dictionaries.
+///
+/// Score scales differ by retrieval source: dense cosine similarity
+/// (~0.3-1.0, tagged with `"match_source": "dense"`) versus small RRF-fused
+/// scores for hybrid/graph retrieval. Each scale uses its own thresholds so
+/// a strong dense hit is not misread as a weak fused one (or vice versa).
 pub fn evaluate_contexts_confidence(contexts: &[serde_json::Value]) -> ConfidenceEvaluation {
     if contexts.is_empty() {
         return ConfidenceEvaluation {
@@ -72,10 +77,31 @@ pub fn evaluate_contexts_confidence(contexts: &[serde_json::Value]) -> Confidenc
             .collect();
         evaluate_confidence(&scores, true)
     } else {
+        let is_dense = contexts.iter().any(|c| {
+            c.get("match_source").and_then(|v| v.as_str()) == Some("dense")
+        });
         let scores: Vec<f64> = contexts
             .iter()
             .filter_map(|c| c.get("score").and_then(|v| v.as_f64()))
             .collect();
+        if is_dense {
+            if scores.is_empty() {
+                return evaluate_confidence(&[], false);
+            }
+            let max_score = scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let tier = if max_score < 0.55 {
+                "low"
+            } else if max_score < 0.7 {
+                "medium"
+            } else {
+                "high"
+            };
+            return ConfidenceEvaluation {
+                confidence: tier.to_string(),
+                is_insufficient: false,
+                max_score: Some(max_score),
+            };
+        }
         evaluate_confidence(&scores, false)
     }
 }
@@ -116,5 +142,27 @@ mod tests {
 
         let low = evaluate_confidence(&[0.005, 0.002], false);
         assert_eq!(low.confidence, "low");
+    }
+
+    fn dense_context(score: f64) -> serde_json::Value {
+        serde_json::json!({"content": "x", "score": score, "match_source": "dense"})
+    }
+
+    #[test]
+    fn test_crag_dense_similarity_scale() {
+        let high = evaluate_contexts_confidence(&[dense_context(0.9), dense_context(0.8)]);
+        assert_eq!(high.confidence, "high");
+
+        let medium = evaluate_contexts_confidence(&[dense_context(0.6)]);
+        assert_eq!(medium.confidence, "medium");
+
+        let low = evaluate_contexts_confidence(&[dense_context(0.4)]);
+        assert_eq!(low.confidence, "low");
+    }
+
+    #[test]
+    fn test_crag_fused_scale_unchanged() {
+        let fused = serde_json::json!({"content": "x", "score": 0.03});
+        assert_eq!(evaluate_contexts_confidence(&[fused]).confidence, "high");
     }
 }
