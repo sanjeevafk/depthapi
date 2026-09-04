@@ -11,11 +11,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - uses: actions-rust-lang/rustup@v1
       - name: Install
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-          pip install ruff
+          pip install ruff maturin
+      - name: Build depth_engine
+        run: maturin develop --manifest-path crates/depth_engine/Cargo.toml
       - name: Lint
         run: ruff check api tests
       - name: Compile
