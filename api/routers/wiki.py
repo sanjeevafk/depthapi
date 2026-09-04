@@ -3,6 +3,7 @@ Wiki vault routing for Karpathy LLM-Wiki materialization and continuous linting.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 from uuid import UUID
 
@@ -12,6 +13,8 @@ from pydantic import BaseModel, Field
 from api.adapters.pg_adapter import get_pool
 from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
 from api.services.wiki.vault_manager import get_vault_manager
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/wiki", tags=["wiki"])
 
@@ -76,9 +79,9 @@ async def export_wiki(
             """
             edge_rows = await conn.fetch(edge_query, UUID(_api_key.id), collection_uuid)
             edges = [dict(r) for r in edge_rows]
-    except Exception:
+    except Exception as exc:
         # Fallback if DB is unavailable or empty
-        pass
+        log.warning("Wiki export DB query failed, exporting empty vault: %s", exc)
 
     manager = get_vault_manager()
     result = manager.export_concepts_to_vault(concepts, edges)
@@ -86,7 +89,7 @@ async def export_wiki(
 
 
 @router.get("/lint", response_model=WikiLintResponse)
-async def lint_wiki() -> WikiLintResponse:
+async def lint_wiki(_api_key: ApiKeyRecord = Depends(verify_api_key)) -> WikiLintResponse:
     """Runs high-speed vault linter detecting broken [[WikiLinks]], orphans, and cycles."""
     manager = get_vault_manager()
     report = manager.lint_vault()
@@ -94,14 +97,14 @@ async def lint_wiki() -> WikiLintResponse:
 
 
 @router.get("/concepts", response_model=list[dict[str, Any]])
-async def list_wiki_concepts() -> list[dict[str, Any]]:
+async def list_wiki_concepts(_api_key: ApiKeyRecord = Depends(verify_api_key)) -> list[dict[str, Any]]:
     """Lists all concept notes currently materialized in the vault."""
     manager = get_vault_manager()
     return manager.list_concepts()
 
 
 @router.get("/concepts/{slug}")
-async def get_wiki_concept(slug: str) -> dict[str, Any]:
+async def get_wiki_concept(slug: str, _api_key: ApiKeyRecord = Depends(verify_api_key)) -> dict[str, Any]:
     """Retrieves a single concept note from the vault."""
     manager = get_vault_manager()
     concept = manager.read_concept(slug)

@@ -43,19 +43,8 @@ testpaths = ["api/tests", "tests"]
 norecursedirs = ["datasets", ".venv", "node_modules"]
 addopts = "--cov=api --cov-report=term-missing"
 
-[tool.pyright]
-venvPath = "."
-venv = ".venv"
-include = ["api"]
-exclude = ["**/__pycache__", "**/.pytest_cache", "api/tests"]
-typeCheckingMode = "basic"
-executionEnvironments = [
-  { root = ".", extraPaths = [".", "api"] }
-]
-strict = [
-  "api/routers/query.py",
-  "api/services/inference/inference.py"
-]
+# NOTE: pyright is configured in pyrightconfig.json (single source of truth).
+# The [tool.pyright] stanza was removed to avoid drift.
 
 [tool.hatch.build.targets.wheel]
 packages = ["api"]

@@ -99,10 +99,11 @@ retrieval results before retiring the old database volume or backups.
 
 ```text
 api/                 FastAPI application and PostgreSQL adapter
-db/                  PostgreSQL schema and development seed data
+crates/              Rust depth_engine (offline parse/chunk/retrieval)
+db/                  PostgreSQL schema (001/002/003) and development seed data
+docker-compose.yml   PostgreSQL pgvector + Redis for local dev
 scripts/             Offline ingestion, migration, validation, and replication
 evaluation/          Offline evaluation harnesses
-demo/                Standalone demo server
 tests/               Unit, integration, and quality tests
 ```
 
@@ -112,7 +113,15 @@ tests/               Unit, integration, and quality tests
 pip install -e ".[dev]"
 pytest
 python -m compileall -q api scripts evaluation
+ruff check api tests
 git diff --check
+```
+
+Docker builds expect the repo root as context:
+
+```bash
+docker build -f api/Dockerfile .
+docker build -f api/Dockerfile.test .
 ```
 
 ## Code navigation graph
