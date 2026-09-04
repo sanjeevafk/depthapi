@@ -233,8 +233,8 @@ async def test_tenant_isolation_prevents_cross_tenant_collection_access(monkeypa
     with pytest.raises(HTTPException) as exc_info:
         await ingest_module.ingest(req2, _request(), owner_b)
 
-    assert exc_info.value.status_code == 404
-    assert "Collection not found" in exc_info.value.detail
+    assert exc_info.value.status_code == 403
+    assert "different API key" in exc_info.value.detail
 
 
 @pytest.mark.asyncio

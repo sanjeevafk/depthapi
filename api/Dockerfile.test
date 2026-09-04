@@ -2,12 +2,15 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# NOTE: build from repo root: docker build -f api/Dockerfile.test .
+COPY pyproject.toml /app/pyproject.toml
 COPY api/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt \
-    && pip install --no-cache-dir pytest
+    && pip install --no-cache-dir pytest pytest-asyncio pytest-mock pytest-cov
 
-COPY api /app
+COPY api /app/api
+COPY tests /app/tests
 
 ENV PYTHONPATH=/app
 
-CMD ["python", "-m", "pytest", "tests"]
+CMD ["python", "-m", "pytest", "tests", "api/tests", "-q"]
