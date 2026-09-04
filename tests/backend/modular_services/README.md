@@ -6,10 +6,11 @@ backend modularization refactor.
 Status:
 - Backend refactor is complete.
 - Former monolithic responsibilities are now split across modular services.
-- Tests in this folder validate those extracted modules and guard against
-  regressions in orchestration behavior.
+- NOTE: focused regression tests from the refactor were removed in cleanup
+  (9a80947); only `conftest.py` remains here. Do not cite the files below as
+  present until they are restored.
 
-Coverage examples:
+Coverage examples (historical, currently absent — restore before citing):
 - Routing and classification (`test_inference_routing.py`, `test_inference_classifier.py`)
 - Provider stack (`test_provider_registry.py`, `test_provider_authenticator.py`, `test_provider_usage_tracker.py`)
 - Message and response flow (`test_message_workflow.py`, `test_message_streaming.py`, `test_response_orchestrator.py`)

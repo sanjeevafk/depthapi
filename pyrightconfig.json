@@ -20,16 +20,7 @@
     }
   ],
   "strict": [
-    "api/services/inference.py",
     "api/routers/query.py",
-    "api/services/llm_client.py",
-    "api/services/rate_limit.py",
-    "api/services/message_gate.py",
-    "api/services/inference_routing.py",
-    "api/services/inference_prompting.py",
-    "api/services/streaming.py",
-    "api/services/message_utils.py",
-    "src/stores/useChatStore.ts",
-    "src/stores/slices/chatStreamingSlice.ts"
+    "api/services/inference/inference.py"
   ]
 }

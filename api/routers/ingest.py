@@ -189,13 +189,68 @@ async def ingest(
         raise HTTPException(400, "collection_id must be a UUID") from exc
 
     document_id, queue_id = uuid4(), uuid4()
+    user_metadata = req.metadata or {}
+    content_hash = hashlib.sha256(req.raw_text.encode("utf-8")).hexdigest()
+    owner_id = UUID(_api_key.id)
+
+    # Fast idempotency short-circuit for caller-supplied collections: avoids
+    # paying for chunking/embeddings on exact duplicates. New collections
+    # (no collection_id) skip this; the txn below re-checks for races.
+    if req.collection_id is not None:
+        try:
+            async with get_pool().acquire() as pre_conn:
+                pre_existing = await pre_conn.fetchrow(
+                    """SELECT id FROM knowledge_documents
+                       WHERE collection_id = $1 AND content_hash = $2
+                       LIMIT 1""",
+                    collection_id,
+                    content_hash,
+                )
+                if pre_existing is not None:
+                    doc_id_str = str(pre_existing["id"])
+                    return IngestResponse(
+                        collection_id=str(collection_id),
+                        document_id=doc_id_str,
+                        queue_id=doc_id_str,
+                        status="complete",
+                    )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            log.debug("Pre-txn idempotency check skipped: %s", exc)
+
+    # CPU-bound chunking + network-bound embeddings run BEFORE acquiring a
+    # pooled connection so long operations never hold a transaction open.
+    doc, chunks = _run_pipeline(
+        raw_text=req.raw_text,
+        document_id=document_id,
+        filename=req.filename,
+        source_url=req.source_url,
+        collection_name=req.collection_name,
+        user_metadata=user_metadata,
+        engine=req.engine,
+    )
+
+    embeddings = await embed_texts([c.content for c in chunks])
+    if len(embeddings) != len(chunks):
+        raise RuntimeError("Mismatch between chunk count and embedding count")
+
+    # Deterministic concept/graph extraction is also CPU-only; run outside txn.
+    try:
+        graph = extract_concepts_and_edges(
+            raw_text=req.raw_text,
+            chunks=chunks,
+            document_title=req.filename,
+            user_metadata=user_metadata,
+        )
+    except Exception as g_exc:
+        log.warning("Concept graph extraction skipped or encountered error: %s", g_exc)
+        graph = None
 
     try:
         async with get_pool().acquire() as conn:
             async with conn.transaction():
-                user_metadata = req.metadata or {}
                 encoded_metadata = json.dumps(user_metadata)
-                owner_id = UUID(_api_key.id)
 
                 collection = await conn.fetchrow(
                     """INSERT INTO knowledge_collections (id, api_key_id, name, metadata)
@@ -209,10 +264,9 @@ async def ingest(
                     encoded_metadata,
                 )
                 if collection is None:
-                    raise HTTPException(404, "Collection not found")
+                    raise HTTPException(403, "Collection belongs to a different API key")
 
                 resolved_collection_id = collection["id"]
-                content_hash = hashlib.sha256(req.raw_text.encode("utf-8")).hexdigest()
 
                 # Idempotency check: short-circuit if identical content already ingested for this collection
                 existing_doc = await conn.fetchrow(
@@ -230,21 +284,6 @@ async def ingest(
                         queue_id=doc_id_str,
                         status="complete",
                     )
-
-                doc, chunks = _run_pipeline(
-                    raw_text=req.raw_text,
-                    document_id=document_id,
-                    filename=req.filename,
-                    source_url=req.source_url,
-                    collection_name=req.collection_name,
-                    user_metadata=user_metadata,
-                    engine=req.engine,
-                )
-
-
-                embeddings = await embed_texts([c.content for c in chunks])
-                if len(embeddings) != len(chunks):
-                    raise RuntimeError("Mismatch between chunk count and embedding count")
 
                 await conn.execute(
                     """INSERT INTO knowledge_documents (
@@ -293,63 +332,58 @@ async def ingest(
                         chunk.content_hash,
                     )
 
-                # Deterministic concept and graph extraction & upsert
-                try:
-                    graph = extract_concepts_and_edges(
-                        raw_text=req.raw_text,
-                        chunks=chunks,
-                        document_title=req.filename,
-                        user_metadata=user_metadata,
-                    )
-                    concept_id_map: dict[str, UUID] = {}
-                    for concept in graph.concepts:
-                        c_id = uuid5(NAMESPACE_URL, f"concept:{resolved_collection_id}:{concept.name.lower()}")
-                        await conn.execute(
-                            """INSERT INTO knowledge_concepts (id, collection_id, name, concept_type, description, metadata)
-                               VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-                               ON CONFLICT (collection_id, name) DO UPDATE
-                               SET metadata = knowledge_concepts.metadata || EXCLUDED.metadata""",
-                            c_id,
-                            resolved_collection_id,
-                            concept.name,
-                            concept.concept_type,
-                            concept.description,
-                            json.dumps(concept.metadata),
-                        )
-                        concept_id_map[concept.name.lower()] = c_id
-
-                    for edge in graph.edges:
-                        src_id = concept_id_map.get(edge.source_concept.lower())
-                        tgt_id = concept_id_map.get(edge.target_concept.lower())
-                        if src_id and tgt_id:
-                            edge_id = uuid5(NAMESPACE_URL, f"edge:{resolved_collection_id}:{src_id}:{tgt_id}:{edge.relation_type}")
+                # Concept and graph upserts (extraction ran outside the txn).
+                if graph is not None:
+                    try:
+                        concept_id_map: dict[str, UUID] = {}
+                        for concept in graph.concepts:
+                            c_id = uuid5(NAMESPACE_URL, f"concept:{resolved_collection_id}:{concept.name.lower()}")
                             await conn.execute(
-                                """INSERT INTO knowledge_edges (id, collection_id, source_concept_id, target_concept_id, relation_type, weight, metadata)
-                                   VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-                                   ON CONFLICT (collection_id, source_concept_id, target_concept_id, relation_type) DO UPDATE
-                                   SET weight = EXCLUDED.weight""",
-                                edge_id,
-                                resolved_collection_id,
-                                src_id,
-                                tgt_id,
-                                edge.relation_type,
-                                edge.weight,
-                                json.dumps(edge.metadata),
-                            )
-
-                    for link in graph.chunk_links:
-                        c_id = concept_id_map.get(link.concept_name.lower())
-                        if c_id:
-                            await conn.execute(
-                                """SELECT link_chunk_to_concept($1, $2, $3, $4, $5::jsonb)""",
-                                document_id,
-                                link.chunk_index,
+                                """INSERT INTO knowledge_concepts (id, collection_id, name, concept_type, description, metadata)
+                                   VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+                                   ON CONFLICT (collection_id, name) DO UPDATE
+                                   SET metadata = knowledge_concepts.metadata || EXCLUDED.metadata""",
                                 c_id,
-                                link.confidence,
-                                json.dumps(link.metadata),
+                                resolved_collection_id,
+                                concept.name,
+                                concept.concept_type,
+                                concept.description,
+                                json.dumps(concept.metadata),
                             )
-                except Exception as g_exc:
-                    log.warning("Concept graph extraction skipped or encountered error: %s", g_exc)
+                            concept_id_map[concept.name.lower()] = c_id
+
+                        for edge in graph.edges:
+                            src_id = concept_id_map.get(edge.source_concept.lower())
+                            tgt_id = concept_id_map.get(edge.target_concept.lower())
+                            if src_id and tgt_id:
+                                edge_id = uuid5(NAMESPACE_URL, f"edge:{resolved_collection_id}:{src_id}:{tgt_id}:{edge.relation_type}")
+                                await conn.execute(
+                                    """INSERT INTO knowledge_edges (id, collection_id, source_concept_id, target_concept_id, relation_type, weight, metadata)
+                                       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+                                       ON CONFLICT (collection_id, source_concept_id, target_concept_id, relation_type) DO UPDATE
+                                       SET weight = EXCLUDED.weight""",
+                                    edge_id,
+                                    resolved_collection_id,
+                                    src_id,
+                                    tgt_id,
+                                    edge.relation_type,
+                                    edge.weight,
+                                    json.dumps(edge.metadata),
+                                )
+
+                        for link in graph.chunk_links:
+                            c_id = concept_id_map.get(link.concept_name.lower())
+                            if c_id:
+                                await conn.execute(
+                                    """SELECT link_chunk_to_concept($1, $2, $3, $4, $5::jsonb)""",
+                                    document_id,
+                                    link.chunk_index,
+                                    c_id,
+                                    link.confidence,
+                                    json.dumps(link.metadata),
+                                )
+                    except Exception as g_exc:
+                        log.warning("Concept graph upsert skipped or encountered error: %s", g_exc)
 
                 await conn.execute(
                     """INSERT INTO knowledge_ingestion_queue (id, document_id, status)

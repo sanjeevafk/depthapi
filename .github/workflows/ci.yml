@@ -1,0 +1,31 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install ruff maturin
+      - name: Build depth_engine
+        run: |
+          maturin build --manifest-path crates/depth_engine/Cargo.toml --out dist
+          pip install dist/*.whl
+      - name: Lint
+        run: ruff check api tests
+      - name: Compile
+        run: python -m compileall -q api scripts evaluation
+      - name: Test
+        run: pytest -q
+      - name: Diff check
+        run: git diff --check

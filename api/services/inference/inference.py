@@ -34,4 +34,36 @@ async def generate_response(query: str, contexts: list[dict[str, Any]], temperat
         return _fallback_response(contexts)
 
 async def generate_stream_response(query: str, contexts: list[dict[str, Any]], temperature: float = 0.7) -> AsyncIterator[str]:
-    yield await generate_response(query, contexts, temperature)
+    """Yield answer tokens incrementally; falls back to chunked excerpts without an LLM key."""
+    settings = get_settings()
+    api_key = settings.openai_api_key.get_secret_value()
+    if not api_key or not contexts:
+        fallback = _fallback_response(contexts)
+        # Chunk fallback so SSE clients still see progressive events.
+        chunk_size = 500
+        for i in range(0, max(1, len(fallback)), chunk_size):
+            yield fallback[i : i + chunk_size]
+        return
+    try:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=api_key, timeout=settings.llm_timeout_seconds)
+        source_text = "\n\n".join(str(item.get("content", ""))[:6000] for item in contexts)
+        stream = await client.chat.completions.create(
+            model=settings.llm_model,
+            temperature=temperature,
+            stream=True,
+            messages=[
+                {"role": "system", "content": "Answer using only the supplied knowledge. If it is insufficient, say so."},
+                {"role": "user", "content": f"Question: {query}\n\nKnowledge:\n{source_text}"},
+            ],
+        )
+        async for chunk in stream:
+            try:
+                delta = chunk.choices[0].delta.content if chunk.choices else None
+            except Exception:
+                delta = None
+            if delta:
+                yield delta
+    except Exception:
+        fallback = _fallback_response(contexts)
+        yield fallback

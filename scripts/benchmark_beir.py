@@ -37,6 +37,7 @@ from api.services.rag.graph.concept_extractor import extract_concepts_and_edges
 DATASET_URLS = {
     "scifact": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip",
     "nfcorpus": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/nfcorpus.zip",
+    "fiqa": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/fiqa.zip",
     "hotpotqa": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/hotpotqa.zip",
 }
 
@@ -216,7 +217,7 @@ def evaluate(
         corpus_texts = [corpus[did] for did in doc_ids]
         t0 = time.perf_counter()
         corpus_embeddings = model.encode(
-            corpus_texts, batch_size=32, show_progress_bar=True, normalize_embeddings=True
+            corpus_texts, batch_size=16, show_progress_bar=True, normalize_embeddings=True
         )
         corpus_emb_matrix = np.array(corpus_embeddings, dtype=np.float32)
         print(f"Corpus embedded in {time.perf_counter() - t0:.2f}s (Shape: {corpus_emb_matrix.shape})")
@@ -371,7 +372,12 @@ def evaluate(
 
 def main():
     parser = argparse.ArgumentParser(description="DepthAPI BEIR Retrieval Evaluation")
-    parser.add_argument("--dataset", choices=list(DATASET_URLS.keys()), default="scifact")
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="scifact",
+        help="Dataset name, comma-separated list (e.g. scifact,fiqa,hotpotqa), or 'all'",
+    )
     parser.add_argument("--limit-docs", type=int, default=1000, help="Max documents (0 for full)")
     parser.add_argument("--limit-queries", type=int, default=100, help="Max queries (0 for full)")
     parser.add_argument("--rerank", action="store_true", help="Include cross-encoder reranker")
@@ -379,31 +385,72 @@ def main():
     args = parser.parse_args()
 
     cache_dir = REPO_ROOT / "datasets" / "benchmarks" / "beir_cache"
-    data_dir = download_and_extract_dataset(args.dataset, cache_dir)
+
+    if args.dataset.strip().lower() == "all":
+        datasets_to_run = ["scifact", "fiqa", "hotpotqa", "nfcorpus"]
+    else:
+        datasets_to_run = [d.strip() for d in args.dataset.split(",") if d.strip()]
+
+    out_path = REPO_ROOT / args.output
+    all_manifest = {}
+    if out_path.exists():
+        try:
+            with open(out_path, "r", encoding="utf-8") as f:
+                existing_data = json.load(f)
+                all_manifest = existing_data.get("datasets", {})
+        except Exception:
+            all_manifest = {}
 
     limit_docs = None if args.limit_docs <= 0 else args.limit_docs
     limit_queries = None if args.limit_queries <= 0 else args.limit_queries
 
-    corpus, queries, qrels, titles = load_beir_data(
-        data_dir, limit_docs=limit_docs, limit_queries=limit_queries
-    )
-    print(f"Loaded {len(corpus)} documents and {len(queries)} evaluated test queries.")
-
-    cache_path = data_dir / f"embeddings_{len(corpus)}.npz"
-    summary = evaluate(
-        corpus, queries, qrels, titles=titles, cache_path=cache_path, enable_rerank=args.rerank
-    )
-
-    print("\n" + "=" * 65)
-    print(f"BEIR Benchmark Results: {args.dataset.upper()} (Corpus: {len(corpus)}, Queries: {len(queries)})")
-    print("=" * 65)
-    print(f"{'Strategy':<20} | {'NDCG@10':<9} | {'Recall@10':<10} | {'MRR@10':<8} | {'p50 (ms)':<9} | {'p95 (ms)'}")
-    print("-" * 65)
-    for strat, res in summary.items():
-        print(
-            f"{strat:<20} | {res['ndcg@10']:<9.4f} | {res['recall@10']:<10.4f} | {res['mrr@10']:<8.4f} | {res['p50_latency_ms']:<9.2f} | {res['p95_latency_ms']:.2f}"
+    for ds in datasets_to_run:
+        print("\n" + "#" * 65)
+        print(f"BENCHMARKING DATASET: {ds.upper()}")
+        print("#" * 65)
+        data_dir = download_and_extract_dataset(ds, cache_dir)
+        corpus, queries, qrels, titles = load_beir_data(
+            data_dir, limit_docs=limit_docs, limit_queries=limit_queries
         )
-    print("=" * 65)
+        print(f"Loaded {len(corpus)} documents and {len(queries)} evaluated test queries.")
+
+        cache_path = data_dir / f"embeddings_{len(corpus)}.npz"
+        summary = evaluate(
+            corpus, queries, qrels, titles=titles, cache_path=cache_path, enable_rerank=args.rerank
+        )
+
+        print("\n" + "=" * 65)
+        print(f"BEIR Benchmark Results: {ds.upper()} (Corpus: {len(corpus)}, Queries: {len(queries)})")
+        print("=" * 65)
+        print(f"{'Strategy':<20} | {'NDCG@10':<9} | {'Recall@10':<10} | {'MRR@10':<8} | {'p50 (ms)':<9} | {'p95 (ms)'}")
+        print("-" * 65)
+        for strat, res in summary.items():
+            print(
+                f"{strat:<20} | {res['ndcg@10']:<9.4f} | {res['recall@10']:<10.4f} | {res['mrr@10']:<8.4f} | {res['p50_latency_ms']:<9.2f} | {res['p95_latency_ms']:.2f}"
+            )
+        print("=" * 65)
+
+        all_manifest[ds] = {
+            "docs_evaluated": len(corpus),
+            "queries_evaluated": len(queries),
+            "results": summary,
+        }
+
+    if len(datasets_to_run) > 1:
+        print("\n" + "=" * 75)
+        print("📊 CONSOLIDATED MULTI-DATASET SCOREBOARD (NDCG@10)")
+        print("=" * 75)
+        header = f"{'Dataset':<12} | {'Lexical BM25':<14} | {'Dense Vector':<14} | {'Rust RRF Hybrid':<16} | {'Reranked':<14}"
+        print(header)
+        print("-" * 75)
+        for ds, data in all_manifest.items():
+            r = data["results"]
+            bm25 = f"{r.get('lexical', {}).get('ndcg@10', 0):.4f}"
+            dense = f"{r.get('dense', {}).get('ndcg@10', 0):.4f}"
+            rrf = f"{r.get('hybrid_rrf', {}).get('ndcg@10', 0):.4f}"
+            rerank = f"{r.get('hybrid_rrf_rerank', {}).get('ndcg@10', 0):.4f}" if args.rerank else "N/A"
+            print(f"{ds.upper():<12} | {bm25:<14} | {dense:<14} | {rrf:<16} | {rerank:<14}")
+        print("=" * 75)
 
     out_path = REPO_ROOT / args.output
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -411,10 +458,7 @@ def main():
         json.dump(
             {
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "dataset": args.dataset,
-                "docs_evaluated": len(corpus),
-                "queries_evaluated": len(queries),
-                "results": summary,
+                "datasets": all_manifest,
             },
             f,
             indent=2,

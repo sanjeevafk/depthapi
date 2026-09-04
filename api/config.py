@@ -161,6 +161,4 @@ def get_settings() -> Settings:
 
 def reinitialize_cache() -> None:
     """Clear cache and recompute on next access (for testing)."""
-    global _STREAM_CONFIG
-    _STREAM_CONFIG = None
     get_settings.cache_clear()
