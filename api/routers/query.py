@@ -79,6 +79,26 @@ class QueryRequest(BaseModel):
         default=False,
         description="Compounding Q&A loop: write synthesized insight back to Karpathy LLM-Wiki vault.",
     )
+    use_quality_signals: bool = Field(
+        default=False,
+        description=(
+            "Blend recency decay and quality_score into the BM25 first-stage scorer "
+            "(turbopuffer rank-by-attribute pattern). Requires migration 005. "
+            "Off by default until you run recall evals comparing v5 vs v6."
+        ),
+    )
+    recency_weight: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=5.0,
+        description="Weight for the Robertson sigmoid recency decay (midpoint=30 days). Used when use_quality_signals=True.",
+    )
+    quality_weight: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=5.0,
+        description="Weight for chunk quality_score [0,1] contribution. Used when use_quality_signals=True.",
+    )
 
 
 class QueryResponse(BaseModel):
@@ -281,6 +301,12 @@ async def _retrieve(
             if effective_hops > 0:
                 params["graph_hops"] = effective_hops
                 rpc_fn = "hybrid_search_trusted_with_graph_v5" if req.use_trusted_corpus else "hybrid_search_with_graph_v5"
+            elif req.use_quality_signals:
+                # Turbopuffer rank-by-attribute: blend recency decay + quality score
+                # into the BM25 first-stage scorer before RRF fusion.
+                params["recency_weight"] = req.recency_weight
+                params["quality_weight"] = req.quality_weight
+                rpc_fn = "hybrid_search_trusted_v6" if req.use_trusted_corpus else "hybrid_search_v6"
             else:
                 rpc_fn = "hybrid_search_trusted_v5" if req.use_trusted_corpus else "hybrid_search_v5"
 

@@ -135,24 +135,21 @@ class TestChunkQualityBaselines:
 class TestChunkerDeterminism:
     """Same input → identical output across multiple runs."""
 
-    def test_content_hashes_identical_across_runs(self):
+    def test_chunking_is_deterministic(self):
         chunker = SemanticChunker(config={"max_tokens": 480, "min_tokens": 10})
         parsed = _make_parsed_doc()
 
         chunks_1 = chunker.chunk(parsed, dataset_version="v1.0", source_name="Test")
         chunks_2 = chunker.chunk(parsed, dataset_version="v1.0", source_name="Test")
 
-        hashes_1 = sorted(c.content_hash for c in chunks_1)
-        hashes_2 = sorted(c.content_hash for c in chunks_2)
+        hashes_1 = [c.content_hash for c in chunks_1]
+        hashes_2 = [c.content_hash for c in chunks_2]
+        ids_1 = [c.chunk_id for c in chunks_1]
+        ids_2 = [c.chunk_id for c in chunks_2]
+
         assert hashes_1 == hashes_2, "Chunk content hashes differ across runs"
+        assert ids_1 == ids_2, "Chunk IDs differ across runs"
 
-    def test_chunk_ids_identical_across_runs(self):
-        chunker = SemanticChunker(config={"max_tokens": 480, "min_tokens": 10})
-        parsed = _make_parsed_doc()
-
-        ids_1 = sorted(c.chunk_id for c in chunker.chunk(parsed, dataset_version="v1.0", source_name="Test"))
-        ids_2 = sorted(c.chunk_id for c in chunker.chunk(parsed, dataset_version="v1.0", source_name="Test"))
-        assert ids_1 == ids_2
 
     def test_chunk_orders_are_sequential(self):
         chunker = SemanticChunker(config={"max_tokens": 480, "min_tokens": 10})

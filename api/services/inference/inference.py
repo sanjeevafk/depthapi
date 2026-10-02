@@ -129,6 +129,12 @@ async def generate_stream_response(query: str, contexts: list[dict[str, Any]], t
                 delta = None
             if delta:
                 yield delta
-    except Exception:
+    except Exception as exc:
+        import logging as _logging
+        _logging.getLogger(__name__).error(
+            "LLM stream generation failed, yielding fallback context excerpts: %s",
+            exc,
+            exc_info=True,
+        )
         fallback = _fallback_response(contexts)
         yield fallback

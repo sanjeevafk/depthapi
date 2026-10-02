@@ -55,8 +55,13 @@ class IngestionWorker:
                     }
                     for c in chunks
                 ]
-            except Exception:
-                pass
+            except Exception as exc:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "depth_engine.chunk_markdown failed, falling back to block splitter: %s",
+                    exc,
+                    exc_info=True,
+                )
 
         # Fallback pure-Python block splitting
         lines = text.splitlines(keepends=True)

@@ -1,6 +1,7 @@
 """Document ingestion into local PostgreSQL using the declarative pipeline."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -99,7 +100,11 @@ def _run_pipeline(
                 min_tokens=1,
             )
         except Exception as exc:
-            log.warning("depth_engine processing failed, falling back to Python: %s", exc)
+            log.warning(
+                "depth_engine processing failed, falling back to Python pipeline: %s",
+                exc,
+                exc_info=True,
+            )
 
     source_uri = source_url or filename or f"direct://upload/{document_id}"
 
@@ -219,9 +224,16 @@ async def ingest(
         except Exception as exc:
             log.debug("Pre-txn idempotency check skipped: %s", exc)
 
+    # resolved_collection_id is set inside the transaction below.
+    # Pre-initialise to collection_id so the name is always bound even if an
+    # exception is raised before the INSERT … RETURNING line executes.
+    resolved_collection_id = collection_id
+
     # CPU-bound chunking + network-bound embeddings run BEFORE acquiring a
     # pooled connection so long operations never hold a transaction open.
-    doc, chunks = _run_pipeline(
+    # Offloaded to a thread pool so CPU parsing never blocks the asyncio event loop.
+    doc, chunks = await asyncio.to_thread(
+        _run_pipeline,
         raw_text=req.raw_text,
         document_id=document_id,
         filename=req.filename,
@@ -230,6 +242,7 @@ async def ingest(
         user_metadata=user_metadata,
         engine=req.engine,
     )
+
 
     embeddings = await embed_texts([c.content for c in chunks])
     if len(embeddings) != len(chunks):

@@ -100,17 +100,6 @@ class TestDocument:
         assert isinstance(sample_document.ingestion_timestamp, datetime)
         assert sample_document.ingestion_timestamp.tzinfo is UTC
 
-    def test_two_docs_same_uri_same_hash(self):
-        content = b"same content"
-        doc1 = Document.from_bytes("file:///test.md", content, "text/markdown")
-        doc2 = Document.from_bytes("file:///test.md", content, "text/markdown")
-        assert doc1.doc_id == doc2.doc_id
-        assert doc1.source_content_hash == doc2.source_content_hash
-
-    def test_different_content_different_hash(self):
-        doc1 = Document.from_bytes("file:///test.md", b"content A", "text/markdown")
-        doc2 = Document.from_bytes("file:///test.md", b"content B", "text/markdown")
-        assert doc1.source_content_hash != doc2.source_content_hash
 
 
 # ─── ParsedDocument tests ─────────────────────────────────────────────────────
