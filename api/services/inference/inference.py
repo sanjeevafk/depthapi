@@ -169,7 +169,6 @@ async def generate_stream_response(
         for i in range(0, max(1, len(fallback)), chunk_size):
             yield fallback[i : i + chunk_size]
         return
-
     settings = get_settings()
     targets = _get_llm_targets(settings)
 

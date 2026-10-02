@@ -24,7 +24,6 @@ class Settings(BaseSettings):
     local_llm_api_key: SecretStr = SecretStr("local")
     local_llm_timeout_seconds: int = 120
     local_llm_max_context_chunks: int = 3
-
     # Embeddings
     embedding_provider: str = "local"
     embedding_model: str = "text-embedding-3-small"
