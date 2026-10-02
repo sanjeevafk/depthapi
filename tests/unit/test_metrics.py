@@ -68,14 +68,22 @@ class TestPipelineMetrics:
         assert m.get("custom_counter") == 3
 
     def test_time_context_manager_records_latency(self, monkeypatch):
-        times = iter([100.0, 100.025])  # 25ms elapsed
-        monkeypatch.setattr(time, "monotonic", lambda: next(times))
+        current = 100.0
+
+        def fake_monotonic():
+            nonlocal current
+            value = current
+            current += 0.025
+            return value
+
+        monkeypatch.setattr(time, "monotonic", fake_monotonic)
         m = PipelineMetrics(dataset_name="test", run_id="r1")
         with m.time("doc_parse_ms"):
             pass
         stats = m._latencies["doc_parse_ms"]
         assert stats.count == 1
         assert stats.avg_ms == pytest.approx(25.0)
+
 
     def test_time_records_multiple_samples(self, monkeypatch):
         t = 100.0
