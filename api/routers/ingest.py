@@ -8,7 +8,7 @@ import logging
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from api.adapters.pg_adapter import get_pool
@@ -179,29 +179,24 @@ def _run_pipeline(
     return doc, chunks
 
 
-@router.post("/ingest", response_model=IngestResponse)
-async def ingest(
-    req: IngestRequest,
-    request: Request,
-    _api_key: ApiKeyRecord = Depends(verify_api_key),
+async def _process_and_store_document(
+    raw_text: str,
+    document_id: UUID,
+    collection_id: UUID,
+    owner_id: UUID,
+    filename: str | None,
+    source_url: str | None,
+    collection_name: str | None,
+    user_metadata: dict[str, Any],
+    engine: str | None = None,
+    skip_pre_idempotency: bool = False,
 ) -> IngestResponse:
-    if not req.raw_text or not req.raw_text.strip():
-        raise HTTPException(400, "raw_text is required")
-
-    try:
-        collection_id = UUID(req.collection_id) if req.collection_id else uuid4()
-    except ValueError as exc:
-        raise HTTPException(400, "collection_id must be a UUID") from exc
-
-    document_id, queue_id = uuid4(), uuid4()
-    user_metadata = req.metadata or {}
-    content_hash = hashlib.sha256(req.raw_text.encode("utf-8")).hexdigest()
-    owner_id = UUID(_api_key.id)
+    queue_id = uuid4()
+    content_hash = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
 
     # Fast idempotency short-circuit for caller-supplied collections: avoids
-    # paying for chunking/embeddings on exact duplicates. New collections
-    # (no collection_id) skip this; the txn below re-checks for races.
-    if req.collection_id is not None:
+    # paying for chunking/embeddings on exact duplicates.
+    if not skip_pre_idempotency:
         try:
             async with get_pool().acquire() as pre_conn:
                 pre_existing = await pre_conn.fetchrow(
@@ -224,36 +219,29 @@ async def ingest(
         except Exception as exc:
             log.debug("Pre-txn idempotency check skipped: %s", exc)
 
-    # resolved_collection_id is set inside the transaction below.
-    # Pre-initialise to collection_id so the name is always bound even if an
-    # exception is raised before the INSERT … RETURNING line executes.
     resolved_collection_id = collection_id
 
-    # CPU-bound chunking + network-bound embeddings run BEFORE acquiring a
-    # pooled connection so long operations never hold a transaction open.
-    # Offloaded to a thread pool so CPU parsing never blocks the asyncio event loop.
+    # CPU-bound chunking + network-bound embeddings run outside the transaction.
     doc, chunks = await asyncio.to_thread(
         _run_pipeline,
-        raw_text=req.raw_text,
+        raw_text=raw_text,
         document_id=document_id,
-        filename=req.filename,
-        source_url=req.source_url,
-        collection_name=req.collection_name,
+        filename=filename,
+        source_url=source_url,
+        collection_name=collection_name,
         user_metadata=user_metadata,
-        engine=req.engine,
+        engine=engine,
     )
-
 
     embeddings = await embed_texts([c.content for c in chunks])
     if len(embeddings) != len(chunks):
         raise RuntimeError("Mismatch between chunk count and embedding count")
 
-    # Deterministic concept/graph extraction is also CPU-only; run outside txn.
     try:
         graph = extract_concepts_and_edges(
-            raw_text=req.raw_text,
+            raw_text=raw_text,
             chunks=chunks,
-            document_title=req.filename,
+            document_title=filename,
             user_metadata=user_metadata,
         )
     except Exception as g_exc:
@@ -273,7 +261,7 @@ async def ingest(
                        RETURNING id""",
                     collection_id,
                     owner_id,
-                    req.collection_name or "default",
+                    collection_name or "default",
                     encoded_metadata,
                 )
                 if collection is None:
@@ -281,7 +269,6 @@ async def ingest(
 
                 resolved_collection_id = collection["id"]
 
-                # Idempotency check: short-circuit if identical content already ingested for this collection
                 existing_doc = await conn.fetchrow(
                     """SELECT id FROM knowledge_documents
                        WHERE collection_id = $1 AND content_hash = $2
@@ -304,9 +291,9 @@ async def ingest(
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)""",
                     document_id,
                     resolved_collection_id,
-                    req.filename,
-                    req.source_url,
-                    req.raw_text,
+                    filename,
+                    source_url,
+                    raw_text,
                     content_hash,
                     encoded_metadata,
                 )
@@ -345,7 +332,6 @@ async def ingest(
                         chunk.content_hash,
                     )
 
-                # Concept and graph upserts (extraction ran outside the txn).
                 if graph is not None:
                     try:
                         concept_id_map: dict[str, UUID] = {}
@@ -415,4 +401,115 @@ async def ingest(
         document_id=str(document_id),
         queue_id=str(queue_id),
         status="complete",
+    )
+
+
+@router.post("/ingest", response_model=IngestResponse)
+async def ingest(
+    req: IngestRequest,
+    request: Request,
+    _api_key: ApiKeyRecord = Depends(verify_api_key),
+) -> IngestResponse:
+    if not req.raw_text or not req.raw_text.strip():
+        raise HTTPException(400, "raw_text is required")
+
+    try:
+        collection_id = UUID(req.collection_id) if req.collection_id else uuid4()
+    except ValueError as exc:
+        raise HTTPException(400, "collection_id must be a UUID") from exc
+
+    document_id = uuid4()
+    user_metadata = req.metadata or {}
+    owner_id = UUID(_api_key.id)
+
+    return await _process_and_store_document(
+        raw_text=req.raw_text,
+        document_id=document_id,
+        collection_id=collection_id,
+        owner_id=owner_id,
+        filename=req.filename,
+        source_url=req.source_url,
+        collection_name=req.collection_name,
+        user_metadata=user_metadata,
+        engine=req.engine,
+        skip_pre_idempotency=(req.collection_id is None),
+    )
+
+
+@router.post("/ingest/file", response_model=IngestResponse)
+async def ingest_file(
+    file: UploadFile = File(...),
+    collection_id: str | None = Form(None),
+    collection_name: str | None = Form(None),
+    source_url: str | None = Form(None),
+    metadata: str | None = Form(None),
+    engine: str | None = Form(None),
+    _api_key: ApiKeyRecord = Depends(verify_api_key),
+) -> IngestResponse:
+    """Unified document file ingestion: converts PDF, DOCX, XLSX, PPTX, CSV, EPUB, and Markdown via anydoc."""
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(400, "Uploaded file is empty")
+
+    user_metadata: dict[str, Any] = {}
+    if metadata:
+        try:
+            parsed_meta = json.loads(metadata)
+            if isinstance(parsed_meta, dict):
+                user_metadata = parsed_meta
+        except json.JSONDecodeError as exc:
+            raise HTTPException(400, "metadata must be valid JSON") from exc
+
+    raw_text: str = ""
+    filename = file.filename or "uploaded_file"
+
+    if has_depth_engine():
+        try:
+            import depth_engine
+
+            parsed = depth_engine.to_markdown(
+                file_bytes,
+                filename_or_ext=filename,
+                mime_type=file.content_type,
+            )
+            raw_text = parsed.get("markdown", "")
+            if parsed.get("warnings"):
+                user_metadata["parser_warnings"] = parsed["warnings"]
+            user_metadata["detected_format"] = parsed.get("format", "unknown")
+            user_metadata["parser_confidence"] = parsed.get("confidence", 1.0)
+        except Exception as exc:
+            log.warning("depth_engine.to_markdown failed on %s: %s", filename, exc)
+
+    if not raw_text:
+        # Fallback for plain text, markdown, or csv
+        try:
+            raw_text = file_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(
+                415,
+                f"Binary format for '{filename}' requires depth_engine (anydoc) which failed or is not available.",
+            ) from exc
+
+    if not raw_text.strip():
+        raise HTTPException(400, "No readable text content extracted from file")
+
+    try:
+        col_uuid = UUID(collection_id) if collection_id else uuid4()
+    except ValueError as exc:
+        raise HTTPException(400, "collection_id must be a UUID") from exc
+
+    doc_uuid = uuid4()
+    owner_uuid = UUID(_api_key.id)
+
+    return await _process_and_store_document(
+        raw_text=raw_text,
+        document_id=doc_uuid,
+        collection_id=col_uuid,
+        owner_id=owner_uuid,
+        filename=filename,
+        source_url=source_url,
+        collection_name=collection_name,
+        user_metadata=user_metadata,
+        engine=engine,
+        skip_pre_idempotency=(collection_id is None),
     )
