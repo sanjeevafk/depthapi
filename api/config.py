@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o-mini"
     llm_timeout_seconds: int = 60
 
+    # Local LLM fallback (Ollama, vLLM, llama.cpp)
+    local_llm_base_url: str = ""
+    local_llm_model: str = "qwen2.5:1.5b"
+    local_llm_api_key: SecretStr = SecretStr("local")
+    local_llm_timeout_seconds: int = 120
+    local_llm_max_context_chunks: int = 3
     # Embeddings
     embedding_provider: str = "local"
     embedding_model: str = "text-embedding-3-small"
@@ -44,7 +50,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    @field_validator("openai_api_key", mode="before")
+    @field_validator("openai_api_key", "local_llm_api_key", mode="before")
     @classmethod
     def _normalize_provider_key(cls, value: object) -> SecretStr:
         if value is None:
@@ -55,7 +61,7 @@ class Settings(BaseSettings):
             raise TypeError("Provider API keys must be strings.")
         return SecretStr(value.strip())
 
-    @field_validator("llm_timeout_seconds")
+    @field_validator("llm_timeout_seconds", "local_llm_timeout_seconds")
     @classmethod
     def _validate_llm_timeout(cls, value: int) -> int:
         if value < 1:
