@@ -102,3 +102,8 @@ async def test_generate_response_keeps_first_answer_if_retry_still_uncited(monke
 
     assert answer == "First attempt."
     assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_local_response_fallback_is_truthful():
+    assert await inference_module.generate_response("question", [{"content": "source text"}]) == "source text"

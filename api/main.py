@@ -1,5 +1,4 @@
 """DepthAPI application."""
-import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -21,12 +20,13 @@ async def lifespan(_app: FastAPI):
     yield
     await close_pool()
 
+settings = get_settings()
 app = FastAPI(title="DepthAPI", version="0.1.0", lifespan=lifespan)
-limiter = Limiter(key_func=get_remote_address, default_limits=["120/minute"])
+limiter = Limiter(key_func=get_remote_address, default_limits=[f"{settings.slowapi_default_limit_per_minute}/minute"])
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, lambda _request, _exc: JSONResponse(status_code=429, content={"error": "rate limit exceeded"}))
 app.add_middleware(SlowAPIMiddleware)
-allowed_origins = [origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",") if origin.strip()]
+allowed_origins = [origin.strip() for origin in settings.allowed_origins.split(",") if origin.strip()]
 app.add_middleware(CORSMiddleware, allow_origins=allowed_origins, allow_credentials=False, allow_methods=["GET", "POST", "OPTIONS"], allow_headers=["authorization", "content-type"], max_age=3600)
 
 @app.middleware("http")

@@ -1,8 +1,7 @@
-"""Configuration and environment variables."""
-
+"""Configuration and environment variables for DepthAPI."""
 from functools import lru_cache
 
-from pydantic import AliasChoices, Field, SecretStr, field_validator
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,99 +9,34 @@ class Settings(BaseSettings):
     """Application settings loaded from environment."""
 
     environment: str = "development"
-    auth_provider_mode: str = "env"
-    dev_api_keys: str = Field(
-        default="",
-        validation_alias=AliasChoices("DEV_API_KEYS", "DEPTHAPI_API_KEYS"),
-    )
-    log_user_hash_salt: str = ""
-    groq_api_key: SecretStr = SecretStr("")
-    cerebras_api_key: SecretStr = SecretStr("")
-    gemini_api_key: SecretStr = SecretStr("")
-    openrouter_api_key: SecretStr = SecretStr("")
+    database_url: str = "postgresql://depthapi:depthapi@localhost:5432/depthapi"
+    redis_url: str = "redis://localhost:6379"
+    allowed_origins: str = "http://localhost:3000,http://localhost:5173"
+
+    # Inference (OpenAI-compatible)
     openai_api_key: SecretStr = SecretStr("")
-    openrouter_timeout_seconds: int = 90
+    llm_model: str = "gpt-4o-mini"
     llm_timeout_seconds: int = 60
+
+    # Embeddings
     embedding_provider: str = "local"
     embedding_model: str = "text-embedding-3-small"
     embedding_dimension: int = 768
-    llm_model: str = "gpt-4o-mini"
 
-    stream_max_seconds: int = 30
-    stream_heartbeat_seconds: int = 2
-    stream_start_timeout_seconds: int = 5
-    technical_stream_start_timeout_seconds: float = 8.0
-    stream_idempotency_ttl_seconds: int = 90
-    stream_idempotency_stale_seconds: int = 20
-    stream_fallback_budget_seconds: int = 8
-    trusted_proxies: str = ""
-
-    # Retrieval strategy: dense-first with hybrid fallback.
+    # Retrieval strategy: dense-first with hybrid fallback
     dense_hit_min_results: int = 5
     dense_hit_min_similarity: float = 0.5
     rerank_skip_similarity: float = 0.8
 
-    # Query-result cache (Redis) and per-key daily token quotas.
+    # Query-result cache (Redis) and per-key daily token quotas
     query_cache_ttl_seconds: int = 3600
     quota_enabled: bool = True
-
-    redis_url: str = "redis://localhost:6379"
-    database_url: str = "postgresql://depthapi:depthapi@localhost:5432/depthapi"
-    cache_ttl: int = 86400
-    rate_limit_strategy: str = "redis"
-    rate_limit_per_user: int = 20
-    rate_limit_burst: int = 5
-    rate_limit_burst_window_seconds: int = 10
-    rate_limit_sustained_window_seconds: int = 60
-    anonymous_rate_limit_per_ip: int = 8
-    anonymous_rate_limit_burst: int = 3
-    anonymous_rate_limit_window_seconds: int = 60
     daily_token_quota_per_user: int = 50000
-    quota_window_seconds: int = 86400
-    circuit_breaker_tokens_per_minute: int = 300000
-    circuit_breaker_open_seconds: int = 60
-    circuit_breaker_action: str = "reject"
-    estimated_output_tokens_per_request: int = 1500
-    message_rate_limit_max: int = 30
-    message_rate_limit_window_seconds: int = 60
-    message_cache_ttl_seconds: int = 3600
-    pro_state_cache_ttl_seconds: int = 30
     pro_daily_token_quota: int = 200000
-    pro_hourly_token_quota: int = 40000
-    pro_rpm: int = 30
-    pro_burst: int = 10
-    anon_daily_token_quota: int = 5000
-    anon_rph: int = 10
-    conversation_context_max_tokens: int = 1200
-    conversation_context_summary_tokens: int = 240
-    conversation_context_fetch_limit: int = 80
 
-    max_input_chars_api: int = 100000  # Hard cap for API (100K chars)
-    max_input_tokens: int = 15000
-    max_input_tokens_technical: int = 15000  # ~60K chars
-
-    large_input_char_threshold: int = (
-        5000  # Trigger on 5K+ chars regardless of truncation
-    )
-    large_input_token_threshold: int = (
-        5000
-    )
-    large_input_timeout_extension_multiplier: float = 1.5  # 50% longer for large inputs
-    technical_mode_timeout_extension: float = 1.3
-    tavily_api_key: str = ""
-    serper_api_key: str = ""
-    exa_api_key: str = ""
-    cerebras_daily_token_budget: int = 100000
-
+    # Rate limiting
     slowapi_enabled: bool = False
     slowapi_default_limit_per_minute: int = 120
-
-    sentry_dsn: str = ""
-    sentry_enabled: bool = True
-    sentry_traces_sample_rate: float = 0.1
-    sentry_profiles_sample_rate: float = 0.0
-    sentry_release: str = ""
-    sentry_auth_token: str = ""
 
     model_config = SettingsConfigDict(
         env_file=(".env.local", ".env", "../.env"),
@@ -110,14 +44,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    @field_validator(
-        "groq_api_key",
-        "cerebras_api_key",
-        "gemini_api_key",
-        "openrouter_api_key",
-        "openai_api_key",
-        mode="before",
-    )
+    @field_validator("openai_api_key", mode="before")
     @classmethod
     def _normalize_provider_key(cls, value: object) -> SecretStr:
         if value is None:
@@ -133,32 +60,6 @@ class Settings(BaseSettings):
     def _validate_llm_timeout(cls, value: int) -> int:
         if value < 1:
             raise ValueError("LLM timeout must be at least 1 second.")
-        return value
-
-    @field_validator("auth_provider_mode", mode="before")
-    @classmethod
-    def _normalize_auth_provider_mode(cls, value: object) -> str:
-        if value is None:
-            return "env"
-        normalized = str(value).strip().lower()
-        if normalized != "env":
-            raise ValueError("auth_provider_mode must be env.")
-        return normalized
-
-    @field_validator("dev_api_keys", mode="before")
-    @classmethod
-    def _normalize_dev_api_keys(cls, value: object) -> str:
-        if value is None:
-            return ""
-        return str(value).strip()
-
-    @field_validator(
-        "stream_max_seconds",
-    )
-    @classmethod
-    def _validate_stream_caps(cls, value: int) -> int:
-        if value < 1:
-            raise ValueError("Stream duration settings must be at least 1 second.")
         return value
 
 

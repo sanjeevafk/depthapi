@@ -78,35 +78,27 @@ def valid_config_file(tmp_path: Path) -> Path:
 # ─── DatasetConfig loading ────────────────────────────────────────────────────
 
 class TestDatasetConfigFromYaml:
-    def test_loads_valid_config(self, valid_config_file: Path):
+    def test_loads_valid_config_with_full_hierarchy(self, valid_config_file: Path):
         config = DatasetConfig.from_yaml(valid_config_file)
         assert config.name == "System Design Primer"
         assert config.version == "v1.0"
+        assert len(config.routing) == 1
+        assert config.routing[0].mime_type == "text/markdown"
+        mw_names = [m.name for m in config.routing[0].middleware]
+        assert "TocStripper" in mw_names
+        assert "AsciiDiagramPreserver" in mw_names
+        assert "token_count_too_low" in config.error_handling
+        assert config.error_handling["token_count_too_low"].severity == "WARN"
 
     def test_missing_file_raises(self, tmp_path: Path):
         with pytest.raises(FileNotFoundError):
             DatasetConfig.from_yaml(tmp_path / "nonexistent.yaml")
 
-    def test_routing_has_one_rule(self, valid_config_file: Path):
-        config = DatasetConfig.from_yaml(valid_config_file)
-        assert len(config.routing) == 1
-        assert config.routing[0].mime_type == "text/markdown"
-
-    def test_middleware_chain_loaded(self, valid_config_file: Path):
-        config = DatasetConfig.from_yaml(valid_config_file)
-        mw_names = [m.name for m in config.routing[0].middleware]
-        assert "TocStripper" in mw_names
-        assert "AsciiDiagramPreserver" in mw_names
-
-    def test_error_policies_loaded(self, valid_config_file: Path):
-        config = DatasetConfig.from_yaml(valid_config_file)
-        assert "token_count_too_low" in config.error_handling
-        assert config.error_handling["token_count_too_low"].severity == "WARN"
-
     def test_config_is_immutable(self, valid_config_file: Path):
         config = DatasetConfig.from_yaml(valid_config_file)
         with pytest.raises(Exception):
             config.name = "mutated"  # type: ignore[misc]
+
 
 
 class TestDatasetConfigGetters:

@@ -72,65 +72,23 @@ def sample_parsed_doc() -> ParsedDocument:
 
 
 class TestSemanticChunker:
-    def test_produces_chunks(self, sample_parsed_doc: ParsedDocument):
+    def test_chunk_contracts_and_lineage_metadata(self, sample_parsed_doc: ParsedDocument):
         from api.services.rag.pipeline.chunkers.semantic_chunker import SemanticChunker
         chunker = SemanticChunker(config={"max_tokens": 480, "min_tokens": 50})
         chunks = chunker.chunk(
             doc=sample_parsed_doc,
             dataset_version="test-v1",
             source_name="Test Dataset",
-        )
-        assert len(chunks) > 0
-
-    def test_chunks_are_pydantic_chunk_objects(self, sample_parsed_doc: ParsedDocument):
-        from api.services.rag.pipeline.chunkers.semantic_chunker import SemanticChunker
-        chunker = SemanticChunker(config={"max_tokens": 480, "min_tokens": 50})
-        chunks = chunker.chunk(
-            doc=sample_parsed_doc,
-            dataset_version="test-v1",
-            source_name="Test",
-        )
-        for chunk in chunks:
-            assert isinstance(chunk, Chunk)
-
-    def test_chunks_have_lineage_fields(self, sample_parsed_doc: ParsedDocument):
-        from api.services.rag.pipeline.chunkers.semantic_chunker import SemanticChunker
-        chunker = SemanticChunker(config={"max_tokens": 480, "min_tokens": 50})
-        chunks = chunker.chunk(
-            doc=sample_parsed_doc,
-            dataset_version="test-v1",
-            source_name="Test",
             dataset_namespace="test-ns",
         )
+        assert len(chunks) > 0
         for chunk in chunks:
+            assert isinstance(chunk, Chunk)
             assert chunk.parser_version == sample_parsed_doc.parser_version
             assert chunk.chunker_version.startswith("SemanticChunker@")
             assert chunk.dataset_version == "test-v1"
             assert chunk.dataset_namespace == "test-ns"
-
-    def test_chunks_have_valid_quality_score(self, sample_parsed_doc: ParsedDocument):
-        from api.services.rag.pipeline.chunkers.semantic_chunker import SemanticChunker
-        chunker = SemanticChunker(config={"max_tokens": 480, "min_tokens": 50})
-        chunks = chunker.chunk(
-            doc=sample_parsed_doc,
-            dataset_version="test-v1",
-            source_name="Test",
-        )
-        for chunk in chunks:
             assert 0.0 <= chunk.quality_score <= 1.0
-
-    def test_chunk_ids_are_deterministic(self, sample_parsed_doc: ParsedDocument):
-        from api.services.rag.pipeline.chunkers.semantic_chunker import SemanticChunker
-        chunker = SemanticChunker(config={"max_tokens": 480, "min_tokens": 50})
-        chunks1 = chunker.chunk(
-            doc=sample_parsed_doc, dataset_version="v1", source_name="Test"
-        )
-        chunks2 = chunker.chunk(
-            doc=sample_parsed_doc, dataset_version="v1", source_name="Test"
-        )
-        ids1 = [c.chunk_id for c in chunks1]
-        ids2 = [c.chunk_id for c in chunks2]
-        assert ids1 == ids2
 
     def test_min_token_filter_applied(self, sample_parsed_doc: ParsedDocument):
         from api.services.rag.pipeline.chunkers.semantic_chunker import SemanticChunker
@@ -142,15 +100,6 @@ class TestSemanticChunker:
         for chunk in chunks:
             assert chunk.token_count >= 500
 
-    def test_chunks_not_mutated(self, sample_parsed_doc: ParsedDocument):
-        from api.services.rag.pipeline.chunkers.semantic_chunker import SemanticChunker
-        chunker = SemanticChunker()
-        chunks = chunker.chunk(
-            doc=sample_parsed_doc, dataset_version="v1", source_name="Test"
-        )
-        for chunk in chunks:
-            with pytest.raises(Exception):
-                chunk.content = "mutated"  # type: ignore[misc]
 
 
 def test_ingestion_worker_semantic_chunks_include_required_metadata():

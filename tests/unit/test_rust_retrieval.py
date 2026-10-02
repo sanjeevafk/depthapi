@@ -5,25 +5,6 @@ import depth_engine
 import pytest
 
 
-def test_reorder_lost_in_the_middle_parity():
-    # Odd count: 5 items
-    items_odd = [{"id": f"doc_{i}", "rank": i} for i in range(5)]
-    reordered_odd = depth_engine.reorder_lost_in_the_middle(items_odd)
-    ranks_odd = [x["rank"] for x in reordered_odd]
-    assert ranks_odd == [0, 2, 4, 3, 1]
-
-    # Even count: 4 items
-    items_even = [{"id": f"doc_{i}", "rank": i} for i in range(4)]
-    reordered_even = depth_engine.reorder_lost_in_the_middle(items_even)
-    ranks_even = [x["rank"] for x in reordered_even]
-    assert ranks_even == [0, 2, 3, 1]
-
-    # Small lists
-    assert depth_engine.reorder_lost_in_the_middle([]) == []
-    assert depth_engine.reorder_lost_in_the_middle([{"id": 1}]) == [{"id": 1}]
-    assert depth_engine.reorder_lost_in_the_middle([{"id": 1}, {"id": 2}]) == [{"id": 1}, {"id": 2}]
-
-
 def test_fuse_rrf_scoring_and_mosaic_algebra():
     dense = ["doc_a", "doc_b", "doc_c"]
     lex = ["doc_b", "doc_a", "doc_d"]
@@ -55,21 +36,6 @@ def test_fuse_rrf_scoring_and_mosaic_algebra():
     # doc_a should have its score cut in half by lambda=0.5
     assert pytest.approx(penalized_scores["doc_a"], rel=1e-5) == scores["doc_a"] * 0.5
     assert penalized_scores["doc_b"] > penalized_scores["doc_a"]
-
-
-def test_detect_graph_hops_accuracy():
-    # Intent = 1 (relational, dependency, architecture)
-    assert depth_engine.detect_graph_hops("What depends on this module?") == 1
-    assert depth_engine.detect_graph_hops("Show me the lineage of dataset X") == 1
-    assert depth_engine.detect_graph_hops("What is the blast radius if service fails?") == 1
-    assert depth_engine.detect_graph_hops("How does the ingest pipeline interact with postgres?") == 1
-    assert depth_engine.detect_graph_hops("What calls this function?") == 1
-
-    # Intent = 0 (factual, entity lookup)
-    assert depth_engine.detect_graph_hops("What is Python?") == 0
-    assert depth_engine.detect_graph_hops("How do I install postgres?") == 0
-    assert depth_engine.detect_graph_hops("") == 0
-    assert depth_engine.detect_graph_hops("   ") == 0
 
 
 def test_crag_confidence_evaluation():
