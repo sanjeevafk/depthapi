@@ -50,6 +50,11 @@ TOOL_DEFINITIONS = [
                     "type": "string",
                     "description": "Optional UUID of knowledge collection.",
                 },
+                "explain": {
+                    "type": "boolean",
+                    "description": "When true, include detailed retrieval scoring and diagnostics in the response.",
+                    "default": False,
+                },
             },
             "required": ["query"],
         },
@@ -115,11 +120,13 @@ class DepthApiMcpServer:
 
         depth = int(args.get("depth", 3))
         collection_id = args.get("collection_id")
+        explain = bool(args.get("explain", False))
 
         req = QueryRequest(
             query=query_text,
             depth=depth,
             collection_id=collection_id,
+            explain=explain,
         )
 
         class FakeRequest:
@@ -134,6 +141,8 @@ class DepthApiMcpServer:
                 "citations": resp.citations,
                 "contexts_count": len(resp.contexts),
             }
+            if explain and "explanation" in resp.metadata:
+                output["explanation"] = resp.metadata["explanation"]
             return {
                 "isError": False,
                 "content": [{"type": "text", "text": json.dumps(output, indent=2)}],

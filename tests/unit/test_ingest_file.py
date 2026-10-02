@@ -229,3 +229,45 @@ async def test_ingest_file_binary_without_depth_engine_fails_415(mock_db, monkey
         )
 
     assert exc_info.value.status_code == 415
+
+
+@pytest.mark.asyncio
+async def test_ingest_file_exceeds_size_limit_by_payload(mock_db, monkeypatch):
+    monkeypatch.setattr(ingest_module, "MAX_FILE_BYTES", 100)
+    oversized = b"a" * 101
+    upload = UploadFile(file=io.BytesIO(oversized), filename="large.txt")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await ingest_module.ingest_file(
+            file=upload,
+            collection_id=None,
+            collection_name=None,
+            source_url=None,
+            metadata=None,
+            engine=None,
+            _api_key=_api_key(),
+        )
+
+    assert exc_info.value.status_code == 413
+    assert "limit" in exc_info.value.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_ingest_file_exceeds_size_limit_by_file_size_attribute(mock_db, monkeypatch):
+    monkeypatch.setattr(ingest_module, "MAX_FILE_BYTES", 100)
+    upload = UploadFile(file=io.BytesIO(b"short"), filename="declared_large.txt", size=200)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await ingest_module.ingest_file(
+            file=upload,
+            collection_id=None,
+            collection_name=None,
+            source_url=None,
+            metadata=None,
+            engine=None,
+            _api_key=_api_key(),
+        )
+
+    assert exc_info.value.status_code == 413
+    assert "limit" in exc_info.value.detail.lower()
+

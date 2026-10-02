@@ -53,12 +53,12 @@ def reset_client() -> None:
 
 def cache_key(tenant_id: str, query: str, collection_id: str | None, depth: int,
               temperature: float, rerank: bool, use_trusted: bool,
-              graph_hops: int | None, llm_model: str) -> str:
+              graph_hops: int | None, llm_model: str, explain: bool = False) -> str:
     """Generate a deterministic Redis cache key scoped by tenant/API key ID."""
     material = "|".join([
         f"v{CACHE_VERSION}", query.strip(),
         collection_id or "", str(depth), f"{temperature:.2f}",
-        str(rerank), str(use_trusted), str(graph_hops), llm_model,
+        str(rerank), str(use_trusted), str(graph_hops), llm_model, str(explain),
     ])
     digest = hashlib.sha256(material.encode("utf-8"), usedforsecurity=False).hexdigest()
     return f"depthapi:q:{tenant_id}:{digest}"
