@@ -4,21 +4,10 @@ Unit tests for Agent Model Context Protocol (MCP) server.
 from __future__ import annotations
 
 import json
-import shutil
-import tempfile
 
 import pytest
 
 from api.mcp.server import DepthApiMcpServer
-from api.services.wiki.vault_manager import WikiVaultManager
-
-
-@pytest.fixture
-def mcp_vault():
-    temp_dir = tempfile.mkdtemp(prefix="test_mcp_vault_")
-    vault = WikiVaultManager(temp_dir)
-    yield vault
-    shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 @pytest.mark.asyncio
@@ -52,9 +41,6 @@ async def test_mcp_list_tools():
     expected_tools = {
         "depthapi_query",
         "depthapi_ingest",
-        "depthapi_explore_graph",
-        "depthapi_read_wiki",
-        "depthapi_lint_wiki",
     }
     assert expected_tools.issubset(tool_names)
 
@@ -92,8 +78,7 @@ async def test_mcp_tool_query(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_mcp_tool_ingest(monkeypatch, mcp_vault):
-    monkeypatch.setattr("api.mcp.server.get_vault_manager", lambda: mcp_vault)
+async def test_mcp_tool_ingest():
     server = DepthApiMcpServer()
 
     raw_text = "# Machine Learning\n\nML is a branch of [[Artificial Intelligence]].\n"
@@ -111,77 +96,6 @@ async def test_mcp_tool_ingest(monkeypatch, mcp_vault):
     payload = json.loads(resp["result"]["content"][0]["text"])
     assert payload["status"] == "ingested"
     assert "Machine Learning" in payload["concepts_extracted"]
-    assert payload["vault_synced"] is True
-
-
-@pytest.mark.asyncio
-async def test_mcp_tool_explore_and_read_wiki(monkeypatch, mcp_vault):
-    monkeypatch.setattr("api.mcp.server.get_vault_manager", lambda: mcp_vault)
-    mcp_vault.export_concepts_to_vault(
-        concepts=[
-            {"name": "Transformers", "concept_type": "architecture", "description": "Self-attention architecture."},
-            {"name": "Attention", "concept_type": "mechanism", "description": "Attention mechanism."},
-        ],
-        edges=[
-            {"source_concept": "Transformers", "target_concept": "Attention", "relation_type": "uses"},
-        ],
-    )
-
-    server = DepthApiMcpServer()
-
-    # Explore graph
-    explore_msg = {
-        "jsonrpc": "2.0",
-        "id": 6,
-        "method": "tools/call",
-        "params": {
-            "name": "depthapi_explore_graph",
-            "arguments": {"concept_name": "Transformers", "hops": 1},
-        },
-    }
-    resp_explore = await server.handle_message(explore_msg)
-    assert resp_explore["result"]["isError"] is False
-    subgraph = json.loads(resp_explore["result"]["content"][0]["text"])
-    assert subgraph["root"] == "Transformers"
-    assert any(n["concept"] == "Transformers" for n in subgraph["subgraph"])
-
-    # Read wiki
-    read_msg = {
-        "jsonrpc": "2.0",
-        "id": 7,
-        "method": "tools/call",
-        "params": {
-            "name": "depthapi_read_wiki",
-            "arguments": {"concept_name": "Transformers"},
-        },
-    }
-    resp_read = await server.handle_message(read_msg)
-    assert resp_read["result"]["isError"] is False
-    content = resp_read["result"]["content"][0]["text"]
-    assert "# Transformers" in content
-    assert "[[Attention]]" in content
-
-
-@pytest.mark.asyncio
-async def test_mcp_tool_lint_wiki(monkeypatch, mcp_vault):
-    monkeypatch.setattr("api.mcp.server.get_vault_manager", lambda: mcp_vault)
-    server = DepthApiMcpServer()
-
-    lint_msg = {
-        "jsonrpc": "2.0",
-        "id": 8,
-        "method": "tools/call",
-        "params": {
-            "name": "depthapi_lint_wiki",
-            "arguments": {},
-        },
-    }
-    resp = await server.handle_message(lint_msg)
-    assert resp["result"]["isError"] is False
-    report = json.loads(resp["result"]["content"][0]["text"])
-    assert "total_notes" in report
-    assert "broken_links" in report
-    assert "cycles" in report
 
 
 @pytest.mark.asyncio

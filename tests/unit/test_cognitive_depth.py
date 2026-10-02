@@ -1,11 +1,9 @@
 """
-Unit tests for OKF Cognitive Depth (Levels 1-5) and compounding Q&A wiki loop.
+Unit tests for OKF Cognitive Depth (Levels 1-5).
 """
 from __future__ import annotations
 
-import shutil
-import tempfile
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -13,32 +11,31 @@ from starlette.requests import Request
 
 from api.routers import query as query_module
 from api.services.security.api_key_auth import ApiKeyRecord
-from api.services.wiki.vault_manager import WikiVaultManager
 
 
 def _dummy_request() -> Request:
     return Request({"type": "http", "method": "POST", "url": "http://testserver/api/query", "headers": []})
 
 
-@pytest.fixture
-def isolated_vault():
-    temp_dir = tempfile.mkdtemp(prefix="test_depth_vault_")
-    vault = WikiVaultManager(temp_dir)
-    yield vault
-    shutil.rmtree(temp_dir, ignore_errors=True)
-
-
 @pytest.mark.asyncio
-async def test_cognitive_depth_1_direct_concept_summary(monkeypatch, isolated_vault):
+async def test_cognitive_depth_1_direct_concept_summary(monkeypatch):
     """Depth 1 delivers direct concept summaries with high token efficiency."""
-    isolated_vault.export_concepts_to_vault([
-        {
-            "name": "VectorSearch",
-            "concept_type": "retrieval",
-            "description": "Dense vector similarity search using embeddings.",
-        }
-    ])
-    monkeypatch.setattr(query_module, "get_vault_manager", lambda: isolated_vault)
+    concept_row = {
+        "id": uuid4(),
+        "name": "VectorSearch",
+        "concept_type": "retrieval",
+        "description": "Dense vector similarity search using embeddings.",
+        "metadata": {},
+    }
+
+    mock_conn = AsyncMock()
+    mock_conn.fetch.return_value = [concept_row]
+    mock_ctx = AsyncMock()
+    mock_ctx.__aenter__.return_value = mock_conn
+    mock_ctx.__aexit__.return_value = None
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value = mock_ctx
+    monkeypatch.setattr(query_module, "get_pool", lambda: mock_pool)
 
     async def fake_generate(q, ctxs, temp):
         return "VectorSearch performs dense nearest neighbor search."
@@ -156,32 +153,3 @@ async def test_cognitive_depth_5_graph_off_without_intent(monkeypatch):
     assert "dense_search_v5" in rpc_fns
     assert not any("graph" in fn for fn in rpc_fns)
 
-
-@pytest.mark.asyncio
-async def test_compounding_qa_save_to_wiki(monkeypatch, isolated_vault):
-    """save_to_wiki=True writes synthesized insight to the vault and log."""
-    monkeypatch.setattr(query_module, "get_vault_manager", lambda: isolated_vault)
-
-    async def fake_rpc(fn_name, params):
-        return [{"content": "Important chunk", "document_id": str(uuid4()), "concept_name": "Caching", "score": 0.05}]
-
-    async def fake_embed(texts):
-        return ["[" + ",".join(["0"] * 768) + "]"]
-
-    monkeypatch.setattr(query_module, "execute_rpc", fake_rpc)
-    monkeypatch.setattr(query_module, "embed_texts", fake_embed)
-    monkeypatch.setattr(query_module, "generate_response", AsyncMock(return_value="Caching accelerates repeated requests."))
-
-    req = query_module.QueryRequest(query="How does caching work?", depth=3, save_to_wiki=True)
-    res = await query_module.query(req, _dummy_request(), ApiKeyRecord(str(uuid4()), "pro", True))
-
-    assert res.metadata["saved_to_wiki"] is True
-
-    # Check vault has the synthesis note
-    concepts = isolated_vault.list_concepts()
-    assert any("synthesis_" in c["slug"] for c in concepts)
-
-    # Check log.md recorded the activity
-    log_content = (isolated_vault.vault_dir / "log.md").read_text(encoding="utf-8")
-    assert "Q&A Insight Saved" in log_content
-    assert "How does caching work?" in log_content

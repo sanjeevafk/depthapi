@@ -11,7 +11,7 @@ from slowapi.util import get_remote_address
 
 from api.adapters.pg_adapter import close_pool, init_pool
 from api.config import get_settings
-from api.routers import ingest, query, wiki
+from api.routers import ingest, query
 
 
 @asynccontextmanager
@@ -39,7 +39,6 @@ async def security_headers(_request: Request, call_next):
 
 app.include_router(query.router, prefix="/api")
 app.include_router(ingest.router, prefix="/api")
-app.include_router(wiki.router, prefix="/api")
 
 @app.get("/api/health")
 async def health():

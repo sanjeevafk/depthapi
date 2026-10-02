@@ -1,7 +1,7 @@
 """Unit tests for Redis query cache and per-key quotas (FakeRedis-backed)."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -58,16 +58,6 @@ async def test_bypass_cache_skips_lookup(monkeypatch, _isolated_query_cache):
 
     assert res.cached is False
     assert mock_rpc.await_count >= 1
-
-
-@pytest.mark.asyncio
-async def test_save_to_wiki_never_populates_cache(monkeypatch, _isolated_query_cache):
-    _mocks(monkeypatch)
-    with patch("api.routers.query.get_vault_manager"):
-        req = QueryRequest(query="Wiki write?", save_to_wiki=True)
-        await query(req, AsyncMock(), _key())
-
-    assert [k for k in _isolated_query_cache.store if k.startswith("depthapi:q:")] == []
 
 
 @pytest.mark.asyncio

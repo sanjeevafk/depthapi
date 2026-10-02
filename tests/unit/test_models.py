@@ -15,10 +15,8 @@ import pytest
 from api.services.rag.pipeline.models import (
     Chunk,
     Document,
-    ErrorRecord,
     ParsedDocument,
     QualityScoreInputs,
-    SourceFingerprint,
 )
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -274,47 +272,3 @@ class TestChunk:
             quality_score=0.0,  # will be overridden by validator
         )
         assert chunk.quality_score == pytest.approx(inputs.compute_score(), abs=0.001)
-
-
-# ─── ErrorRecord tests ────────────────────────────────────────────────────────
-
-class TestErrorRecord:
-    def test_error_record_immutable(self):
-        err = ErrorRecord(
-            error_id="err-001",
-            severity="ERROR",
-            classification="extraction_failed",
-            action="skip_document",
-            retryable=True,
-            source_uri="file:///test.md",
-            error_message="Parser failed",
-        )
-        with pytest.raises(Exception):
-            err.severity = "WARN"  # type: ignore[misc]
-
-    def test_error_record_defaults(self):
-        err = ErrorRecord(
-            error_id="err-001",
-            severity="WARN",
-            classification="token_count_too_low",
-            action="skip_chunk",
-            retryable=False,
-            source_uri="file:///test.md",
-            error_message="Too short",
-        )
-        assert err.retry_count == 0
-        assert err.max_retries == 3
-        assert err.attempted_at.tzinfo is UTC
-
-
-# ─── SourceFingerprint tests ──────────────────────────────────────────────────
-
-class TestSourceFingerprint:
-    def test_fingerprint_immutable(self):
-        fp = SourceFingerprint(
-            source_uri="file:///test.md",
-            last_fetch_timestamp=datetime.now(UTC),
-            content_hash="abc123",
-        )
-        with pytest.raises(Exception):
-            fp.content_hash = "xyz"  # type: ignore[misc]

@@ -24,19 +24,6 @@ from pydantic import BaseModel, Field, model_validator
 SCHEMA_VERSION = "1.0.0"
 
 
-# ─── Source fingerprint (incremental ingestion) ───────────────────────────────
-class SourceFingerprint(BaseModel):
-    """Tracks source state for incremental change detection."""
-
-    source_uri: str
-    last_fetch_timestamp: datetime
-    etag: str | None = None  # HTTP ETag for web sources
-    content_hash: str | None = None  # SHA-256 for filesystem sources
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-    model_config = {"frozen": True}
-
-
 # ─── Raw document from source ─────────────────────────────────────────────────
 class Document(BaseModel):
     """
@@ -254,51 +241,3 @@ class Chunk(BaseModel):
                 object.__setattr__(self, "quality_score", computed)
         return self
 
-
-# ─── Dead Letter Queue entry ──────────────────────────────────────────────────
-class ErrorRecord(BaseModel):
-    """
-    DLQ entry. Immutable record of an ingestion failure.
-
-    Written to data/dlq/<date>_errors.jsonl for inspection and replay.
-    """
-
-    error_id: str
-    severity: str  # "INFO" | "WARN" | "ERROR" | "FATAL"
-    classification: str  # e.g. "token_count_too_low", "extraction_failed"
-    action: str  # e.g. "skip_chunk", "skip_document", "retry"
-    retryable: bool
-    attempted_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    max_retries: int = 3
-    retry_count: int = 0
-
-    # Context
-    source_uri: str
-    doc_id: str | None = None
-    error_message: str
-    traceback: str | None = None
-    raw_content_preview: str | None = None  # First 200 chars for diagnostics
-
-    model_config = {"frozen": True}
-
-
-# ─── Ingestion result summary ─────────────────────────────────────────────────
-class IngestionResult(BaseModel):
-    """Summary returned by the orchestrator after a full ingestion run."""
-
-    dataset_name: str
-    mode: str  # "full" | "incremental" | "resume"
-    started_at: datetime
-    completed_at: datetime | None = None
-
-    documents_processed: int = 0
-    documents_skipped: int = 0
-    documents_failed: int = 0
-    chunks_written: int = 0
-    chunks_skipped_duplicate: int = 0
-    chunks_skipped_too_short: int = 0
-
-    dlq_path: str | None = None
-    error_rate: float = 0.0  # documents_failed / documents_processed
-
-    model_config = {"frozen": True}
