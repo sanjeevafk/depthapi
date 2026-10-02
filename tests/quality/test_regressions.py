@@ -17,9 +17,6 @@ import hashlib
 from datetime import UTC, datetime
 
 from api.services.rag.pipeline.chunkers.semantic_chunker import SemanticChunker
-from api.services.rag.pipeline.middleware.ascii_diagram_preserver import (
-    AsciiDiagramPreserver,
-)
 from api.services.rag.pipeline.middleware.toc_stripper import TocStripper
 from api.services.rag.pipeline.middleware.url_normalizer import UrlNormalizer
 from api.services.rag.pipeline.models import (
@@ -175,12 +172,6 @@ class TestMiddlewareIdempotency:
         once, twice = self._apply_twice(mw, parsed)
         assert once == twice, "TocStripper is not idempotent"
 
-    def test_ascii_preserver_idempotent(self):
-        mw = AsciiDiagramPreserver(config={"preserve_box_drawings": True, "min_diagram_lines": 3})
-        parsed = _make_parsed_doc()
-        once, twice = self._apply_twice(mw, parsed)
-        assert once == twice, "AsciiDiagramPreserver is not idempotent"
-
     def test_url_normalizer_idempotent(self):
         mw = UrlNormalizer(config={"strip_tracking_params": True})
         parsed = _make_parsed_doc()
@@ -200,15 +191,12 @@ class TestMiddlewareLineage:
     def test_middleware_chain_accumulates(self):
         parsed = _make_parsed_doc()
         toc = TocStripper(config={})
-        asc = AsciiDiagramPreserver(config={})
         url = UrlNormalizer(config={})
 
         after_toc = toc.process(parsed)
-        after_asc = asc.process(after_toc)
-        after_url = url.process(after_asc)
+        after_url = url.process(after_toc)
 
         assert "TocStripper" in after_url.applied_middleware
-        assert "AsciiDiagramPreserver" in after_url.applied_middleware
         assert "UrlNormalizer" in after_url.applied_middleware
 
     def test_config_hash_changes_with_different_configs(self):

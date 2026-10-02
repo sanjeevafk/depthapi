@@ -21,7 +21,6 @@ from api.services.rag.embeddings import embed_texts
 from api.services.rag.graph.router import detect_graph_hops
 from api.services.rag.reranker import get_reranker_service
 from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
-from api.services.wiki.vault_manager import get_vault_manager
 
 try:
     import depth_engine
@@ -75,10 +74,6 @@ class QueryRequest(BaseModel):
         le=5,
         description="Cognitive depth level (1-2: direct concept summaries, 3-4: dense-first hybrid, 5: deep retrieval + forced rerank; graph hops only on detected intent or manual override).",
     )
-    save_to_wiki: bool = Field(
-        default=False,
-        description="Compounding Q&A loop: write synthesized insight back to Karpathy LLM-Wiki vault.",
-    )
     use_quality_signals: bool = Field(
         default=False,
         description=(
@@ -113,8 +108,7 @@ class QueryResponse(BaseModel):
 async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = Depends(verify_api_key)) -> QueryResponse:
     settings = get_settings()
     model = settings.llm_model
-    # save_to_wiki has a side effect, so it never reads or populates the cache.
-    use_cache = not req.bypass_cache and not req.save_to_wiki
+    use_cache = not req.bypass_cache
     ckey = query_cache.cache_key(
         _api_key.id, req.query, req.collection_id, req.depth, req.temperature,
         req.rerank, req.use_trusted_corpus, req.graph_hops, model,
@@ -141,23 +135,6 @@ async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = De
         answer = "I could not find sufficient matching documentation in your collection to answer this query reliably."
     else:
         answer = await generate_response(req.query, ordered_contexts, req.temperature)
-
-    # Compounding Q&A loop: on save_to_wiki=True, save synthesized insight back to vault
-    if req.save_to_wiki and answer and confidence != "insufficient":
-        try:
-            ref_concepts = [
-                c.get("concept_name")
-                for c in contexts
-                if c.get("concept_name")
-            ]
-            get_vault_manager().save_qa_insight(
-                query=req.query,
-                answer=answer,
-                collection_id=str(collection_filter) if collection_filter else None,
-                referenced_concepts=ref_concepts,
-            )
-        except Exception as exc:
-            log.warning("save_to_wiki failed: %s", exc)
 
     citations = [{"source": row.get("source_url") or str(row.get("document_id") or "unknown")} for row in contexts]
     response_metadata["citations_enforced"] = (
@@ -233,36 +210,7 @@ async def _retrieve(
                         for r in concept_rows
                     ]
         except Exception as exc:
-            log.warning("Concept lookup failed, falling back to vault: %s", exc)
-
-        # If DB had no concept hits, check local vault
-        if not contexts:
-            v_manager = get_vault_manager()
-            v_concepts = v_manager.list_concepts()
-            q_lower = req.query.lower()
-            vault_matches = []
-            for vc in v_concepts:
-                name_lower = vc["name"].lower()
-                if name_lower in q_lower or any(term in name_lower for term in q_lower.split() if len(term) > 3):
-                    c_data = v_manager.read_concept(vc["slug"])
-                    vault_matches.append({
-                        "name": vc["name"],
-                        "concept_type": vc.get("concept_type", "topic"),
-                        "description": (c_data or {}).get("content", "")[:350],
-                    })
-                    if len(vault_matches) >= max_concepts:
-                        break
-            if vault_matches:
-                contexts = [
-                    {
-                        "content": f"### Concept: {c['name']} ({c['concept_type']})\n{c['description']}",
-                        "document_id": c["name"].lower(),
-                        "source_url": f"vault:{c['name']}",
-                        "concept_name": c["name"],
-                        "score": 1.0,
-                    }
-                    for c in vault_matches
-                ]
+            log.warning("Concept lookup failed: %s", exc)
 
     # Cognitive Depth 3-5 or fallback when Depths 1-2 found no concept notes.
     # Dense-first: a strong dense hit is used directly; the hybrid (dense +
@@ -382,7 +330,6 @@ async def _retrieve(
     response_metadata = {
         "depth": req.depth,
         "cognitive_depth": req.depth,
-        "saved_to_wiki": req.save_to_wiki,
         "graph_hops": effective_hops,
         "graph_mode": graph_mode,
         "confidence": confidence,
@@ -397,7 +344,7 @@ async def _retrieve(
 async def query_stream(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = Depends(verify_api_key)) -> StreamingResponse:
     settings = get_settings()
     model = settings.llm_model
-    use_cache = not req.bypass_cache and not req.save_to_wiki
+    use_cache = not req.bypass_cache
     ckey = query_cache.cache_key(
         _api_key.id, req.query, req.collection_id, req.depth, req.temperature,
         req.rerank, req.use_trusted_corpus, req.graph_hops, model,
@@ -462,17 +409,6 @@ async def query_stream(req: QueryRequest, request: Request, _api_key: ApiKeyReco
             response_metadata["citations_enforced"] = (
                 not contexts or confidence == "insufficient" or has_citation_markers(answer)
             )
-            if req.save_to_wiki and answer:
-                try:
-                    ref_concepts = [c.get("concept_name") for c in contexts if c.get("concept_name")]
-                    get_vault_manager().save_qa_insight(
-                        query=req.query,
-                        answer=answer,
-                        collection_id=str(collection_filter) if collection_filter else None,
-                        referenced_concepts=ref_concepts,
-                    )
-                except Exception as exc:
-                    log.warning("save_to_wiki failed: %s", exc)
             final = {"answer": answer, "contexts": contexts, "citations": citations, "metadata": response_metadata}
             yield f"data: {json.dumps(final, default=str)}\n\n"
         if settings.quota_enabled:

@@ -1,15 +1,10 @@
 """
-interfaces.py — Abstract base classes for all pipeline plugins.
-
-Every stage of the ingestion pipeline must implement one of these interfaces.
-Plugins are discovered via the registry and instantiated by the orchestrator.
+interfaces.py — Abstract base classes for pipeline components.
 
 Interface hierarchy:
-    BaseSource      → Fetches raw Documents from external sources
     BaseParser      → Converts raw bytes into ParsedDocument (Markdown)
     BaseMiddleware  → Applies deterministic transforms to ParsedDocument
     BaseChunker     → Splits ParsedDocument into List[Chunk]
-    BaseSink        → Persists List[Chunk] to storage
 
 Design invariants (all enforced by these interfaces):
     - Stateless except for config; no shared mutable state between calls
@@ -21,66 +16,12 @@ Design invariants (all enforced by these interfaces):
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
-from typing import Any
 
 from api.services.rag.pipeline.models import (
     Chunk,
     Document,
     ParsedDocument,
-    SourceFingerprint,
 )
-
-# ─── Source ───────────────────────────────────────────────────────────────────
-
-class BaseSource(ABC):
-    """
-    Fetch raw documents from an external source with incremental support.
-
-    Sources emit (Document, SourceFingerprint) tuples. The fingerprint
-    tracks the state of each document so the orchestrator can detect changes
-    on subsequent runs (incremental mode).
-    """
-
-    @abstractmethod
-    def fetch(
-        self,
-        since: dict[str, SourceFingerprint] | None = None,
-    ) -> Iterator[tuple[Document, SourceFingerprint]]:
-        """
-        Yield (Document, Fingerprint) for each discovered document.
-
-        Args:
-            since: Map of {source_uri → SourceFingerprint} from last run.
-                   If provided, skip documents whose fingerprint is unchanged.
-                   Pass None to fetch all documents (full mode).
-
-        Yields:
-            Tuple of (Document, SourceFingerprint) for each new/changed doc.
-        """
-
-    @abstractmethod
-    def validate_config(self, config: dict[str, Any]) -> bool:
-        """
-        Validate source-specific configuration.
-
-        Returns True if config is valid; raises ValueError with details if not.
-        """
-
-    def supports_incremental(self) -> bool:
-        """
-        Return True if this source supports change detection.
-
-        Sources that cannot detect changes (e.g. streaming) return False.
-        Override in subclasses that do not support incremental fetching.
-        """
-        return True
-
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """Unique source type identifier, e.g. 'LocalDirSource'."""
-
 
 # ─── Parser ───────────────────────────────────────────────────────────────────
 
@@ -235,45 +176,3 @@ class BaseChunker(ABC):
     @abstractmethod
     def version(self) -> str:
         """Semantic version, e.g. '1.0.0'."""
-
-
-# ─── Sink ─────────────────────────────────────────────────────────────────────
-
-class BaseSink(ABC):
-    """
-    Persist validated chunks to storage.
-
-    Sinks must be idempotent: writing the same chunk twice should not create
-    duplicates. Implement upsert semantics on (doc_id, chunk_order, content_hash).
-    """
-
-    @abstractmethod
-    def write(self, chunks: list[Chunk]) -> int:
-        """
-        Write chunks to storage.
-
-        Must be idempotent (safe to call with duplicates).
-
-        Args:
-            chunks: List of validated Chunk objects.
-
-        Returns:
-            Number of chunks actually written (new/updated, not skipped).
-        """
-
-    @abstractmethod
-    def validate_chunk(self, chunk: Chunk) -> bool:
-        """
-        Validate a chunk before writing.
-
-        Args:
-            chunk: Chunk to validate.
-
-        Returns:
-            True if valid; False if chunk should be skipped.
-        """
-
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """Unique sink identifier, e.g. 'LocalJsonSink'."""

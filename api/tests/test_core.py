@@ -11,7 +11,7 @@ def test_core_endpoints_are_registered():
     paths = set(app.openapi()["paths"])
     assert "/api/query" in paths
     assert "/api/ingest" in paths
-    assert "/api/wiki/export" in paths
+    assert "/api/ingest/file" in paths
     assert "/api/health" in paths
 
 
