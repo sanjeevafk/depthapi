@@ -12,7 +12,9 @@ services:
       - ./db/migrations/002_concepts_graph.sql:/docker-entrypoint-initdb.d/002_concepts_graph.sql:ro
       - ./db/migrations/003_fixes.sql:/docker-entrypoint-initdb.d/003_fixes.sql:ro
       - ./db/migrations/004_dense_search.sql:/docker-entrypoint-initdb.d/004_dense_search.sql:ro
-      - ./db/seed/001_dev_api_key.sql:/docker-entrypoint-initdb.d/004_dev_api_key.sql:ro
+      - ./db/migrations/005_rank_by_attribute.sql:/docker-entrypoint-initdb.d/005_rank_by_attribute.sql:ro
+      - ./db/migrations/006_halfvec_hnsw.sql:/docker-entrypoint-initdb.d/006_halfvec_hnsw.sql:ro
+      - ./db/seed/001_dev_api_key.sql:/docker-entrypoint-initdb.d/099_dev_api_key.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U depthapi"]
       interval: 5s

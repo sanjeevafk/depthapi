@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import re
 from typing import Any
 from uuid import UUID
 
@@ -33,6 +34,29 @@ except ImportError:
 router = APIRouter(tags=["query"])
 
 log = logging.getLogger(__name__)
+
+
+def parse_query_negations(query: str, explicit_negatives: list[str] | None = None) -> tuple[str, list[str]]:
+    """Extract negative query terms (e.g. 'NOT term', '-term', 'without term') and return sanitized query + negative terms."""
+    negatives: list[str] = list(explicit_negatives or [])
+    clean_query = query
+
+    not_pattern = re.compile(r'(?:^|\s+)(?:NOT|without|except|sans)\s+([A-Za-z0-9_\-]+)', re.IGNORECASE)
+    for match in not_pattern.finditer(clean_query):
+        term = match.group(1).strip()
+        if term and term.lower() not in [n.lower() for n in negatives]:
+            negatives.append(term.lower())
+    clean_query = not_pattern.sub(" ", clean_query)
+
+    dash_pattern = re.compile(r'(?:^|\s+)-([A-Za-z0-9_\-]+)')
+    for match in dash_pattern.finditer(clean_query):
+        term = match.group(1).strip()
+        if term and term.lower() not in [n.lower() for n in negatives]:
+            negatives.append(term.lower())
+    clean_query = dash_pattern.sub(" ", clean_query).strip()
+
+    clean_query = " ".join(clean_query.split()) or query.strip()
+    return clean_query, negatives
 
 
 def _confidence_from_scores(contexts: list[dict[str, Any]]) -> str:
@@ -99,6 +123,10 @@ class QueryRequest(BaseModel):
         default=False,
         description="When True, include detailed scoring breakdowns (dense/lexical/RRF/graph) and execution diagnostics in response metadata.",
     )
+    negative_terms: list[str] = Field(
+        default_factory=list,
+        description="Terms to penalize in retrieval ranking via Mosaic negative algebra (e.g. ['memcached', 'flask']).",
+    )
 
 
 class QueryResponse(BaseModel):
@@ -114,9 +142,11 @@ async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = De
     settings = get_settings()
     model = settings.llm_model
     use_cache = not req.bypass_cache
+    clean_query, negative_terms = parse_query_negations(req.query, req.negative_terms)
     ckey = query_cache.cache_key(
         _api_key.id, req.query, req.collection_id, req.depth, req.temperature,
         req.rerank, req.use_trusted_corpus, req.graph_hops, model, req.explain,
+        negative_terms=negative_terms,
     )
     if settings.quota_enabled:
         query_cache.check_quota(_api_key.id, _api_key.is_pro, query_cache.count_tokens(req.query, model))
@@ -130,7 +160,7 @@ async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = De
         if req.depth in (1, 2):
             return None
         try:
-            embs = await embed_texts([req.query])
+            embs = await embed_texts([clean_query])
             return embs[0] if embs else None
         except Exception as exc:
             log.warning("Concurrent embedding failed: %s", exc)
@@ -197,6 +227,8 @@ async def _retrieve(
     except ValueError as exc:
         raise HTTPException(400, "collection_id must be a UUID") from exc
 
+    clean_query, negative_terms = parse_query_negations(req.query, req.negative_terms)
+
     # Determine graph hops: explicit override wins; depths 1-2 never traverse;
     # otherwise follow the intent router. Graph expansion is off by default and
     # only engages on detected lineage/dependency intent or manual override.
@@ -207,7 +239,7 @@ async def _retrieve(
         effective_hops = 0
         graph_mode = "concept_direct"
     else:
-        effective_hops = detect_graph_hops(req.query)
+        effective_hops = detect_graph_hops(clean_query)
         graph_mode = "auto"
 
     contexts: list[dict[str, Any]] = []
@@ -218,7 +250,7 @@ async def _retrieve(
         try:
             pool = get_pool()
             async with pool.acquire() as conn:
-                escaped = req.query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                escaped = clean_query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
                 pattern = f"%{escaped}%"
                 concept_rows = await conn.fetch(
                     """
@@ -265,7 +297,7 @@ async def _retrieve(
                     pass
 
             embed_res, _ = await asyncio.gather(
-                embed_texts([req.query]),
+                embed_texts([clean_query]),
                 _acquire_conn(),
             )
             query_embedding = embed_res[0]
@@ -292,7 +324,7 @@ async def _retrieve(
         else:
             retrieval_mode = "hybrid"
             params: dict[str, Any] = {
-                "query_text": req.query,
+                "query_text": clean_query,
                 "query_embedding": query_embedding,
                 **base_params,
             }
@@ -325,6 +357,42 @@ async def _retrieve(
                 else:
                     raise HTTPException(503, "PostgreSQL retrieval is unavailable")
 
+    # Negative query algebra: penalize candidates containing negative terms via compiled Rust fuse_rrf
+    if negative_terms and contexts:
+        cid_to_ctx = {str(i): ctx for i, ctx in enumerate(contexts)}
+        candidate_ids = list(cid_to_ctx.keys())
+        candidate_texts = {cid: ctx.get("content", "") for cid, ctx in cid_to_ctx.items()}
+        if _HAS_DEPTH_ENGINE:
+            try:
+                fused = depth_engine.fuse_rrf(
+                    candidate_ids,
+                    candidate_ids,
+                    60.0,
+                    negative_terms=negative_terms,
+                    candidate_texts=candidate_texts,
+                )
+            except Exception as exc:
+                log.warning("depth_engine.fuse_rrf negative penalty failed: %s", exc)
+                fused = [(cid, 2.0 / (60.0 + idx)) for idx, cid in enumerate(candidate_ids)]
+        else:
+            norm_negs = [t.lower() for t in negative_terms]
+            scores: list[tuple[str, float]] = []
+            for idx, cid in enumerate(candidate_ids):
+                score = 2.0 / (60.0 + idx)
+                text_lower = candidate_texts[cid].lower()
+                if any(neg in text_lower for neg in norm_negs):
+                    score *= 0.5
+                scores.append((cid, score))
+            scores.sort(key=lambda x: x[1], reverse=True)
+            fused = scores
+
+        reordered = []
+        for cid, score in fused:
+            ctx = cid_to_ctx[cid]
+            ctx["score"] = score
+            reordered.append(ctx)
+        contexts = reordered
+
     # Reranking: depths 1-2 skip for sub-200ms latency; depth 5 forces it.
     # At depths 3-4 the cross-encoder runs as a rescue for marginal hits, but
     # is skipped on clear dense matches (cosine similarity at/above the
@@ -341,8 +409,18 @@ async def _retrieve(
     if should_rerank and contexts:
         try:
             top_n = 7 if req.depth == 5 else 5
-            contexts = await get_reranker_service().rerank(req.query, contexts, top_n=top_n)
+            contexts = await get_reranker_service().rerank(clean_query, contexts, top_n=top_n)
             rerank_applied = True
+            if negative_terms and contexts:
+                norm_negs = [t.lower() for t in negative_terms]
+                for ctx in contexts:
+                    content_lower = ctx.get("content", "").lower()
+                    if any(neg in content_lower for neg in norm_negs):
+                        if "rerank_score" in ctx:
+                            ctx["rerank_score"] = ctx["rerank_score"] - 2.0
+                        if "score" in ctx:
+                            ctx["score"] = (ctx["score"] or 0.0) * 0.5
+                contexts.sort(key=lambda c: c.get("rerank_score", c.get("score", 0.0)), reverse=True)
         except Exception as exc:
             log.warning("Rerank failed, using retrieval order: %s", exc)
 
@@ -387,6 +465,8 @@ async def _retrieve(
         "retrieval_mode": retrieval_mode,
         "rerank_applied": rerank_applied,
     }
+    if negative_terms:
+        response_metadata["negative_terms"] = negative_terms
     if req.explain:
         response_metadata["explanation"] = {
             "retrieval_mode": retrieval_mode,
@@ -405,6 +485,8 @@ async def _retrieve(
                 for c in contexts
             ],
         }
+        if negative_terms:
+            response_metadata["explanation"]["negative_terms"] = negative_terms
     return contexts, ordered_contexts, response_metadata, collection_filter, confidence
 
 
@@ -413,9 +495,11 @@ async def query_stream(req: QueryRequest, request: Request, _api_key: ApiKeyReco
     settings = get_settings()
     model = settings.llm_model
     use_cache = not req.bypass_cache
+    clean_query, negative_terms = parse_query_negations(req.query, req.negative_terms)
     ckey = query_cache.cache_key(
         _api_key.id, req.query, req.collection_id, req.depth, req.temperature,
         req.rerank, req.use_trusted_corpus, req.graph_hops, model, req.explain,
+        negative_terms=negative_terms,
     )
     if settings.quota_enabled:
         query_cache.check_quota(_api_key.id, _api_key.is_pro, query_cache.count_tokens(req.query, model))
@@ -429,7 +513,7 @@ async def query_stream(req: QueryRequest, request: Request, _api_key: ApiKeyReco
         if req.depth in (1, 2):
             return None
         try:
-            embs = await embed_texts([req.query])
+            embs = await embed_texts([clean_query])
             return embs[0] if embs else None
         except Exception as exc:
             log.warning("Concurrent embedding failed: %s", exc)
