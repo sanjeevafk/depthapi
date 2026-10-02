@@ -436,6 +436,9 @@ async def ingest(
     )
 
 
+MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB limit
+
+
 @router.post("/ingest/file", response_model=IngestResponse)
 async def ingest_file(
     file: UploadFile = File(...),
@@ -447,7 +450,13 @@ async def ingest_file(
     _api_key: ApiKeyRecord = Depends(verify_api_key),
 ) -> IngestResponse:
     """Unified document file ingestion: converts PDF, DOCX, XLSX, PPTX, CSV, EPUB, and Markdown via anydoc."""
-    file_bytes = await file.read()
+    if file.size and file.size > MAX_FILE_BYTES:
+        raise HTTPException(413, f"Uploaded file exceeds the {MAX_FILE_BYTES // (1024 * 1024)} MB limit")
+
+    file_bytes = await file.read(MAX_FILE_BYTES + 1)
+    if len(file_bytes) > MAX_FILE_BYTES:
+        raise HTTPException(413, f"Uploaded file exceeds the {MAX_FILE_BYTES // (1024 * 1024)} MB limit")
+
     if not file_bytes:
         raise HTTPException(400, "Uploaded file is empty")
 
@@ -467,7 +476,8 @@ async def ingest_file(
         try:
             import depth_engine
 
-            parsed = depth_engine.to_markdown(
+            parsed = await asyncio.to_thread(
+                depth_engine.to_markdown,
                 file_bytes,
                 filename_or_ext=filename,
                 mime_type=file.content_type,

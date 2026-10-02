@@ -1,4 +1,5 @@
 """Single, mode-free RAG query endpoint with OKF cognitive depth tuning."""
+import asyncio
 import json
 import logging
 from typing import Any
@@ -94,6 +95,10 @@ class QueryRequest(BaseModel):
         le=5.0,
         description="Weight for chunk quality_score [0,1] contribution. Used when use_quality_signals=True.",
     )
+    explain: bool = Field(
+        default=False,
+        description="When True, include detailed scoring breakdowns (dense/lexical/RRF/graph) and execution diagnostics in response metadata.",
+    )
 
 
 class QueryResponse(BaseModel):
@@ -111,25 +116,55 @@ async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = De
     use_cache = not req.bypass_cache
     ckey = query_cache.cache_key(
         _api_key.id, req.query, req.collection_id, req.depth, req.temperature,
-        req.rerank, req.use_trusted_corpus, req.graph_hops, model,
+        req.rerank, req.use_trusted_corpus, req.graph_hops, model, req.explain,
     )
     if settings.quota_enabled:
         query_cache.check_quota(_api_key.id, _api_key.is_pro, query_cache.count_tokens(req.query, model))
-    if use_cache:
-        hit = query_cache.get_cached(ckey)
-        if hit is not None:
-            try:
-                cached_resp = QueryResponse(**hit)
-            except Exception as exc:
-                log.warning("Cached payload invalid, treating as miss: %s", exc)
-                cached_resp = None
-            if cached_resp is not None:
-                if settings.quota_enabled:
-                    query_cache.consume_quota(_api_key.id, query_cache.count_tokens(req.query, model))
-                cached_resp.cached = True
-                return cached_resp
 
-    contexts, ordered_contexts, response_metadata, collection_filter, confidence = await _retrieve(req, _api_key)
+    async def _eval_cache() -> dict[str, Any] | None:
+        if not use_cache:
+            return None
+        return await asyncio.to_thread(query_cache.get_cached, ckey)
+
+    async def _embed_query() -> list[float] | None:
+        if req.depth in (1, 2):
+            return None
+        try:
+            embs = await embed_texts([req.query])
+            return embs[0] if embs else None
+        except Exception as exc:
+            log.warning("Concurrent embedding failed: %s", exc)
+            return None
+
+    async def _checkout_conn() -> None:
+        try:
+            pool = get_pool()
+            conn = await pool.acquire()
+            await pool.release(conn)
+        except Exception:
+            pass
+
+    hit, precomputed_embedding, _ = await asyncio.gather(
+        _eval_cache(),
+        _embed_query(),
+        _checkout_conn(),
+    )
+
+    if hit is not None:
+        try:
+            cached_resp = QueryResponse(**hit)
+        except Exception as exc:
+            log.warning("Cached payload invalid, treating as miss: %s", exc)
+            cached_resp = None
+        if cached_resp is not None:
+            if settings.quota_enabled:
+                query_cache.consume_quota(_api_key.id, query_cache.count_tokens(req.query, model))
+            cached_resp.cached = True
+            return cached_resp
+
+    contexts, ordered_contexts, response_metadata, collection_filter, confidence = await _retrieve(
+        req, _api_key, query_embedding=precomputed_embedding
+    )
 
     if confidence == "insufficient":
         answer = "I could not find sufficient matching documentation in your collection to answer this query reliably."
@@ -152,7 +187,9 @@ async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = De
 
 
 async def _retrieve(
-    req: QueryRequest, _api_key: ApiKeyRecord
+    req: QueryRequest,
+    _api_key: ApiKeyRecord,
+    query_embedding: list[float] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], UUID | None, str]:
     """Shared retrieval/rerank/confidence pipeline for query + query/stream."""
     try:
@@ -218,7 +255,20 @@ async def _retrieve(
     retrieval_mode = "concept" if contexts else "dense"
     if not contexts:
         settings = get_settings()
-        query_embedding = (await embed_texts([req.query]))[0]
+        if query_embedding is None:
+            async def _acquire_conn() -> None:
+                try:
+                    pool = get_pool()
+                    conn = await pool.acquire()
+                    await pool.release(conn)
+                except Exception:
+                    pass
+
+            embed_res, _ = await asyncio.gather(
+                embed_texts([req.query]),
+                _acquire_conn(),
+            )
+            query_embedding = embed_res[0]
         base_params: dict[str, Any] = {
             "collection_filter": collection_filter,
             "api_key_filter": UUID(_api_key.id),
@@ -337,6 +387,24 @@ async def _retrieve(
         "retrieval_mode": retrieval_mode,
         "rerank_applied": rerank_applied,
     }
+    if req.explain:
+        response_metadata["explanation"] = {
+            "retrieval_mode": retrieval_mode,
+            "effective_hops": effective_hops,
+            "graph_mode": graph_mode,
+            "rerank_applied": rerank_applied,
+            "confidence": confidence,
+            "total_chunks_retrieved": len(contexts),
+            "chunks": [
+                {
+                    "document_id": str(c.get("document_id") or ""),
+                    "source_url": c.get("source_url"),
+                    "score": c.get("score"),
+                    "match_source": c.get("match_source") or retrieval_mode,
+                }
+                for c in contexts
+            ],
+        }
     return contexts, ordered_contexts, response_metadata, collection_filter, confidence
 
 
@@ -347,20 +415,47 @@ async def query_stream(req: QueryRequest, request: Request, _api_key: ApiKeyReco
     use_cache = not req.bypass_cache
     ckey = query_cache.cache_key(
         _api_key.id, req.query, req.collection_id, req.depth, req.temperature,
-        req.rerank, req.use_trusted_corpus, req.graph_hops, model,
+        req.rerank, req.use_trusted_corpus, req.graph_hops, model, req.explain,
     )
     if settings.quota_enabled:
         query_cache.check_quota(_api_key.id, _api_key.is_pro, query_cache.count_tokens(req.query, model))
+
+    async def _eval_cache() -> dict[str, Any] | None:
+        if not use_cache:
+            return None
+        return await asyncio.to_thread(query_cache.get_cached, ckey)
+
+    async def _embed_query() -> list[float] | None:
+        if req.depth in (1, 2):
+            return None
+        try:
+            embs = await embed_texts([req.query])
+            return embs[0] if embs else None
+        except Exception as exc:
+            log.warning("Concurrent embedding failed: %s", exc)
+            return None
+
+    async def _checkout_conn() -> None:
+        try:
+            pool = get_pool()
+            conn = await pool.acquire()
+            await pool.release(conn)
+        except Exception:
+            pass
+
+    hit, precomputed_embedding, _ = await asyncio.gather(
+        _eval_cache(),
+        _embed_query(),
+        _checkout_conn(),
+    )
     replay: QueryResponse | None = None
-    if use_cache:
-        hit = query_cache.get_cached(ckey)
-        if hit is not None:
-            try:
-                replay = QueryResponse(**hit)
-                replay.cached = True
-            except Exception as exc:
-                log.warning("Cached payload invalid, treating as miss: %s", exc)
-                replay = None
+    if hit is not None:
+        try:
+            replay = QueryResponse(**hit)
+            replay.cached = True
+        except Exception as exc:
+            log.warning("Cached payload invalid, treating as miss: %s", exc)
+            replay = None
         if replay is not None:
             if settings.quota_enabled:
                 query_cache.consume_quota(_api_key.id, query_cache.count_tokens(req.query, model))
@@ -384,7 +479,9 @@ async def query_stream(req: QueryRequest, request: Request, _api_key: ApiKeyReco
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
 
-    contexts, ordered_contexts, response_metadata, collection_filter, confidence = await _retrieve(req, _api_key)
+    contexts, ordered_contexts, response_metadata, collection_filter, confidence = await _retrieve(
+        req, _api_key, query_embedding=precomputed_embedding
+    )
     citations = [{"source": row.get("source_url") or str(row.get("document_id") or "unknown")} for row in contexts]
 
     async def events():
