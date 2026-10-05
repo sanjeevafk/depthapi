@@ -436,7 +436,7 @@ async def ingest(
     )
 
 
-MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB limit
+MAX_FILE_BYTES = 75 * 1024 * 1024  # 75 MB limit
 
 
 @router.post("/ingest/file", response_model=IngestResponse)
@@ -489,6 +489,19 @@ async def ingest_file(
             user_metadata["parser_confidence"] = parsed.get("confidence", 1.0)
         except Exception as exc:
             log.warning("depth_engine.to_markdown failed on %s: %s", filename, exc)
+
+    # High-accuracy fallback for PDFs using pdf_inspector
+    if filename.lower().endswith(".pdf") and (not raw_text or user_metadata.get("parser_confidence", 1.0) < 0.8):
+        try:
+            import pdf_inspector
+            pi_text = await asyncio.to_thread(pdf_inspector.extract_text_bytes, file_bytes)
+            if pi_text and len(pi_text.strip()) > 30:
+                log.info("pdf_inspector extracted %d chars for %s", len(pi_text), filename)
+                raw_text = pi_text
+                user_metadata["parser_engine"] = "pdf_inspector"
+                user_metadata["parser_confidence"] = 0.95
+        except Exception as pi_exc:
+            log.debug("pdf_inspector fallback skipped or failed: %s", pi_exc)
 
     if not raw_text:
         # Fallback for plain text, markdown, or csv

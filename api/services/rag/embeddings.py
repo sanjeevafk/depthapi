@@ -1,6 +1,7 @@
 """Embedding generation with local SentenceTransformer and deterministic fallback."""
 from __future__ import annotations
 
+import asyncio
 import functools
 import hashlib
 import logging
@@ -70,7 +71,13 @@ async def embed_texts(texts: Sequence[str]) -> list[str]:
     model = get_local_transformer(DEFAULT_LOCAL_MODEL)
     if model is not None:
         try:
-            embeddings = model.encode(list(texts), normalize_embeddings=True)
+            embeddings = await asyncio.to_thread(
+                model.encode,
+                list(texts),
+                batch_size=64,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
             return [_vector_literal(emb.round(8).tolist()) for emb in embeddings]
         except Exception as exc:
             log.warning("Local neural embedding failed, falling back to hash: %s", exc)

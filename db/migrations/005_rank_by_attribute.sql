@@ -24,6 +24,12 @@
 --   * quality_score is already guaranteed [0, 1] by the ingestion pipeline, so
 --     no normalisation is needed.
 
+-- Add quality_score column to knowledge_chunks if not yet present.
+ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS quality_score float;
+CREATE INDEX IF NOT EXISTS knowledge_chunks_quality_idx
+    ON knowledge_chunks (quality_score)
+    WHERE quality_score IS NOT NULL;
+
 CREATE OR REPLACE FUNCTION hybrid_search_v6(
     query_text           text,
     query_embedding      vector(768),
@@ -128,12 +134,3 @@ CREATE OR REPLACE FUNCTION hybrid_search_trusted_v6(
         recency_weight, quality_weight
     )
 $$;
-
--- Add quality_score column to knowledge_chunks if not yet present.
--- (The ingestion pipeline already writes this; migration is idempotent.)
-ALTER TABLE knowledge_chunks ADD COLUMN IF NOT EXISTS quality_score float;
-
--- Index on quality_score for future filter-by-quality queries.
-CREATE INDEX IF NOT EXISTS knowledge_chunks_quality_idx
-    ON knowledge_chunks (quality_score)
-    WHERE quality_score IS NOT NULL;

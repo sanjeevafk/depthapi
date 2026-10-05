@@ -22,7 +22,11 @@ async def lifespan(_app: FastAPI):
 
 settings = get_settings()
 app = FastAPI(title="DepthAPI", version="0.1.0", lifespan=lifespan)
-limiter = Limiter(key_func=get_remote_address, default_limits=[f"{settings.slowapi_default_limit_per_minute}/minute"])
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=[f"{settings.slowapi_default_limit_per_minute}/minute"],
+    enabled=settings.slowapi_enabled,
+)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, lambda _request, _exc: JSONResponse(status_code=429, content={"error": "rate limit exceeded"}))
 app.add_middleware(SlowAPIMiddleware)
