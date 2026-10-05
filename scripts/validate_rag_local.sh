@@ -31,7 +31,7 @@ else
 fi
 
 for _ in {1..30}; do
-  if docker exec depthapi-postgres pg_isready -U depthapi -d depthapi >/dev/null 2>&1; then break; fi
+  if docker compose exec -T postgres pg_isready -U depthapi -d depthapi >/dev/null 2>&1 || docker exec depthapi-postgres pg_isready -U depthapi -d depthapi >/dev/null 2>&1; then break; fi
   sleep 1
 done
 
