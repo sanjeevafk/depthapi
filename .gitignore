@@ -75,6 +75,9 @@ evaluation/results/
 evaluation/evaluation/
 evaluation/benchmark_dataset.json
 evaluation/benchmark_corpus.json
+evaluation/*_queries.json
+scripts/ingest_*.py
+scripts/run_*_benchmark.py
 evaluation/*.log
 evaluation/*.sh
 uvicorn.log
