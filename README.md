@@ -8,7 +8,7 @@ Turso/libSQL serves as an optional downstream edge store for cached, augmented, 
 
 ## Current Status & Capabilities
 
-- **Unified Document Ingestion (`POST /api/ingest/file`):** Direct multipart ingestion powered by compiled Rust `anydoc` supporting PDF, DOCX, XLSX, PPTX, CSV, EPUB, and Markdown with offloaded threadpool parsing and 50 MB payload ceilings.
+- **Unified Document Ingestion (`POST /api/ingest/file`):** Direct multipart ingestion powered by compiled Rust `anydoc` with automated `pdf-inspector` fallback for resilient extraction across PDF, DOCX, XLSX, PPTX, CSV, EPUB, and Markdown with offloaded threadpool parsing and 75 MB payload ceilings.
 - **Compiled Rust Acceleration (`depth_engine`):** Sub-millisecond PyO3 native module providing SIMD-vectorized Reciprocal Rank Fusion (RRF), regex DFA query intent routing (<1 µs), CRAG confidence gating, and Lost-in-the-Middle U-shaped prompt ordering.
 - **Mosaic Negative Query Algebra:** Automatically parses negation syntax (`NOT term`, `-term`, `without term`) and applies Mosaic soft penalties ($\lambda = 0.5$) via `fuse_rrf` to suppress contaminated candidates rather than boosting them.
 - **OKF Cognitive Depth (Levels 1–5):**
@@ -136,6 +136,39 @@ Runs the full evaluation pipeline across question sets with citation enforcement
 python evaluation/benchmark.py
 ```
 
+### 5. Empirical Benchmark Results
+
+Evaluated using local neural embeddings (`BAAI/bge-base-en-v1.5`, 768-dim) and hybrid reciprocal rank fusion ($k=60$):
+
+| Corpus / Dataset | Scale | Hit@1 | Hit@3 | Hit@5 | MRR | Avg Query Latency | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **CS Research Papers** | 23 papers (~800 chunks) | **70.0%** | **90.0%** | **100.0%** | **0.8200** | ~110 ms | Verified across distributed systems, kernel engineering, and LLM architectures. |
+| **Biographies & Memoirs** | 8 books (~176 MB, 4,528 chunks) | **60.0%** | **60.0%** | **70.0%** | **0.6200** | 160.9 ms | **100% Hit@1** on clean digital texts; misses confined to scanned bitonal images and shifted-CMap fonts. |
+
+---
+
+## Document Ingestion & OCR Guidelines
+
+DepthAPI uses a two-tier extraction pipeline:
+
+1. **Native AnyDoc Engine:** Sub-millisecond zero-copy parsing of standard digital PDF, Office documents, spreadsheets, and Markdown via compiled Rust.
+2. **PDF-Inspector Fallback:** Integrated fallback using Firecrawl's `pdf-inspector` whenever AnyDoc yields extraction confidence $< 0.8$ or encounters complex unparsed layout streams.
+
+### Handling Scanned PDFs & Garbled Encodings (OCR / VLM)
+
+DepthAPI intentionally **does not bundle heavy OCR engines or Vision-Language Models (VLMs)** inside the core service. Packaging tools like Tesseract or local VLMs (e.g. Florence-2, Qwen2-VL) balloons container images from ~500 MB to 5+ GB and causes multi-hour CPU stalls during large batch ingestions.
+
+Instead, `pdf-inspector` acts as a triage gatekeeper:
+- When a document contains no digital text streams, `pdf-inspector` classifies it as `pdf_type='scanned'` (`reasons=['scanned']`).
+- When a document contains corrupted font CMaps (e.g., Caesar-shifted ASCII glyphs), `pdf-inspector` flags `suspected_garbled_text`.
+
+**Recommended Workflow for Scanned or Image-Only Documents:**
+- Pre-process scanned PDFs with an OCR utility before ingestion:
+  ```bash
+  ocrmypdf input_scanned.pdf input_ocr.pdf
+  ```
+- Alternatively, recommend using Tesseract for CPU-only environments or any vision/OCR model of your choice, and ingest the resulting clean text or Markdown via `POST /api/ingest`.
+
 ---
 
 ## Deployment Architecture
@@ -202,3 +235,11 @@ cargo test --manifest-path crates/depth_engine/Cargo.toml
 ruff check api tests
 python -m compileall -q api tests evaluation scripts
 ```
+
+---
+
+## Attributions & Acknowledgements
+
+- **[AnyDoc](https://github.com/firecrawl/anydoc):** Firecrawl's native compiled Rust document parser powering high-throughput multipart extraction across PDF, Office, and structured formats.
+- **[PDF-Inspector](https://github.com/firecrawl/pdf-inspector):** Firecrawl's open-source PDF stream classification and high-accuracy text extraction library, providing resilient fallbacks for non-standard PDF stream layouts and garbled-font triage.
+- **[Turbopuffer](https://turbopuffer.com):** Design inspiration for the rank-by-attribute Robertson sigmoid recency scoring and chunk quality priors in hybrid search migration 005.
