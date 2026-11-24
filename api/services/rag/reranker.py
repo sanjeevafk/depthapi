@@ -4,12 +4,11 @@ Uses Cross-Encoders to re-sort hybrid search results for higher precision.
 
 import asyncio
 import functools
+import logging
 import os
 from typing import Any
 
-import structlog
-
-logger = structlog.get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class RerankerService:
@@ -23,9 +22,9 @@ class RerankerService:
                 from sentence_transformers import CrossEncoder
 
                 self.model = CrossEncoder(self.model_name, device="cpu")
-                logger.info("reranker_model_loaded", model=self.model_name, device="cpu")
+                logger.info("Loaded reranker model %s on cpu", self.model_name)
             except Exception as exc:
-                logger.warning("reranker_model_load_failed", model=self.model_name, error=str(exc))
+                logger.warning("Failed to load reranker model %s: %s", self.model_name, exc)
                 return None
         return self.model
 
@@ -57,7 +56,7 @@ class RerankerService:
             sorted_candidates = sorted(candidates, key=lambda x: x["rerank_score"], reverse=True)
             return sorted_candidates[:top_n]
         except Exception as exc:
-            logger.warning("rerank_inference_failed", error=str(exc))
+            logger.warning("Rerank inference failed: %s", exc)
             return candidates[:top_n]
 
 
