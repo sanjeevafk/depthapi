@@ -35,7 +35,7 @@ async def test_query_default_graph_hops_uses_standard_rpc(monkeypatch):
     req = query_module.QueryRequest(query="Test query", graph_hops=0, rerank=False)
     res = await query_module.query(req, _dummy_request(), ApiKeyRecord(str(key_id), "free", False))
 
-    assert called_rpc == "hybrid_search_trusted_v5"
+    assert called_rpc == "hybrid_search_trusted_v7"
     assert "graph_hops" not in called_params
     assert len(res.contexts) == 1
 
@@ -64,7 +64,7 @@ async def test_query_with_graph_hops_calls_graph_rpc(monkeypatch):
     req = query_module.QueryRequest(query="Lineage query", graph_hops=2, rerank=False)
     res = await query_module.query(req, _dummy_request(), ApiKeyRecord(str(key_id), "free", False))
 
-    assert called_rpc == "hybrid_search_trusted_with_graph_v5"
+    assert called_rpc == "hybrid_search_trusted_with_graph_v7"
     assert called_params["graph_hops"] == 2
     assert len(res.contexts) == 2
 
@@ -78,7 +78,7 @@ async def test_query_graph_rpc_graceful_fallback_on_failure(monkeypatch):
 
     async def fake_rpc(function_name, params):
         rpc_calls.append(function_name)
-        if function_name == "hybrid_search_trusted_with_graph_v5":
+        if function_name == "hybrid_search_trusted_with_graph_v7":
             raise RuntimeError("Graph procedure unmigrated")
         return [{"content": "Fallback standard chunk", "document_id": str(uuid4()), "score": 0.03}]
 
@@ -89,6 +89,6 @@ async def test_query_graph_rpc_graceful_fallback_on_failure(monkeypatch):
     req = query_module.QueryRequest(query="Fallback query", graph_hops=1, rerank=False)
     res = await query_module.query(req, _dummy_request(), ApiKeyRecord(str(key_id), "free", False))
 
-    assert rpc_calls == ["hybrid_search_trusted_with_graph_v5", "hybrid_search_trusted_v5"]
+    assert rpc_calls == ["hybrid_search_trusted_with_graph_v7", "hybrid_search_trusted_v5"]
     assert len(res.contexts) == 1
     assert res.contexts[0]["content"] == "Fallback standard chunk"

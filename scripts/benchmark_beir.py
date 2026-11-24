@@ -303,6 +303,7 @@ def evaluate(
     max_seq_length: int | None = None,
     dense_weight: float = 1.5,
     lexical_weight: float = 0.5,
+    rerank_top_k: int = 25,
 ) -> dict[str, Any]:
     from api.config import get_settings
 
@@ -485,7 +486,7 @@ def evaluate(
         # 6. Hybrid RRF + Reranker (optional)
         if enable_rerank and reranker:
             t_start = time.perf_counter()
-            top_candidates = [{"id": did, "content": corpus[did]} for did in hybrid_ranked[:10]]
+            top_candidates = [{"id": did, "content": corpus[did]} for did in hybrid_ranked[:rerank_top_k]]
             import asyncio
 
             reranked = asyncio.run(reranker.rerank(query_text, top_candidates, top_n=10))
@@ -527,6 +528,7 @@ def main():
     parser.add_argument("--skip-graph", action="store_true", help="Skip concept graph extraction for faster large-corpus runs")
     parser.add_argument("--dense-weight", type=float, default=1.5, help="RRF weight for dense retrieval results")
     parser.add_argument("--lexical-weight", type=float, default=0.5, help="RRF weight for lexical BM25 results")
+    parser.add_argument("--rerank-top-k", type=int, default=25, help="Number of RRF candidates passed to CrossEncoder reranker")
     parser.add_argument("--output", type=str, default="datasets/benchmarks/results.json")
     args = parser.parse_args()
 
@@ -578,6 +580,7 @@ def main():
             max_seq_length=(None if args.max_seq_length <= 0 else args.max_seq_length),
             dense_weight=args.dense_weight,
             lexical_weight=args.lexical_weight,
+            rerank_top_k=args.rerank_top_k,
         )
 
         print("\n" + "=" * 65)

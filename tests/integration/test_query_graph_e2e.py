@@ -21,11 +21,11 @@ def client():
 @pytest.mark.parametrize(
     "query_text,req_hops,expected_hops,expected_mode,expected_rpc",
     [
-        ("When was Alabama founded?", None, 0, "auto", "hybrid_search_trusted_v5"),
-        ("What does the ingest pipeline depend on?", None, 1, "auto", "hybrid_search_trusted_with_graph_v5"),
-        ("Show the lineage of depth_engine parser", None, 1, "auto", "hybrid_search_trusted_with_graph_v5"),
-        ("Capital of France", 1, 1, "manual", "hybrid_search_trusted_with_graph_v5"),
-        ("What does the ingest pipeline depend on?", 0, 0, "manual", "hybrid_search_trusted_v5"),
+        ("When was Alabama founded?", None, 0, "auto", "hybrid_search_trusted_v7"),
+        ("What does the ingest pipeline depend on?", None, 1, "auto", "hybrid_search_trusted_with_graph_v7"),
+        ("Show the lineage of depth_engine parser", None, 1, "auto", "hybrid_search_trusted_with_graph_v7"),
+        ("Capital of France", 1, 1, "manual", "hybrid_search_trusted_with_graph_v7"),
+        ("What does the ingest pipeline depend on?", 0, 0, "manual", "hybrid_search_trusted_v7"),
     ],
 )
 def test_query_endpoint_e2e_routing(

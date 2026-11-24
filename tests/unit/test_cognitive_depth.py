@@ -79,7 +79,7 @@ async def test_cognitive_depth_3_scoped_hybrid(monkeypatch):
 
     assert res.metadata["cognitive_depth"] == 3
     assert res.metadata["depth"] == 3
-    assert called_rpc in ("hybrid_search_trusted_v5", "hybrid_search_trusted_with_graph_v5")
+    assert called_rpc in ("hybrid_search_trusted_v7", "hybrid_search_trusted_with_graph_v7")
 
 
 @pytest.mark.asyncio

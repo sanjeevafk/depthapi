@@ -69,7 +69,7 @@ async def test_dense_miss_falls_back_to_hybrid(monkeypatch):
     res = await query_module.query(req, _dummy_request(), ApiKeyRecord(str(uuid4()), "free", False))
 
     assert calls[0] == "dense_search_v5"
-    assert "hybrid_search_trusted_v5" in calls
+    assert "hybrid_search_trusted_v7" in calls
     assert res.metadata["retrieval_mode"] == "hybrid"
     assert res.contexts[0]["content"] == "Hybrid doc"
 
@@ -80,7 +80,7 @@ async def test_dense_error_falls_back_to_hybrid(monkeypatch):
     req, calls = _run(monkeypatch, [], hybrid_rows=hybrid, exc_dense=True)
     res = await query_module.query(req, _dummy_request(), ApiKeyRecord(str(uuid4()), "free", False))
 
-    assert "hybrid_search_trusted_v5" in calls
+    assert "hybrid_search_trusted_v7" in calls
     assert res.metadata["retrieval_mode"] == "hybrid"
 
 

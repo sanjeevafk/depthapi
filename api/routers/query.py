@@ -346,15 +346,20 @@ async def _retrieve(
             }
             if effective_hops > 0:
                 params["graph_hops"] = effective_hops
-                rpc_fn = "hybrid_search_trusted_with_graph_v5" if req.use_trusted_corpus else "hybrid_search_with_graph_v5"
-            elif req.use_quality_signals:
-                # Turbopuffer rank-by-attribute: blend recency decay + quality score
-                # into the BM25 first-stage scorer before RRF fusion.
-                params["recency_weight"] = req.recency_weight
-                params["quality_weight"] = req.quality_weight
-                rpc_fn = "hybrid_search_trusted_v6" if req.use_trusted_corpus else "hybrid_search_v6"
+                params["graph_weight"] = 0.25
+                params["dense_weight"] = settings.rrf_dense_weight
+                params["lexical_weight"] = settings.rrf_lexical_weight
+                rpc_fn = (
+                    "hybrid_search_trusted_with_graph_v7"
+                    if req.use_trusted_corpus
+                    else "hybrid_search_with_graph_v7"
+                )
             else:
-                rpc_fn = "hybrid_search_trusted_v5" if req.use_trusted_corpus else "hybrid_search_v5"
+                params["recency_weight"] = req.recency_weight if req.use_quality_signals else 0.0
+                params["quality_weight"] = req.quality_weight if req.use_quality_signals else 0.0
+                params["dense_weight"] = settings.rrf_dense_weight
+                params["lexical_weight"] = settings.rrf_lexical_weight
+                rpc_fn = "hybrid_search_trusted_v7" if req.use_trusted_corpus else "hybrid_search_v7"
 
             try:
                 raw_contexts = await execute_rpc(rpc_fn, params)
@@ -363,15 +368,23 @@ async def _retrieve(
                 else:
                     contexts = raw_contexts
             except Exception:
-                if effective_hops > 0:
-                    fallback_params = {k: v for k, v in params.items() if k != "graph_hops"}
-                    fallback_fn = "hybrid_search_trusted_v5" if req.use_trusted_corpus else "hybrid_search_v5"
-                    try:
-                        contexts = await execute_rpc(fallback_fn, fallback_params)
-                    except Exception as exc:
-                        raise HTTPException(503, "PostgreSQL retrieval is unavailable") from exc
+                # Graceful fallback to v5/v6 if 007_weighted_rrf.sql has not been applied yet
+                fallback_params = {
+                    "query_text": clean_query,
+                    "query_embedding": query_embedding,
+                    **base_params,
+                }
+                if req.use_quality_signals and effective_hops == 0:
+                    fallback_params["recency_weight"] = req.recency_weight
+                    fallback_params["quality_weight"] = req.quality_weight
+                    fallback_fn = "hybrid_search_trusted_v6" if req.use_trusted_corpus else "hybrid_search_v6"
                 else:
-                    raise HTTPException(503, "PostgreSQL retrieval is unavailable")
+                    fallback_fn = "hybrid_search_trusted_v5" if req.use_trusted_corpus else "hybrid_search_v5"
+                try:
+                    raw_contexts = await execute_rpc(fallback_fn, fallback_params)
+                    contexts = raw_contexts[:(1 if req.depth == 1 else 2)] if req.depth in (1, 2) else raw_contexts
+                except Exception as exc:
+                    raise HTTPException(503, "PostgreSQL retrieval is unavailable") from exc
 
     # Negative query algebra: penalize candidates containing negative terms
     if negative_terms and contexts:

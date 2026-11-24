@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     dense_hit_min_results: int = 5
     dense_hit_min_similarity: float = 0.5
     rerank_skip_similarity: float = 0.8
+    rrf_dense_weight: float = 1.5
+    rrf_lexical_weight: float = 0.5
 
     # Query-result cache (Redis) and per-key daily token quotas
     query_cache_ttl_seconds: int = 3600
