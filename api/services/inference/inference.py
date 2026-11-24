@@ -1,4 +1,5 @@
 """Mode-free response generation for retrieved contexts."""
+import functools
 import logging
 import re
 from collections.abc import AsyncIterator
@@ -63,6 +64,13 @@ def _citation_system_prompt() -> str:
     )
 
 
+@functools.lru_cache(maxsize=8)
+def _cached_openai_client(client_cls: Any, base_url: str | None, api_key: str, timeout: int) -> Any:
+    if base_url:
+        return client_cls(base_url=base_url, api_key=api_key, timeout=timeout)
+    return client_cls(api_key=api_key, timeout=timeout)
+
+
 def _get_llm_targets(settings: Any) -> list[_LLMTarget]:
     """Resolve ordered LLM provider targets: primary OpenAI followed by local LLM fallback."""
     targets: list[_LLMTarget] = []
@@ -71,7 +79,7 @@ def _get_llm_targets(settings: Any) -> list[_LLMTarget]:
         try:
             from openai import AsyncOpenAI
 
-            client = AsyncOpenAI(api_key=api_key, timeout=settings.llm_timeout_seconds)
+            client = _cached_openai_client(AsyncOpenAI, None, api_key, settings.llm_timeout_seconds)
             targets.append(_LLMTarget(client=client, model=settings.llm_model, max_chunks=None))
         except Exception as exc:
             logger.warning("Failed to initialize primary OpenAI client: %s", exc)
@@ -87,11 +95,7 @@ def _get_llm_targets(settings: Any) -> list[_LLMTarget]:
                 else "local"
             ) or "local"
             local_timeout = getattr(settings, "local_llm_timeout_seconds", 120)
-            client = AsyncOpenAI(
-                base_url=local_url,
-                api_key=local_key,
-                timeout=local_timeout,
-            )
+            client = _cached_openai_client(AsyncOpenAI, local_url, local_key, local_timeout)
             local_model = getattr(settings, "local_llm_model", "") or settings.llm_model
             max_chunks = getattr(settings, "local_llm_max_context_chunks", 3)
             targets.append(_LLMTarget(client=client, model=local_model, max_chunks=max_chunks))

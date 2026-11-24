@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
 import json
 import logging
 from typing import Any
@@ -15,10 +16,6 @@ from api.adapters.pg_adapter import get_pool
 from api.services.rag.embeddings import embed_texts
 from api.services.rag.graph.concept_extractor import extract_concepts_and_edges
 from api.services.rag.pipeline.chunkers.semantic_chunker import SemanticChunker
-from api.services.rag.pipeline.depth_engine_adapter import (
-    has_depth_engine,
-    run_depth_engine_pipeline,
-)
 from api.services.rag.pipeline.middleware.toc_stripper import TocStripper
 from api.services.rag.pipeline.middleware.url_normalizer import UrlNormalizer
 from api.services.rag.pipeline.models import (
@@ -60,23 +57,6 @@ URL_NORMALIZER = UrlNormalizer()
 CHUNKER = SemanticChunker(config={"min_tokens": 1, "max_tokens": 480})
 
 
-def _should_use_depth_engine(filename: str | None, engine: str | None) -> bool:
-    if not has_depth_engine():
-        return False
-    if engine == "depth-engine":
-        return True
-    if engine == "python":
-        return False
-    if filename:
-        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-        if ext in {
-            "pdf", "docx", "doc", "xlsx", "xls", "pptx", "ppt", "csv",
-            "html", "htm", "odt", "ods", "odp", "rtf", "epub",
-        }:
-            return True
-    return False
-
-
 def _run_pipeline(
     raw_text: str,
     document_id: UUID,
@@ -86,26 +66,7 @@ def _run_pipeline(
     user_metadata: dict[str, Any],
     engine: str | None = None,
 ) -> tuple[Document, list[Chunk]]:
-    """Process raw text through depth_engine (Rust native core) or declarative Python pipeline."""
-    if _should_use_depth_engine(filename, engine):
-        try:
-            return run_depth_engine_pipeline(
-                raw_text=raw_text,
-                document_id=document_id,
-                filename=filename,
-                source_url=source_url,
-                collection_name=collection_name,
-                user_metadata=user_metadata,
-                max_tokens=480,
-                min_tokens=1,
-            )
-        except Exception as exc:
-            log.warning(
-                "depth_engine processing failed, falling back to Python pipeline: %s",
-                exc,
-                exc_info=True,
-            )
-
+    """Process raw text through the declarative Python pipeline."""
     source_uri = source_url or filename or f"direct://upload/{document_id}"
 
     raw_bytes = raw_text.encode("utf-8")
@@ -471,46 +432,33 @@ async def ingest_file(
 
     raw_text: str = ""
     filename = file.filename or "uploaded_file"
+    ext = ("." + filename.rsplit(".", 1)[-1].lower()) if "." in filename else None
 
-    if has_depth_engine():
+    if ext in {".md", ".markdown", ".txt"}:
         try:
-            import depth_engine
+            raw_text = file_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(415, f"File '{filename}' is not valid UTF-8 text.") from exc
+    else:
+        try:
+            from markitdown import MarkItDown
 
-            parsed = await asyncio.to_thread(
-                depth_engine.to_markdown,
-                file_bytes,
-                filename_or_ext=filename,
-                mime_type=file.content_type,
-            )
-            raw_text = parsed.get("markdown", "")
-            if parsed.get("warnings"):
-                user_metadata["parser_warnings"] = parsed["warnings"]
-            user_metadata["detected_format"] = parsed.get("format", "unknown")
-            user_metadata["parser_confidence"] = parsed.get("confidence", 1.0)
+            def _convert() -> str:
+                res = MarkItDown().convert_stream(io.BytesIO(file_bytes), file_extension=ext)
+                return (res.text_content or "").strip()
+
+            raw_text = await asyncio.to_thread(_convert)
+            user_metadata["parser_engine"] = "markitdown"
         except Exception as exc:
-            log.warning("depth_engine.to_markdown failed on %s: %s", filename, exc)
-
-    # High-accuracy fallback for PDFs using pdf_inspector
-    if filename.lower().endswith(".pdf") and (not raw_text or user_metadata.get("parser_confidence", 1.0) < 0.8):
-        try:
-            import pdf_inspector
-            pi_text = await asyncio.to_thread(pdf_inspector.extract_text_bytes, file_bytes)
-            if pi_text and len(pi_text.strip()) > 30:
-                log.info("pdf_inspector extracted %d chars for %s", len(pi_text), filename)
-                raw_text = pi_text
-                user_metadata["parser_engine"] = "pdf_inspector"
-                user_metadata["parser_confidence"] = 0.95
-        except Exception as pi_exc:
-            log.debug("pdf_inspector fallback skipped or failed: %s", pi_exc)
+            log.warning("markitdown conversion failed on %s: %s", filename, exc)
 
     if not raw_text:
-        # Fallback for plain text, markdown, or csv
         try:
             raw_text = file_bytes.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise HTTPException(
                 415,
-                f"Binary format for '{filename}' requires depth_engine (anydoc) which failed or is not available.",
+                f"Unsupported or unreadable binary format for '{filename}'.",
             ) from exc
 
     if not raw_text.strip():

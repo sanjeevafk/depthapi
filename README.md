@@ -40,10 +40,12 @@ scripts/validate_rag_local.sh
 
 ### 2. Install & Start the API
 
-Install dependencies (with compiled Rust extension):
+Install Python dependencies and build the compiled Rust `depth_engine` extension:
 
 ```bash
 pip install -e ".[dev]"
+pip install maturin
+maturin develop --manifest-path crates/depth_engine/Cargo.toml --release
 ```
 
 Launch the FastAPI application:

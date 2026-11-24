@@ -1,18 +1,7 @@
-"""Local ingestion compatibility helpers.
-
-Compatibility adapter preserving the IngestionWorker chunking interface
-for offline callers and test suites, backed by depth_engine with pure-Python fallback.
-"""
+"""Local ingestion compatibility helpers."""
 from __future__ import annotations
 
 from typing import Any
-
-try:
-    import depth_engine
-    _HAS_DEPTH_ENGINE = True
-except ImportError:
-    depth_engine = None  # type: ignore[assignment]
-    _HAS_DEPTH_ENGINE = False
 
 
 class IngestionWorker:
@@ -30,40 +19,6 @@ class IngestionWorker:
         source_url: str | None = None,
     ) -> list[dict[str, Any]]:
         """Chunk Markdown and return dictionary representation."""
-        if _HAS_DEPTH_ENGINE and depth_engine is not None:
-            try:
-                chunks = depth_engine.chunk_markdown(
-                    markdown=text,
-                    doc_id=doc_id,
-                    source_name=source_name,
-                    source_url=source_url,
-                    dataset_version="v2",
-                    max_tokens=512,
-                    min_tokens=5,
-                )
-                return [
-                    {
-                        "doc_id": c["doc_id"],
-                        "chunk_id": f"{doc_id}#c{c['chunk_order']:03d}",
-                        "content": c["content"],
-                        "token_count": c["token_count"],
-                        "chunk_order": c["chunk_order"],
-                        "source_name": source_name,
-                        "source_url": source_url,
-                        "section_title": (c.get("metadata") or {}).get("hierarchy", [""])[-1] if (c.get("metadata") or {}).get("hierarchy") else "Overview",
-                        "metadata": c.get("metadata") or {},
-                    }
-                    for c in chunks
-                ]
-            except Exception as exc:
-                import logging as _logging
-                _logging.getLogger(__name__).warning(
-                    "depth_engine.chunk_markdown failed, falling back to block splitter: %s",
-                    exc,
-                    exc_info=True,
-                )
-
-        # Fallback pure-Python block splitting
         lines = text.splitlines(keepends=True)
         blocks: list[str] = []
         cur: list[str] = []

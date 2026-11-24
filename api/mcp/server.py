@@ -1,8 +1,6 @@
 """
 In-tree Model Context Protocol (MCP) server for DepthAPI.
-Exposes cognitive depth query, document ingestion, graph exploration,
-Karpathy LLM-Wiki vault reading, and compiled Rust vault linting to agents
-(Claude Code, Antigravity, Cursor, Hermes).
+Exposes cognitive depth query and concept-extraction ingestion to MCP clients.
 """
 from __future__ import annotations
 
@@ -15,14 +13,6 @@ from api.routers.query import QueryRequest
 from api.routers.query import query as execute_query
 from api.services.rag.graph.concept_extractor import extract_concepts_and_edges
 from api.services.security.api_key_auth import ApiKeyRecord
-
-try:
-    import depth_engine
-    _HAS_DEPTH_ENGINE = True
-except ImportError:
-    depth_engine = None  # type: ignore[assignment]
-    _HAS_DEPTH_ENGINE = False
-
 
 SERVER_NAME = "depthapi-mcp"
 SERVER_VERSION = "0.1.0"

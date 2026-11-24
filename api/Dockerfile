@@ -6,22 +6,12 @@ ENV PYTHONPATH=/app \
     PYTHONUNBUFFERED=1
 
 # NOTE: build from repo root: docker build -f api/Dockerfile .
-COPY . /tmp/src
-RUN set -eux; \
-    if [ -d /tmp/src/api ]; then \
-        pip install --no-cache-dir -r /tmp/src/api/requirements.txt; \
-        mkdir -p /app/api; \
-        cp -a /tmp/src/api/. /app/api/; \
-        rm -rf /app/api/tests /app/api/scripts; \
-    elif [ -f /tmp/src/requirements.txt ]; then \
-        pip install --no-cache-dir -r /tmp/src/requirements.txt; \
-        mkdir -p /app/api; \
-        cp -a /tmp/src/. /app/api/; \
-    else \
-        echo "No requirements.txt found in expected paths"; \
-        exit 1; \
-    fi; \
-    rm -rf /tmp/src
+COPY api/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt \
+    && rm -rf /tmp/requirements.txt
+
+COPY api /app/api
+RUN rm -rf /app/api/tests /app/api/scripts
 
 RUN useradd -m -u 10001 appuser && chown -R appuser:appuser /app
 USER appuser

@@ -24,13 +24,6 @@ from api.services.rag.graph.router import detect_graph_hops
 from api.services.rag.reranker import get_reranker_service
 from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
 
-try:
-    import depth_engine
-    _HAS_DEPTH_ENGINE = True
-except ImportError:
-    depth_engine = None  # type: ignore[assignment]
-    _HAS_DEPTH_ENGINE = False
-
 router = APIRouter(tags=["query"])
 
 log = logging.getLogger(__name__)
@@ -78,6 +71,14 @@ def _confidence_from_scores(contexts: list[dict[str, Any]]) -> str:
     if top < 0.020:
         return "medium"
     return "high"
+
+
+def _build_citations(ordered_contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Build citations aligned with the 1-based [N] numbering passed to the LLM."""
+    return [
+        {"source": row.get("source_url") or str(row.get("document_id") or "unknown")}
+        for row in ordered_contexts
+    ]
 
 
 class QueryRequest(BaseModel):
@@ -137,8 +138,11 @@ class QueryResponse(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-@router.post("/query", response_model=QueryResponse)
-async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = Depends(verify_api_key)) -> QueryResponse:
+async def _prepare_query(
+    req: QueryRequest,
+    _api_key: ApiKeyRecord,
+) -> tuple[Any, str, bool, str, QueryResponse | None, list[float] | None]:
+    """Check quota and concurrently evaluate cache, embed query, and warm DB pool."""
     settings = get_settings()
     model = settings.llm_model
     use_cache = not req.bypass_cache
@@ -180,17 +184,25 @@ async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = De
         _checkout_conn(),
     )
 
+    cached_resp: QueryResponse | None = None
     if hit is not None:
         try:
             cached_resp = QueryResponse(**hit)
+            cached_resp.cached = True
         except Exception as exc:
             log.warning("Cached payload invalid, treating as miss: %s", exc)
             cached_resp = None
-        if cached_resp is not None:
-            if settings.quota_enabled:
-                query_cache.consume_quota(_api_key.id, query_cache.count_tokens(req.query, model))
-            cached_resp.cached = True
-            return cached_resp
+        if cached_resp is not None and settings.quota_enabled:
+            query_cache.consume_quota(_api_key.id, query_cache.count_tokens(req.query, model))
+
+    return settings, model, use_cache, ckey, cached_resp, precomputed_embedding
+
+
+@router.post("/query", response_model=QueryResponse)
+async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = Depends(verify_api_key)) -> QueryResponse:
+    settings, model, use_cache, ckey, cached_resp, precomputed_embedding = await _prepare_query(req, _api_key)
+    if cached_resp is not None:
+        return cached_resp
 
     contexts, ordered_contexts, response_metadata, collection_filter, confidence = await _retrieve(
         req, _api_key, query_embedding=precomputed_embedding
@@ -201,7 +213,7 @@ async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = De
     else:
         answer = await generate_response(req.query, ordered_contexts, req.temperature)
 
-    citations = [{"source": row.get("source_url") or str(row.get("document_id") or "unknown")} for row in contexts]
+    citations = _build_citations(ordered_contexts)
     response_metadata["citations_enforced"] = (
         not contexts or confidence == "insufficient" or has_citation_markers(answer)
     )
@@ -357,34 +369,21 @@ async def _retrieve(
                 else:
                     raise HTTPException(503, "PostgreSQL retrieval is unavailable")
 
-    # Negative query algebra: penalize candidates containing negative terms via compiled Rust fuse_rrf
+    # Negative query algebra: penalize candidates containing negative terms
     if negative_terms and contexts:
         cid_to_ctx = {str(i): ctx for i, ctx in enumerate(contexts)}
         candidate_ids = list(cid_to_ctx.keys())
         candidate_texts = {cid: ctx.get("content", "") for cid, ctx in cid_to_ctx.items()}
-        if _HAS_DEPTH_ENGINE:
-            try:
-                fused = depth_engine.fuse_rrf(
-                    candidate_ids,
-                    candidate_ids,
-                    60.0,
-                    negative_terms=negative_terms,
-                    candidate_texts=candidate_texts,
-                )
-            except Exception as exc:
-                log.warning("depth_engine.fuse_rrf negative penalty failed: %s", exc)
-                fused = [(cid, 2.0 / (60.0 + idx)) for idx, cid in enumerate(candidate_ids)]
-        else:
-            norm_negs = [t.lower() for t in negative_terms]
-            scores: list[tuple[str, float]] = []
-            for idx, cid in enumerate(candidate_ids):
-                score = 2.0 / (60.0 + idx)
-                text_lower = candidate_texts[cid].lower()
-                if any(neg in text_lower for neg in norm_negs):
-                    score *= 0.5
-                scores.append((cid, score))
-            scores.sort(key=lambda x: x[1], reverse=True)
-            fused = scores
+        norm_negs = [t.lower() for t in negative_terms]
+        scores: list[tuple[str, float]] = []
+        for idx, cid in enumerate(candidate_ids):
+            score = 2.0 / (60.0 + idx)
+            text_lower = candidate_texts[cid].lower()
+            if any(neg in text_lower for neg in norm_negs):
+                score *= 0.5
+            scores.append((cid, score))
+        scores.sort(key=lambda x: x[1], reverse=True)
+        fused = scores
 
         reordered = []
         for cid, score in fused:
@@ -430,19 +429,6 @@ async def _retrieve(
     confidence = "high"
     if not contexts:
         confidence = "insufficient"
-    elif _HAS_DEPTH_ENGINE:
-        try:
-            eval_res = depth_engine.evaluate_confidence(contexts, False)
-            confidence = eval_res.get("confidence", "high")
-        except Exception:
-            if any("rerank_score" in c for c in contexts):
-                max_score = max(c.get("rerank_score", -999.0) for c in contexts)
-                if max_score < -2.0:
-                    confidence = "low"
-                elif max_score < 0.0:
-                    confidence = "medium"
-            elif any("score" in c for c in contexts):
-                confidence = _confidence_from_scores(contexts)
     elif any("rerank_score" in c for c in contexts):
         max_score = max(c.get("rerank_score", -999.0) for c in contexts)
         if max_score < -2.0:
@@ -492,81 +478,31 @@ async def _retrieve(
 
 @router.post("/query/stream")
 async def query_stream(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = Depends(verify_api_key)) -> StreamingResponse:
-    settings = get_settings()
-    model = settings.llm_model
-    use_cache = not req.bypass_cache
-    clean_query, negative_terms = parse_query_negations(req.query, req.negative_terms)
-    ckey = query_cache.cache_key(
-        _api_key.id, req.query, req.collection_id, req.depth, req.temperature,
-        req.rerank, req.use_trusted_corpus, req.graph_hops, model, req.explain,
-        negative_terms=negative_terms,
-    )
-    if settings.quota_enabled:
-        query_cache.check_quota(_api_key.id, _api_key.is_pro, query_cache.count_tokens(req.query, model))
+    settings, model, use_cache, ckey, replay, precomputed_embedding = await _prepare_query(req, _api_key)
+    if replay is not None:
+        async def replay_events():
+            yield ": stream start\n\n"
+            yield f"data: {json.dumps({'delta': replay.answer}, default=str)}\n\n"
+            final = {
+                "answer": replay.answer,
+                "contexts": replay.contexts,
+                "citations": replay.citations,
+                "cached": True,
+                "metadata": replay.metadata,
+            }
+            yield f"data: {json.dumps(final, default=str)}\n\n"
+            yield "data: [DONE]\n\n"
 
-    async def _eval_cache() -> dict[str, Any] | None:
-        if not use_cache:
-            return None
-        return await asyncio.to_thread(query_cache.get_cached, ckey)
-
-    async def _embed_query() -> list[float] | None:
-        if req.depth in (1, 2):
-            return None
-        try:
-            embs = await embed_texts([clean_query])
-            return embs[0] if embs else None
-        except Exception as exc:
-            log.warning("Concurrent embedding failed: %s", exc)
-            return None
-
-    async def _checkout_conn() -> None:
-        try:
-            pool = get_pool()
-            conn = await pool.acquire()
-            await pool.release(conn)
-        except Exception:
-            pass
-
-    hit, precomputed_embedding, _ = await asyncio.gather(
-        _eval_cache(),
-        _embed_query(),
-        _checkout_conn(),
-    )
-    replay: QueryResponse | None = None
-    if hit is not None:
-        try:
-            replay = QueryResponse(**hit)
-            replay.cached = True
-        except Exception as exc:
-            log.warning("Cached payload invalid, treating as miss: %s", exc)
-            replay = None
-        if replay is not None:
-            if settings.quota_enabled:
-                query_cache.consume_quota(_api_key.id, query_cache.count_tokens(req.query, model))
-
-            async def replay_events():
-                yield ": stream start\n\n"
-                yield f"data: {json.dumps({'delta': replay.answer}, default=str)}\n\n"
-                final = {
-                    "answer": replay.answer,
-                    "contexts": replay.contexts,
-                    "citations": replay.citations,
-                    "cached": True,
-                    "metadata": replay.metadata,
-                }
-                yield f"data: {json.dumps(final, default=str)}\n\n"
-                yield "data: [DONE]\n\n"
-
-            return StreamingResponse(
-                replay_events(),
-                media_type="text/event-stream",
-                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-            )
+        return StreamingResponse(
+            replay_events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     contexts, ordered_contexts, response_metadata, collection_filter, confidence = await _retrieve(
         req, _api_key, query_embedding=precomputed_embedding
     )
-    citations = [{"source": row.get("source_url") or str(row.get("document_id") or "unknown")} for row in contexts]
+    citations = _build_citations(ordered_contexts)
 
     async def events():
         # Heartbeat comment keeps proxies from closing idle streams.

@@ -211,8 +211,7 @@ async def test_ingest_file_invalid_collection_uuid_rejected(mock_db):
 
 
 @pytest.mark.asyncio
-async def test_ingest_file_binary_without_depth_engine_fails_415(mock_db, monkeypatch):
-    monkeypatch.setattr(ingest_module, "has_depth_engine", lambda: False)
+async def test_ingest_file_binary_unparseable_fails_415(mock_db):
     # Binary non-UTF-8 bytes
     binary_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\xff\xff"
     upload = UploadFile(file=io.BytesIO(binary_bytes), filename="sample.pdf")
