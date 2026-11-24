@@ -36,22 +36,30 @@ from api.services.rag.embeddings import embed_texts, get_local_transformer
 from api.services.rag.graph.concept_extractor import extract_concepts_and_edges
 
 
-def _encode_texts(texts: list[str], model: Any | None, batch_size: int = 32) -> np.ndarray:
+def _encode_texts(
+    texts: list[str], model: Any | None, batch_size: int = 32, dim: int | None = None
+) -> np.ndarray:
     """Embed texts using local SentenceTransformer when available, else API/hash embed_texts."""
     if model is not None:
         embs = model.encode(texts, batch_size=batch_size, show_progress_bar=len(texts) > 32, normalize_embeddings=True)
-        return np.array(embs, dtype=np.float32)
+        arr = np.array(embs, dtype=np.float32)
+    else:
+        vectors: list[list[float]] = []
 
-    vectors: list[list[float]] = []
+        async def _run() -> None:
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i : i + batch_size]
+                literals = await embed_texts(batch)
+                vectors.extend(json.loads(lit) for lit in literals)
 
-    async def _run() -> None:
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i : i + batch_size]
-            literals = await embed_texts(batch)
-            vectors.extend(json.loads(lit) for lit in literals)
+        asyncio.run(_run())
+        arr = np.array(vectors, dtype=np.float32)
 
-    asyncio.run(_run())
-    return np.array(vectors, dtype=np.float32)
+    if dim is not None and arr.shape[1] > dim:
+        arr = arr[:, :dim]
+        norms = np.linalg.norm(arr, axis=-1, keepdims=True)
+        arr = arr / np.where(norms == 0, 1.0, norms)
+    return arr
 
 DATASET_URLS = {
     "scifact": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip",
@@ -220,8 +228,13 @@ def evaluate(
     titles: dict[str, str] | None = None,
     cache_path: Path | None = None,
     enable_rerank: bool = False,
+    model_name: str | None = None,
+    dim: int | None = None,
 ) -> dict[str, Any]:
-    print(f"\nIndexing {len(corpus)} documents with BAAI/bge-base-en-v1.5...")
+    from api.config import get_settings
+
+    resolved_model = model_name or get_settings().embedding_model
+    print(f"\nIndexing {len(corpus)} documents with {resolved_model}...")
     doc_ids = list(corpus.keys())
 
     corpus_emb_matrix = None
@@ -234,11 +247,11 @@ def evaluate(
         except Exception:
             corpus_emb_matrix = None
 
-    model = get_local_transformer("BAAI/bge-base-en-v1.5")
+    model = get_local_transformer(resolved_model)
     if corpus_emb_matrix is None:
         corpus_texts = [corpus[did] for did in doc_ids]
         t0 = time.perf_counter()
-        corpus_emb_matrix = _encode_texts(corpus_texts, model, batch_size=32)
+        corpus_emb_matrix = _encode_texts(corpus_texts, model, batch_size=32, dim=dim)
         mode_label = "local SentenceTransformer" if model is not None else "API/fallback embed_texts"
         print(f"Corpus embedded via {mode_label} in {time.perf_counter() - t0:.2f}s (Shape: {corpus_emb_matrix.shape})")
         if cache_path:
@@ -296,7 +309,7 @@ def evaluate(
 
         # 1. Dense retrieval
         t_start = time.perf_counter()
-        q_emb = _encode_texts([query_text], model, batch_size=1)[0]
+        q_emb = _encode_texts([query_text], model, batch_size=1, dim=dim)[0]
         # Cosine similarity is dot product because vectors are normalized
         dense_scores = np.dot(corpus_emb_matrix, q_emb)
         dense_top_indices = np.argsort(-dense_scores)[:40]
@@ -399,6 +412,8 @@ def main():
     parser.add_argument("--limit-docs", type=int, default=1000, help="Max documents (0 for full)")
     parser.add_argument("--limit-queries", type=int, default=100, help="Max queries (0 for full)")
     parser.add_argument("--rerank", action="store_true", help="Include cross-encoder reranker")
+    parser.add_argument("--model", type=str, default=None, help="Embedding model name (defaults to EMBEDDING_MODEL setting)")
+    parser.add_argument("--dim", type=int, default=None, help="Optional Matryoshka truncation dimension (e.g. 256)")
     parser.add_argument("--output", type=str, default="datasets/benchmarks/results.json")
     args = parser.parse_args()
 
@@ -432,9 +447,18 @@ def main():
         )
         print(f"Loaded {len(corpus)} documents and {len(queries)} evaluated test queries.")
 
-        cache_path = data_dir / f"embeddings_{len(corpus)}.npz"
+        model_tag = (args.model or "default").replace("/", "_")
+        dim_tag = f"_{args.dim}d" if args.dim else ""
+        cache_path = data_dir / f"embeddings_{len(corpus)}_{model_tag}{dim_tag}.npz"
         summary = evaluate(
-            corpus, queries, qrels, titles=titles, cache_path=cache_path, enable_rerank=args.rerank
+            corpus,
+            queries,
+            qrels,
+            titles=titles,
+            cache_path=cache_path,
+            enable_rerank=args.rerank,
+            model_name=args.model,
+            dim=args.dim,
         )
 
         print("\n" + "=" * 65)
@@ -458,7 +482,7 @@ def main():
         print("\n" + "=" * 75)
         print("📊 CONSOLIDATED MULTI-DATASET SCOREBOARD (NDCG@10)")
         print("=" * 75)
-        header = f"{'Dataset':<12} | {'Lexical BM25':<14} | {'Dense Vector':<14} | {'Rust RRF Hybrid':<16} | {'Reranked':<14}"
+        header = f"{'Dataset':<12} | {'Lexical BM25':<14} | {'Dense Vector':<14} | {'RRF Hybrid':<16} | {'Reranked':<14}"
         print(header)
         print("-" * 75)
         for ds, data in all_manifest.items():
