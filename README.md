@@ -1,6 +1,6 @@
 # DepthAPI
 
-DepthAPI is a local-first retrieval-augmented generation (RAG) engine. PostgreSQL with `pgvector` is the primary datastore for documents, chunks, embeddings, and full-text search, with Redis for transient query caching and token quotas, and Turso (libSQL) for downstream edge retrieval and caching.
+DepthAPI is a local-first retrieval-augmented generation (RAG) engine. PostgreSQL with `pgvector` is the datastore for documents, chunks, embeddings, and full-text search, with Redis for transient query caching and token quotas.
 
 ---
 
@@ -89,25 +89,13 @@ curl -X POST http://localhost:8000/api/query \
 ```text
   Client / Agent ──(Bearer Auth)──▶ FastAPI (api.main:app)
                                        ├── Redis (query cache / token quotas)
-                                       └── PostgreSQL + pgvector (primary store)
-                                                │
-                                                ▼ (sync)
-                                           Turso / libSQL (edge retrieval & cache)
+                                       └── PostgreSQL + pgvector
 ```
 
 ### Docker Build
 
 ```bash
 docker build -f api/Dockerfile -t depthapi:latest .
-```
-
-### Edge Replication to Turso (libSQL)
-
-```bash
-export DATABASE_URL=postgresql://...
-export TURSO_DATABASE_URL=libsql://...
-export TURSO_AUTH_TOKEN=...
-python scripts/turso/sync_platform.py --full
 ```
 
 ---
