@@ -1,10 +1,76 @@
 """Deterministic concept and lineage extractor from document structure and content."""
 from __future__ import annotations
 
+import re
+from collections import Counter
 from collections.abc import Sequence
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+_STOPWORDS = frozenset({
+    "about", "above", "after", "again", "against", "all", "also", "among", "and",
+    "any", "are", "around", "because", "been", "before", "being", "below",
+    "between", "both", "but", "can", "could", "did", "does", "doing", "down",
+    "during", "each", "either", "even", "few", "for", "from", "further", "had",
+    "has", "have", "having", "her", "here", "hers", "herself", "him", "himself",
+    "his", "how", "however", "into", "its", "itself", "just", "like", "many",
+    "may", "more", "most", "much", "must", "neither", "nor", "not", "now",
+    "off", "once", "only", "other", "our", "ours", "out", "over", "own",
+    "same", "she", "should", "since", "some", "such", "than", "that", "the",
+    "their", "theirs", "them", "themselves", "then", "there", "these", "they",
+    "this", "those", "through", "thus", "too", "under", "until", "very", "was",
+    "were", "what", "when", "where", "which", "while", "who", "whom", "why",
+    "will", "with", "within", "without", "would", "you", "your", "yours",
+})
+_CAP_PHRASE_RE = re.compile(r"\b(?:[A-Z][a-zA-Z0-9-]{2,}(?:\s+[A-Z][a-zA-Z0-9-]{2,}){1,3}|[A-Z]{2,}[A-Z0-9-]*)\b")
+_WORD_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9-]{2,}")
+
+
+def _extract_prose_keyphrases(raw_text: str, max_terms: int = 6) -> list[str]:
+    """Extract deterministic salient keyphrases/entities from unstructured prose."""
+    if not raw_text or not raw_text.strip():
+        return []
+
+    scores: dict[str, float] = {}
+    display_form: dict[str, str] = {}
+
+    for match in _CAP_PHRASE_RE.finditer(raw_text):
+        phrase = " ".join(match.group(0).split())
+        key = phrase.lower()
+        if key in _STOPWORDS or len(key) < 3:
+            continue
+        display_form.setdefault(key, phrase)
+        scores[key] = scores.get(key, 0.0) + (3.0 if " " in key else 2.2)
+
+    tokens = [t.lower() for t in _WORD_RE.findall(raw_text)]
+    content_tokens = [t for t in tokens if len(t) >= 4 and t not in _STOPWORDS]
+
+    bigram_counts: Counter[str] = Counter()
+    for i in range(len(tokens) - 1):
+        a, b = tokens[i], tokens[i + 1]
+        if len(a) >= 4 and len(b) >= 4 and a not in _STOPWORDS and b not in _STOPWORDS:
+            bigram_counts[f"{a} {b}"] += 1
+
+    for bg, count in bigram_counts.most_common(12):
+        if count >= 2 or bg not in scores:
+            display_form.setdefault(bg, bg)
+            scores[bg] = scores.get(bg, 0.0) + count * 2.0
+
+    unigram_counts = Counter(content_tokens)
+    for ug, count in unigram_counts.most_common(12):
+        display_form.setdefault(ug, ug)
+        scores[ug] = scores.get(ug, 0.0) + count * 1.0
+
+    ranked = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))
+    selected: list[str] = []
+    for key, _ in ranked:
+        if any(key != s.lower() and key in s.lower() for s in selected):
+            continue
+        selected.append(display_form[key])
+        if len(selected) >= max_terms:
+            break
+    return selected
 
 
 class Concept(BaseModel):
@@ -170,6 +236,23 @@ def extract_concepts_and_edges(
                 if context_concept and target_name:
                     add_edge(context_concept, target_name, rel="references", weight=1.0)
 
+    # 3b. Extract salient keyphrases when document lacks explicit Markdown/wikilink structure
+    prose_keyphrases: list[str] = []
+    non_root_concepts = len(concepts_by_key) - (1 if root_name else 0)
+    if non_root_concepts == 0 and raw_text.strip():
+        prose_keyphrases = _extract_prose_keyphrases(raw_text, max_terms=6)
+        added_phrases: list[str] = []
+        for phrase in prose_keyphrases:
+            c_name = add_concept(phrase, c_type="keyphrase")
+            if not c_name:
+                continue
+            added_phrases.append(c_name)
+            if root_name and c_name.lower() != root_name.lower():
+                add_edge(root_name, c_name, rel="mentions", weight=0.7)
+        for i in range(len(added_phrases)):
+            for j in range(i + 1, min(i + 3, len(added_phrases))):
+                add_edge(added_phrases[i], added_phrases[j], rel="co_occurs", weight=0.5)
+
     # 4. Map chunks to concepts (only if concepts were discovered)
     if concepts_by_key and chunks:
         for idx, chunk in enumerate(chunks):
@@ -242,6 +325,21 @@ def extract_concepts_and_edges(
                                     metadata={"source": "entity_mention"},
                                 )
                             )
+
+            if prose_keyphrases:
+                c_content_lower = c_content.lower()
+                for phrase in prose_keyphrases:
+                    p_key = phrase.lower()
+                    if p_key not in linked_for_chunk and p_key in c_content_lower:
+                        linked_for_chunk.add(p_key)
+                        chunk_links.append(
+                            ChunkConceptLink(
+                                chunk_index=idx,
+                                concept_name=phrase,
+                                confidence=0.6,
+                                metadata={"source": "prose_keyphrase"},
+                            )
+                        )
 
     return ExtractedGraph(
         concepts=list(concepts_by_key.values()),

@@ -301,6 +301,8 @@ def evaluate(
     skip_graph: bool = False,
     batch_size: int = 16,
     max_seq_length: int | None = None,
+    dense_weight: float = 1.5,
+    lexical_weight: float = 0.5,
 ) -> dict[str, Any]:
     from api.config import get_settings
 
@@ -424,13 +426,13 @@ def evaluate(
         latencies_by_strategy["lexical"].append(time.perf_counter() - t_start)
         metrics_by_strategy["lexical"].append(compute_metrics(lex_top_ids, truth))
 
-        # 3. Hybrid RRF (k=60)
+        # 3. Weighted Hybrid RRF (k=60)
         t_start = time.perf_counter()
         rrf_scores: dict[str, float] = defaultdict(float)
         for rank, did in enumerate(dense_top_ids):
-            rrf_scores[did] += 1.0 / (60.0 + rank + 1)
+            rrf_scores[did] += dense_weight / (60.0 + rank + 1)
         for rank, did in enumerate(lex_top_ids):
-            rrf_scores[did] += 1.0 / (60.0 + rank + 1)
+            rrf_scores[did] += lexical_weight / (60.0 + rank + 1)
 
         hybrid_ranked = sorted(rrf_scores.keys(), key=lambda d: rrf_scores[d], reverse=True)
         latencies_by_strategy["hybrid_rrf"].append(time.perf_counter() - t_start)
@@ -438,6 +440,7 @@ def evaluate(
 
         # 4. Hybrid Graph 1-hop & 2-hop
         if not skip_graph:
+            max_concept_df = max(50, len(corpus) // 20)
             t_start = time.perf_counter()
             graph_1hop_scores = dict(rrf_scores)
             seed_docs = hybrid_ranked[:5]
@@ -450,7 +453,10 @@ def evaluate(
                 traversed_1hop.update(concept_edges[sc])
 
             for c in traversed_1hop:
-                for target_did in concept_docs[c]:
+                target_docs = concept_docs[c]
+                if len(target_docs) > max_concept_df:
+                    continue
+                for target_did in target_docs:
                     graph_1hop_scores[target_did] = graph_1hop_scores.get(target_did, 0.0) + (1.0 / (60.0 + 1)) * 0.25
 
             ranked_1hop = sorted(graph_1hop_scores.keys(), key=lambda d: graph_1hop_scores[d], reverse=True)
@@ -466,7 +472,10 @@ def evaluate(
             traversed_2hop.difference_update(traversed_1hop)
 
             for c in traversed_2hop:
-                for target_did in concept_docs[c]:
+                target_docs = concept_docs[c]
+                if len(target_docs) > max_concept_df:
+                    continue
+                for target_did in target_docs:
                     graph_2hop_scores[target_did] = graph_2hop_scores.get(target_did, 0.0) + (1.0 / (60.0 + 2)) * 0.25
 
             ranked_2hop = sorted(graph_2hop_scores.keys(), key=lambda d: graph_2hop_scores[d], reverse=True)
@@ -516,6 +525,8 @@ def main():
     parser.add_argument("--max-seq-length", type=int, default=512, help="Max token length per doc/query (0 for model default)")
     parser.add_argument("--fp16", action="store_true", help="Store corpus embedding matrix in float16 to halve RAM")
     parser.add_argument("--skip-graph", action="store_true", help="Skip concept graph extraction for faster large-corpus runs")
+    parser.add_argument("--dense-weight", type=float, default=1.5, help="RRF weight for dense retrieval results")
+    parser.add_argument("--lexical-weight", type=float, default=0.5, help="RRF weight for lexical BM25 results")
     parser.add_argument("--output", type=str, default="datasets/benchmarks/results.json")
     args = parser.parse_args()
 
@@ -565,6 +576,8 @@ def main():
             skip_graph=args.skip_graph,
             batch_size=args.batch_size,
             max_seq_length=(None if args.max_seq_length <= 0 else args.max_seq_length),
+            dense_weight=args.dense_weight,
+            lexical_weight=args.lexical_weight,
         )
 
         print("\n" + "=" * 65)

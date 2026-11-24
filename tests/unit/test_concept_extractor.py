@@ -114,3 +114,17 @@ def test_extract_with_known_entities():
     assert "Tennessee" in chunk_concepts
     assert "Georgia" in chunk_concepts
 
+
+def test_extract_prose_keyphrases_creates_dense_graph_for_unstructured_text():
+    raw_text = (
+        "Federal Reserve interest rate hikes affect stock market valuations and corporate bond yields. "
+        "Higher interest rate policy also shapes inflation expectations."
+    )
+    chunks = [MockChunk(content=raw_text, chunk_order=0)]
+    graph = extract_concepts_and_edges(raw_text=raw_text, chunks=chunks)
+
+    assert len(graph.concepts) >= 2
+    assert len(graph.edges) >= 1
+    assert any(e.relation_type == "co_occurs" for e in graph.edges)
+    assert len(graph.chunk_links) >= 1
+
