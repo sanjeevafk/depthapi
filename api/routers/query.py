@@ -155,10 +155,17 @@ async def _prepare_query(
     if settings.quota_enabled:
         await query_cache.check_quota(_api_key.id, _api_key.is_pro, query_cache.count_tokens(req.query, model))
 
-    async def _eval_cache() -> dict[str, Any] | None:
-        if not use_cache:
-            return None
-        return await query_cache.get_cached(ckey)
+    if use_cache:
+        hit = await query_cache.get_cached(ckey)
+        if hit is not None:
+            try:
+                cached_resp = QueryResponse(**hit)
+                cached_resp.cached = True
+                if settings.quota_enabled:
+                    await query_cache.consume_quota(_api_key.id, query_cache.count_tokens(req.query, model))
+                return settings, model, use_cache, ckey, cached_resp, None
+            except Exception as exc:
+                log.warning("Cached payload invalid, treating as miss: %s", exc)
 
     async def _embed_query() -> list[float] | None:
         if req.depth in (1, 2):
@@ -178,24 +185,12 @@ async def _prepare_query(
         except Exception:
             pass
 
-    hit, precomputed_embedding, _ = await asyncio.gather(
-        _eval_cache(),
+    precomputed_embedding, _ = await asyncio.gather(
         _embed_query(),
         _checkout_conn(),
     )
 
-    cached_resp: QueryResponse | None = None
-    if hit is not None:
-        try:
-            cached_resp = QueryResponse(**hit)
-            cached_resp.cached = True
-        except Exception as exc:
-            log.warning("Cached payload invalid, treating as miss: %s", exc)
-            cached_resp = None
-        if cached_resp is not None and settings.quota_enabled:
-            await query_cache.consume_quota(_api_key.id, query_cache.count_tokens(req.query, model))
-
-    return settings, model, use_cache, ckey, cached_resp, precomputed_embedding
+    return settings, model, use_cache, ckey, None, precomputed_embedding
 
 
 @router.post("/query", response_model=QueryResponse)
