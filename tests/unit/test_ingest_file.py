@@ -69,6 +69,10 @@ class _MockConnection:
             c_hash = args[5]
             self.documents[(coll_id, c_hash)] = {"id": doc_id}
 
+    async def executemany(self, statement: str, args_seq):
+        for args in args_seq:
+            await self.execute(statement, *args)
+
 
 class _MockPool:
     def __init__(self, connection: _MockConnection):

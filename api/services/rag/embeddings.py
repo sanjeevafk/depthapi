@@ -68,7 +68,12 @@ async def embed_texts(texts: Sequence[str]) -> list[str]:
         return [_vector_literal(item.embedding) for item in response.data]
 
     # 2. Real local neural embeddings via sentence-transformers
-    model = get_local_transformer(DEFAULT_LOCAL_MODEL)
+    local_model = (
+        settings.embedding_model
+        if settings.embedding_model and settings.embedding_model != "text-embedding-3-small"
+        else DEFAULT_LOCAL_MODEL
+    )
+    model = get_local_transformer(local_model)
     if model is not None:
         try:
             embeddings = await asyncio.to_thread(

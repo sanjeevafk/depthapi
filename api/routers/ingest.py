@@ -259,6 +259,7 @@ async def _process_and_store_document(
                     encoded_metadata,
                 )
 
+                chunk_rows = []
                 for chunk, embedding in zip(chunks, embeddings):
                     chunk_metadata = {
                         **user_metadata,
@@ -278,11 +279,7 @@ async def _process_and_store_document(
                         if isinstance(hierarchy, list) and hierarchy
                         else None
                     )
-
-                    await conn.execute(
-                        """INSERT INTO knowledge_chunks (
-                            document_id, chunk_order, content, token_count, embedding, metadata, section_title, chunk_hash
-                        ) VALUES ($1, $2, $3, $4, $5::vector, $6::jsonb, $7, $8)""",
+                    chunk_rows.append((
                         document_id,
                         chunk.chunk_order,
                         chunk.content,
@@ -291,6 +288,14 @@ async def _process_and_store_document(
                         json.dumps(chunk_metadata),
                         section_title,
                         chunk.content_hash,
+                    ))
+
+                if chunk_rows:
+                    await conn.executemany(
+                        """INSERT INTO knowledge_chunks (
+                            document_id, chunk_order, content, token_count, embedding, metadata, section_title, chunk_hash
+                        ) VALUES ($1, $2, $3, $4, $5::vector, $6::jsonb, $7, $8)""",
+                        chunk_rows,
                     )
 
                 if graph is not None:
