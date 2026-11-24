@@ -2,7 +2,6 @@
 import asyncio
 import json
 import logging
-import re
 from typing import Any
 from uuid import UUID
 
@@ -29,26 +28,36 @@ router = APIRouter(tags=["query"])
 log = logging.getLogger(__name__)
 
 
+_NEGATION_KEYWORDS = frozenset({"not", "without", "except", "sans"})
+
+
 def parse_query_negations(query: str, explicit_negatives: list[str] | None = None) -> tuple[str, list[str]]:
     """Extract negative query terms (e.g. 'NOT term', '-term', 'without term') and return sanitized query + negative terms."""
-    negatives: list[str] = list(explicit_negatives or [])
-    clean_query = query
+    negatives: list[str] = [n.strip().lower() for n in (explicit_negatives or []) if n.strip()]
+    seen = set(negatives)
+    kept: list[str] = []
+    tokens = query.split()
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok.lower() in _NEGATION_KEYWORDS and i + 1 < len(tokens):
+            term = tokens[i + 1].strip(",.;:!?").lower()
+            if term and term not in seen:
+                seen.add(term)
+                negatives.append(term)
+            i += 2
+            continue
+        if len(tok) > 1 and tok.startswith("-") and all(ch.isalnum() or ch in "_-" for ch in tok[1:]):
+            term = tok[1:].lower()
+            if term not in seen:
+                seen.add(term)
+                negatives.append(term)
+            i += 1
+            continue
+        kept.append(tok)
+        i += 1
 
-    not_pattern = re.compile(r'(?:^|\s+)(?:NOT|without|except|sans)\s+([A-Za-z0-9_\-]+)', re.IGNORECASE)
-    for match in not_pattern.finditer(clean_query):
-        term = match.group(1).strip()
-        if term and term.lower() not in [n.lower() for n in negatives]:
-            negatives.append(term.lower())
-    clean_query = not_pattern.sub(" ", clean_query)
-
-    dash_pattern = re.compile(r'(?:^|\s+)-([A-Za-z0-9_\-]+)')
-    for match in dash_pattern.finditer(clean_query):
-        term = match.group(1).strip()
-        if term and term.lower() not in [n.lower() for n in negatives]:
-            negatives.append(term.lower())
-    clean_query = dash_pattern.sub(" ", clean_query).strip()
-
-    clean_query = " ".join(clean_query.split()) or query.strip()
+    clean_query = " ".join(kept) or query.strip()
     return clean_query, negatives
 
 

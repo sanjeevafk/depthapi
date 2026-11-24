@@ -1,7 +1,6 @@
 """Deterministic concept and lineage extractor from document structure and content."""
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -36,15 +35,38 @@ class ExtractedGraph(BaseModel):
     chunk_links: list[ChunkConceptLink] = Field(default_factory=list)
 
 
-_WIKILINK_PATTERN = re.compile(r"\[\[([^\]\|]+)(?:\|([^\]]+))?\]\]")
-_HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
-_CLEAN_PREFIX_PATTERN = re.compile(r"^[0-9\.\-\s]+|^[#*_`\s]+|[#*_`\s]+$")
-
-
 def _normalize_concept_name(name: str) -> str:
     """Normalize concept name while retaining readable casing."""
-    cleaned = _CLEAN_PREFIX_PATTERN.sub("", name).strip()
+    cleaned = name.strip().lstrip("0123456789.-#*_` \t").rstrip("#*_` \t")
     return cleaned if cleaned else name.strip()
+
+
+def _parse_heading(line_str: str) -> tuple[int, str] | None:
+    if not line_str.startswith("#"):
+        return None
+    hashes = len(line_str) - len(line_str.lstrip("#"))
+    if 1 <= hashes <= 6 and len(line_str) > hashes and line_str[hashes].isspace():
+        text = line_str[hashes:].strip()
+        return (hashes, text) if text else None
+    return None
+
+
+def _extract_wikilinks(line_str: str) -> list[str]:
+    targets: list[str] = []
+    pos = 0
+    while True:
+        start = line_str.find("[[", pos)
+        if start == -1:
+            break
+        end = line_str.find("]]", start + 2)
+        if end == -1:
+            break
+        inner = line_str[start + 2 : end]
+        target = inner.split("|", 1)[0].strip()
+        if target:
+            targets.append(target)
+        pos = end + 2
+    return targets
 
 
 def extract_concepts_and_edges(
@@ -103,10 +125,9 @@ def extract_concepts_and_edges(
 
     for line in raw_text.splitlines():
         line_str = line.strip()
-        match = _HEADING_PATTERN.match(line_str)
-        if match:
-            level = len(match.group(1))
-            heading_text = match.group(2).strip()
+        parsed_heading = _parse_heading(line_str)
+        if parsed_heading is not None:
+            level, heading_text = parsed_heading
             concept_name = add_concept(heading_text, c_type="section")
 
             while heading_stack and heading_stack[-1][0] >= level:
@@ -122,8 +143,7 @@ def extract_concepts_and_edges(
 
         # Check for cross-references like [[Target]] on current line
         current_context = heading_stack[-1][1] if heading_stack else root_name
-        for wiki_match in _WIKILINK_PATTERN.finditer(line_str):
-            target_raw = wiki_match.group(1).strip()
+        for target_raw in _extract_wikilinks(line_str):
             target_name = add_concept(target_raw, c_type="entity")
             if current_context and target_name:
                 is_dependency = (
@@ -188,8 +208,7 @@ def extract_concepts_and_edges(
                 )
 
             # Detect inline concepts in chunk content
-            for wiki_match in _WIKILINK_PATTERN.finditer(c_content):
-                target_raw = wiki_match.group(1).strip()
+            for target_raw in _extract_wikilinks(c_content):
                 target_name = add_concept(target_raw, c_type="entity")
                 if target_name and target_name not in linked_for_chunk:
                     linked_for_chunk.add(target_name)

@@ -56,5 +56,4 @@ def test_strip_toc_is_idempotent():
 def test_normalize_urls_resolves_relative_links():
     doc = "See [guide](docs/guide.md) and [ext](https://example.com)."
     out = normalize_urls(doc, "https://depthapi.dev/start/")
-    assert "https://depthapi.dev/start/docs/guide.md" in out
-    assert "https://example.com" in out
+    assert out == "See [guide](https://depthapi.dev/start/docs/guide.md) and [ext](https://example.com)."
