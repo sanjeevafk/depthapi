@@ -24,21 +24,19 @@ _client = None
 
 
 def get_client():
-    """Lazy Redis singleton; None when Redis is unreachable. Monkeypatchable."""
+    """Lazy async Redis singleton; None when Redis client cannot be built. Monkeypatchable."""
     global _client
     if _client is not None:
         return _client
     try:
-        import redis
+        import redis.asyncio as aioredis
 
-        client = redis.Redis.from_url(
+        _client = aioredis.from_url(
             get_settings().redis_url,
             socket_connect_timeout=2,
             socket_timeout=2,
             decode_responses=True,
         )
-        client.ping()
-        _client = client
         return _client
     except Exception as exc:
         log.warning("Redis unavailable, running without cache/quotas: %s", exc)
@@ -67,12 +65,12 @@ def cache_key(tenant_id: str, query: str, collection_id: str | None, depth: int,
     return f"depthapi:q:{tenant_id}:{digest}"
 
 
-def get_cached(key: str) -> dict[str, Any] | None:
+async def get_cached(key: str) -> dict[str, Any] | None:
     client = get_client()
     if client is None:
         return None
     try:
-        raw = client.get(key)
+        raw = await client.get(key)
         if not raw:
             return None
         payload = json.loads(raw)
@@ -84,12 +82,12 @@ def get_cached(key: str) -> dict[str, Any] | None:
         return None
 
 
-def put_cached(key: str, payload: dict[str, Any]) -> None:
+async def put_cached(key: str, payload: dict[str, Any]) -> None:
     client = get_client()
     if client is None:
         return
     try:
-        client.set(key, json.dumps(payload, default=str), ex=get_settings().query_cache_ttl_seconds)
+        await client.set(key, json.dumps(payload, default=str), ex=get_settings().query_cache_ttl_seconds)
     except Exception as exc:
         log.warning("Cache write failed: %s", exc)
 
@@ -118,7 +116,7 @@ def _quota_redis_key(tenant_id: str) -> str:
     return f"depthapi:quota:{tenant_id}:{day}"
 
 
-def check_quota(tenant_id: str, is_pro: bool, estimated_tokens: int) -> None:
+async def check_quota(tenant_id: str, is_pro: bool, estimated_tokens: int) -> None:
     """Raise 429 when the key would exceed its daily token budget. Fail-open."""
     limit = quota_limit(is_pro)
     if limit <= 0:
@@ -127,7 +125,7 @@ def check_quota(tenant_id: str, is_pro: bool, estimated_tokens: int) -> None:
     if client is None:
         return
     try:
-        used = int(client.get(_quota_redis_key(tenant_id)) or 0)
+        used = int(await client.get(_quota_redis_key(tenant_id)) or 0)
     except Exception as exc:
         log.warning("Quota read failed, allowing request: %s", exc)
         return
@@ -135,7 +133,7 @@ def check_quota(tenant_id: str, is_pro: bool, estimated_tokens: int) -> None:
         raise HTTPException(429, "Daily token quota exceeded")
 
 
-def consume_quota(tenant_id: str, tokens: int) -> None:
+async def consume_quota(tenant_id: str, tokens: int) -> None:
     if tokens <= 0:
         return
     client = get_client()
@@ -143,7 +141,7 @@ def consume_quota(tenant_id: str, tokens: int) -> None:
         return
     try:
         key = _quota_redis_key(tenant_id)
-        client.incrby(key, tokens)
-        client.expire(key, 172800)
+        await client.incrby(key, tokens)
+        await client.expire(key, 172800)
     except Exception as exc:
         log.warning("Quota accounting failed: %s", exc)

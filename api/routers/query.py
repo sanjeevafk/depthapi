@@ -153,12 +153,12 @@ async def _prepare_query(
         negative_terms=negative_terms,
     )
     if settings.quota_enabled:
-        query_cache.check_quota(_api_key.id, _api_key.is_pro, query_cache.count_tokens(req.query, model))
+        await query_cache.check_quota(_api_key.id, _api_key.is_pro, query_cache.count_tokens(req.query, model))
 
     async def _eval_cache() -> dict[str, Any] | None:
         if not use_cache:
             return None
-        return await asyncio.to_thread(query_cache.get_cached, ckey)
+        return await query_cache.get_cached(ckey)
 
     async def _embed_query() -> list[float] | None:
         if req.depth in (1, 2):
@@ -193,7 +193,7 @@ async def _prepare_query(
             log.warning("Cached payload invalid, treating as miss: %s", exc)
             cached_resp = None
         if cached_resp is not None and settings.quota_enabled:
-            query_cache.consume_quota(_api_key.id, query_cache.count_tokens(req.query, model))
+            await query_cache.consume_quota(_api_key.id, query_cache.count_tokens(req.query, model))
 
     return settings, model, use_cache, ckey, cached_resp, precomputed_embedding
 
@@ -219,12 +219,12 @@ async def query(req: QueryRequest, request: Request, _api_key: ApiKeyRecord = De
     )
     resp = QueryResponse(answer=answer, contexts=contexts, citations=citations, metadata=response_metadata)
     if settings.quota_enabled:
-        query_cache.consume_quota(
+        await query_cache.consume_quota(
             _api_key.id,
             query_cache.count_tokens(req.query, model) + query_cache.count_tokens(answer, model),
         )
     if use_cache:
-        query_cache.put_cached(ckey, resp.model_dump())
+        await query_cache.put_cached(ckey, resp.model_dump())
     return resp
 
 
@@ -529,12 +529,12 @@ async def query_stream(req: QueryRequest, request: Request, _api_key: ApiKeyReco
             final = {"answer": answer, "contexts": contexts, "citations": citations, "metadata": response_metadata}
             yield f"data: {json.dumps(final, default=str)}\n\n"
         if settings.quota_enabled:
-            query_cache.consume_quota(
+            await query_cache.consume_quota(
                 _api_key.id,
                 query_cache.count_tokens(req.query, model) + query_cache.count_tokens(answer, model),
             )
         if use_cache:
-            query_cache.put_cached(ckey, final)
+            await query_cache.put_cached(ckey, final)
         yield "data: [DONE]\n\n"
     return StreamingResponse(
         events(),

@@ -12,25 +12,25 @@ class FakeRedis:
     def __init__(self):
         self.store: dict[str, str] = {}
 
-    def ping(self):
+    async def ping(self):
         return True
 
-    def get(self, key: str):
+    async def get(self, key: str):
         return self.store.get(key)
 
-    def set(self, key: str, value: str, ex: int | None = None):
+    async def set(self, key: str, value: str, ex: int | None = None):
         self.store[key] = value
         return True
 
-    def setex(self, key: str, ttl: int, value: str):
+    async def setex(self, key: str, ttl: int, value: str):
         self.store[key] = value
         return True
 
-    def incrby(self, key: str, amount: int):
+    async def incrby(self, key: str, amount: int):
         self.store[key] = str(int(self.store.get(key, "0")) + amount)
         return int(self.store[key])
 
-    def expire(self, key: str, ttl: int):
+    async def expire(self, key: str, ttl: int):
         return True
 
 
