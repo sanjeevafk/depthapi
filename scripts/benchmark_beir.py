@@ -80,6 +80,55 @@ DATASET_URLS = {
 }
 
 
+def _download_from_huggingface(dataset_name: str, target_dir: Path) -> Path:
+    """Fallback downloader using HuggingFace BeIR/{dataset} parquet + BeIR/{dataset}-qrels."""
+    import pandas as pd
+    from huggingface_hub import hf_hub_download, list_repo_files
+
+    print(f"Downloading {dataset_name} from HuggingFace (BeIR/{dataset_name})...")
+    repo_id = f"BeIR/{dataset_name}"
+    qrels_repo = f"BeIR/{dataset_name}-qrels"
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    (target_dir / "qrels").mkdir(parents=True, exist_ok=True)
+
+    files = list_repo_files(repo_id, repo_type="dataset")
+    corpus_files = sorted(f for f in files if f.startswith("corpus/") and f.endswith(".parquet"))
+    query_files = sorted(f for f in files if f.startswith("queries/") and f.endswith(".parquet"))
+    if not corpus_files or not query_files:
+        raise RuntimeError(f"Could not find parquet corpus/queries in {repo_id}")
+
+    with open(target_dir / "corpus.jsonl", "w", encoding="utf-8") as out_c:
+        for cf in corpus_files:
+            local_p = hf_hub_download(repo_id, cf, repo_type="dataset")
+            df = pd.read_parquet(local_p)
+            for row in df.to_dict(orient="records"):
+                out_c.write(json.dumps({
+                    "_id": str(row.get("_id", "")),
+                    "title": str(row.get("title") or ""),
+                    "text": str(row.get("text") or ""),
+                }) + "\n")
+
+    with open(target_dir / "queries.jsonl", "w", encoding="utf-8") as out_q:
+        for qf in query_files:
+            local_p = hf_hub_download(repo_id, qf, repo_type="dataset")
+            df = pd.read_parquet(local_p)
+            for row in df.to_dict(orient="records"):
+                out_q.write(json.dumps({
+                    "_id": str(row.get("_id", "")),
+                    "text": str(row.get("text") or ""),
+                }) + "\n")
+
+    qrel_files = list_repo_files(qrels_repo, repo_type="dataset")
+    qrel_name = "test.tsv" if "test.tsv" in qrel_files else ("dev.tsv" if "dev.tsv" in qrel_files else None)
+    if qrel_name is None:
+        raise RuntimeError(f"No test.tsv or dev.tsv found in {qrels_repo}")
+    qrel_p = hf_hub_download(qrels_repo, qrel_name, repo_type="dataset")
+    (target_dir / "qrels" / "test.tsv").write_bytes(Path(qrel_p).read_bytes())
+    print(f"Prepared {dataset_name} from HuggingFace at {target_dir}.")
+    return target_dir
+
+
 def download_and_extract_dataset(dataset_name: str, cache_dir: Path) -> Path:
     target_dir = cache_dir / dataset_name
     if (target_dir / "corpus.jsonl").exists() and (target_dir / "qrels" / "test.tsv").exists():
@@ -97,20 +146,24 @@ def download_and_extract_dataset(dataset_name: str, cache_dir: Path) -> Path:
 
     if not zip_path.exists():
         print(f"Downloading {dataset_name} from {url}...")
-        req = urllib.request.Request(url, headers={"User-Agent": "DepthAPI-Benchmark/1.0"})
-        tmp_path = zip_path.with_suffix(".zip.part")
-        with urllib.request.urlopen(req, timeout=60) as resp, open(tmp_path, "wb") as f_out:
-            downloaded = 0
-            while True:
-                chunk = resp.read(2 * 1024 * 1024)
-                if not chunk:
-                    break
-                f_out.write(chunk)
-                downloaded += len(chunk)
-                if downloaded % (20 * 1024 * 1024) == 0:
-                    print(f"Downloaded {downloaded // (1024 * 1024)} MB...")
-        tmp_path.replace(zip_path)
-        print(f"Finished downloading {dataset_name} ({downloaded // (1024 * 1024)} MB).")
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "DepthAPI-Benchmark/1.0"})
+            tmp_path = zip_path.with_suffix(".zip.part")
+            with urllib.request.urlopen(req, timeout=15) as resp, open(tmp_path, "wb") as f_out:
+                downloaded = 0
+                while True:
+                    chunk = resp.read(2 * 1024 * 1024)
+                    if not chunk:
+                        break
+                    f_out.write(chunk)
+                    downloaded += len(chunk)
+                    if downloaded % (20 * 1024 * 1024) == 0:
+                        print(f"Downloaded {downloaded // (1024 * 1024)} MB...")
+            tmp_path.replace(zip_path)
+            print(f"Finished downloading {dataset_name} ({downloaded // (1024 * 1024)} MB).")
+        except Exception as exc:
+            print(f"Primary mirror failed ({exc}); falling back to HuggingFace...")
+            return _download_from_huggingface(dataset_name, target_dir)
 
     print(f"Extracting {zip_path} to {cache_dir}...")
     with zipfile.ZipFile(zip_path) as z:
