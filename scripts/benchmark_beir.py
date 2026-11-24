@@ -300,6 +300,7 @@ def evaluate(
     fp16: bool = False,
     skip_graph: bool = False,
     batch_size: int = 16,
+    max_seq_length: int | None = None,
 ) -> dict[str, Any]:
     from api.config import get_settings
 
@@ -327,6 +328,8 @@ def evaluate(
             "No local embedding model available (is sentence-transformers installed?); "
             "refusing to benchmark with hash embeddings."
         )
+    if model is not None and max_seq_length is not None:
+        model.max_seq_length = max_seq_length
     if model is not None and fp16:
         try:
             import torch
@@ -510,6 +513,7 @@ def main():
     parser.add_argument("--model", type=str, default=None, help="Embedding model name (defaults to EMBEDDING_MODEL setting)")
     parser.add_argument("--dim", type=int, default=None, help="Optional Matryoshka truncation dimension (e.g. 256)")
     parser.add_argument("--batch-size", type=int, default=16, help="Embedding batch size")
+    parser.add_argument("--max-seq-length", type=int, default=512, help="Max token length per doc/query (0 for model default)")
     parser.add_argument("--fp16", action="store_true", help="Store corpus embedding matrix in float16 to halve RAM")
     parser.add_argument("--skip-graph", action="store_true", help="Skip concept graph extraction for faster large-corpus runs")
     parser.add_argument("--output", type=str, default="datasets/benchmarks/results.json")
@@ -560,6 +564,7 @@ def main():
             fp16=args.fp16,
             skip_graph=args.skip_graph,
             batch_size=args.batch_size,
+            max_seq_length=(None if args.max_seq_length <= 0 else args.max_seq_length),
         )
 
         print("\n" + "=" * 65)
