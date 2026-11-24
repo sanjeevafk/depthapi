@@ -57,7 +57,10 @@ async def embed_texts(texts: Sequence[str]) -> list[str]:
     if settings.embedding_provider.lower() == "openai" and settings.openai_api_key.get_secret_value():
         from openai import AsyncOpenAI
 
-        client = AsyncOpenAI(api_key=settings.openai_api_key.get_secret_value())
+        client_kwargs: dict[str, Any] = {"api_key": settings.openai_api_key.get_secret_value()}
+        if settings.openai_base_url:
+            client_kwargs["base_url"] = settings.openai_base_url
+        client = AsyncOpenAI(**client_kwargs)
         response = await client.embeddings.create(
             model=settings.embedding_model,
             input=list(texts),

@@ -79,7 +79,8 @@ def _get_llm_targets(settings: Any) -> list[_LLMTarget]:
         try:
             from openai import AsyncOpenAI
 
-            client = _cached_openai_client(AsyncOpenAI, None, api_key, settings.llm_timeout_seconds)
+            primary_base_url = getattr(settings, "openai_base_url", "") or None
+            client = _cached_openai_client(AsyncOpenAI, primary_base_url, api_key, settings.llm_timeout_seconds)
             targets.append(_LLMTarget(client=client, model=settings.llm_model, max_chunks=None))
         except Exception as exc:
             logger.warning("Failed to initialize primary OpenAI client: %s", exc)

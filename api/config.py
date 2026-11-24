@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     # Inference (OpenAI-compatible)
     openai_api_key: SecretStr = SecretStr("")
+    openai_base_url: str = ""
     llm_model: str = "gpt-4o-mini"
     llm_timeout_seconds: int = 60
 
