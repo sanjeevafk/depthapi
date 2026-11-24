@@ -50,6 +50,13 @@ def _vector_literal(vector: Sequence[float]) -> str:
     return "[" + ",".join(str(value) for value in vector) + "]"
 
 
+@functools.lru_cache(maxsize=4)
+def _cached_embedding_client(client_cls: Any, base_url: str | None, api_key: str) -> Any:
+    if base_url:
+        return client_cls(base_url=base_url, api_key=api_key)
+    return client_cls(api_key=api_key)
+
+
 async def embed_texts(texts: Sequence[str]) -> list[str]:
     settings = get_settings()
     provider = settings.embedding_provider.lower()
@@ -59,10 +66,11 @@ async def embed_texts(texts: Sequence[str]) -> list[str]:
         try:
             from openai import AsyncOpenAI
 
-            client_kwargs: dict[str, Any] = {"api_key": settings.openai_api_key.get_secret_value()}
-            if settings.openai_base_url:
-                client_kwargs["base_url"] = settings.openai_base_url
-            client = AsyncOpenAI(**client_kwargs)
+            client = _cached_embedding_client(
+                AsyncOpenAI,
+                settings.openai_base_url or None,
+                settings.openai_api_key.get_secret_value(),
+            )
             response = await client.embeddings.create(
                 model=settings.embedding_model,
                 input=list(texts),

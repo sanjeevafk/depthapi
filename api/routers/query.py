@@ -502,6 +502,7 @@ async def query_stream(req: QueryRequest, request: Request, _api_key: ApiKeyReco
     async def events():
         # Heartbeat comment keeps proxies from closing idle streams.
         yield ": stream start\n\n"
+        disconnected = False
         if confidence == "insufficient":
             answer = "I could not find sufficient matching documentation in your collection to answer this query reliably."
             response_metadata["citations_enforced"] = True
@@ -514,6 +515,7 @@ async def query_stream(req: QueryRequest, request: Request, _api_key: ApiKeyReco
                 parts.append(token)
                 yield f"data: {json.dumps({'delta': token}, default=str)}\n\n"
                 if await request.is_disconnected():
+                    disconnected = True
                     break
             answer = "".join(parts)
             # No retry on the streaming path (it would double latency and repeat
@@ -528,7 +530,7 @@ async def query_stream(req: QueryRequest, request: Request, _api_key: ApiKeyReco
                 _api_key.id,
                 query_cache.count_tokens(req.query, model) + query_cache.count_tokens(answer, model),
             )
-        if use_cache:
+        if use_cache and not disconnected:
             await query_cache.put_cached(ckey, final)
         yield "data: [DONE]\n\n"
     return StreamingResponse(

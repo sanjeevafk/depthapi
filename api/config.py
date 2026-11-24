@@ -74,8 +74,3 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Cached settings instance."""
     return Settings()
-
-
-def reinitialize_cache() -> None:
-    """Clear cache and recompute on next access (for testing)."""
-    get_settings.cache_clear()

@@ -52,5 +52,4 @@ def _isolated_query_cache(monkeypatch):
     """Every test gets a fresh fake Redis; prod code paths unchanged."""
     fake = FakeRedis()
     monkeypatch.setattr(query_cache, "get_client", lambda: fake)
-    query_cache.reset_client()
     return fake

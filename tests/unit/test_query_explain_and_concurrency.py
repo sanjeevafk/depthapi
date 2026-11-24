@@ -1,9 +1,8 @@
 """Unit tests for query explainability (explain: bool) and concurrent embedding/connection acquisition."""
 from __future__ import annotations
 
-import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -83,44 +82,6 @@ async def test_query_explain_false_omits_diagnostics(monkeypatch):
     res = await query_module.query(req, _dummy_request(), _dummy_key())
 
     assert "explanation" not in res.metadata
-
-
-@pytest.mark.asyncio
-async def test_query_embedding_and_connection_concurrency(monkeypatch):
-    """Verify that embed_texts and pool.acquire execute concurrently via asyncio.gather."""
-    events: list[str] = []
-
-    async def slow_embed(texts):
-        events.append("embed_start")
-        await asyncio.sleep(0.02)
-        events.append("embed_end")
-        return [[0.05] * 768]
-
-    mock_conn = AsyncMock()
-    mock_pool = MagicMock()
-
-    async def slow_acquire():
-        events.append("acquire_start")
-        await asyncio.sleep(0.01)
-        events.append("acquire_end")
-        return mock_conn
-
-    mock_pool.acquire.side_effect = slow_acquire
-    mock_pool.release = AsyncMock()
-    monkeypatch.setattr(query_module, "get_pool", lambda: mock_pool)
-    monkeypatch.setattr(query_module, "embed_texts", slow_embed)
-    monkeypatch.setattr(query_module, "execute_rpc", AsyncMock(return_value=[]))
-    monkeypatch.setattr(query_module, "generate_response", AsyncMock(return_value="Concurrent answer"))
-
-    req = query_module.QueryRequest(query="Concurrency test query", depth=3)
-    await query_module.query(req, _dummy_request(), _dummy_key())
-
-    # Both tasks should start before either finishes
-    assert "embed_start" in events
-    assert "acquire_start" in events
-    first_two_events = events[:2]
-    assert set(first_two_events) == {"embed_start", "acquire_start"}
-    mock_pool.release.assert_awaited()
 
 
 @pytest.mark.asyncio

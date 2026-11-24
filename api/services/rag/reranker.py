@@ -38,7 +38,7 @@ class RerankerService:
         if not candidates:
             return []
 
-        model = self._ensure_model()
+        model = await asyncio.to_thread(self._ensure_model)
         if model is None:
             return candidates[:top_n]
 

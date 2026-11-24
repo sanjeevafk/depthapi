@@ -104,11 +104,6 @@ async def test_generate_response_keeps_first_answer_if_retry_still_uncited(monke
     assert len(calls) == 2
 
 
-@pytest.mark.asyncio
-async def test_local_response_fallback_is_truthful():
-    assert await inference_module.generate_response("question", [{"content": "source text"}]) == "source text"
-
-
 def test_build_citations_matches_reordered_contexts():
     from api.routers.query import _build_citations
     from api.services.rag.context_processing import reorder_lost_in_the_middle

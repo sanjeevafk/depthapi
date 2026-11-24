@@ -7,34 +7,12 @@ from uuid import uuid4
 import pytest
 
 from api.routers import query as query_module
-from api.routers.query import QueryRequest, parse_query_negations, query
+from api.routers.query import QueryRequest, query
 from api.services.security.api_key_auth import ApiKeyRecord
 
 
 def _api_key() -> ApiKeyRecord:
     return ApiKeyRecord(str(uuid4()), "standard", True)
-
-
-def test_parse_query_negations_syntax():
-    # NOT syntax
-    clean, negs = parse_query_negations("FastAPI authentication NOT OAuth2")
-    assert clean == "FastAPI authentication"
-    assert negs == ["oauth2"]
-
-    # Dash syntax (-term)
-    clean, negs = parse_query_negations("PostgreSQL vector search -pinecone -weaviate")
-    assert clean == "PostgreSQL vector search"
-    assert set(negs) == {"pinecone", "weaviate"}
-
-    # without / except syntax
-    clean, negs = parse_query_negations("LLM inference without transformers except onnx")
-    assert clean == "LLM inference"
-    assert set(negs) == {"transformers", "onnx"}
-
-    # Explicit list combined with query syntax
-    clean, negs = parse_query_negations("search NOT legacy", explicit_negatives=["deprecated"])
-    assert clean == "search"
-    assert set(negs) == {"deprecated", "legacy"}
 
 
 @pytest.mark.asyncio

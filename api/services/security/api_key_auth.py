@@ -24,10 +24,6 @@ _KEY_CACHE_MAX_ENTRIES = 1024
 _key_cache: dict[str, tuple[float, ApiKeyRecord]] = {}
 
 
-def clear_api_key_cache() -> None:
-    """Clear the in-memory API key cache (useful for tests or key revocation)."""
-    _key_cache.clear()
-
 def _is_expired(expires_at: datetime | str | None) -> bool:
     if expires_at is None:
         return False

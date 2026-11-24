@@ -43,12 +43,6 @@ def get_client():
         return None
 
 
-def reset_client() -> None:
-    """Drop the cached client (tests)."""
-    global _client
-    _client = None
-
-
 def cache_key(tenant_id: str, query: str, collection_id: str | None, depth: int,
               temperature: float, rerank: bool, use_trusted: bool,
               graph_hops: int | None, llm_model: str, explain: bool = False,
