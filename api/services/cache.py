@@ -6,6 +6,7 @@ is best-effort until Redis becomes a hard deployment dependency.
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import logging
@@ -91,15 +92,19 @@ def quota_limit(is_pro: bool) -> int:
     return settings.pro_daily_token_quota if is_pro else settings.daily_token_quota_per_user
 
 
+@functools.lru_cache(maxsize=16)
+def _get_encoding(model: str):
+    import tiktoken
+
+    try:
+        return tiktoken.encoding_for_model(model)
+    except Exception:
+        return tiktoken.get_encoding("cl100k_base")
+
+
 def count_tokens(text: str, model: str) -> int:
     try:
-        import tiktoken
-
-        try:
-            enc = tiktoken.encoding_for_model(model)
-        except Exception:
-            enc = tiktoken.get_encoding("cl100k_base")
-        return len(enc.encode(text or ""))
+        return len(_get_encoding(model).encode(text or ""))
     except Exception as exc:
         log.warning("Token counting failed, assuming 0: %s", exc)
         return 0

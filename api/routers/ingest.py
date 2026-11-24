@@ -204,32 +204,34 @@ async def _process_and_store_document(
                 if graph is not None:
                     try:
                         concept_id_map: dict[str, UUID] = {}
+                        concept_rows = []
                         for concept in graph.concepts:
                             c_id = uuid5(NAMESPACE_URL, f"concept:{resolved_collection_id}:{concept.name.lower()}")
-                            await conn.execute(
-                                """INSERT INTO knowledge_concepts (id, collection_id, name, concept_type, description, metadata)
-                                   VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-                                   ON CONFLICT (collection_id, name) DO UPDATE
-                                   SET metadata = knowledge_concepts.metadata || EXCLUDED.metadata""",
+                            concept_id_map[concept.name.lower()] = c_id
+                            concept_rows.append((
                                 c_id,
                                 resolved_collection_id,
                                 concept.name,
                                 concept.concept_type,
                                 concept.description,
                                 json.dumps(concept.metadata),
+                            ))
+                        if concept_rows:
+                            await conn.executemany(
+                                """INSERT INTO knowledge_concepts (id, collection_id, name, concept_type, description, metadata)
+                                   VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+                                   ON CONFLICT (collection_id, name) DO UPDATE
+                                   SET metadata = knowledge_concepts.metadata || EXCLUDED.metadata""",
+                                concept_rows,
                             )
-                            concept_id_map[concept.name.lower()] = c_id
 
+                        edge_rows = []
                         for edge in graph.edges:
                             src_id = concept_id_map.get(edge.source_concept.lower())
                             tgt_id = concept_id_map.get(edge.target_concept.lower())
                             if src_id and tgt_id:
                                 edge_id = uuid5(NAMESPACE_URL, f"edge:{resolved_collection_id}:{src_id}:{tgt_id}:{edge.relation_type}")
-                                await conn.execute(
-                                    """INSERT INTO knowledge_edges (id, collection_id, source_concept_id, target_concept_id, relation_type, weight, metadata)
-                                       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-                                       ON CONFLICT (collection_id, source_concept_id, target_concept_id, relation_type) DO UPDATE
-                                       SET weight = EXCLUDED.weight""",
+                                edge_rows.append((
                                     edge_id,
                                     resolved_collection_id,
                                     src_id,
@@ -237,19 +239,32 @@ async def _process_and_store_document(
                                     edge.relation_type,
                                     edge.weight,
                                     json.dumps(edge.metadata),
-                                )
+                                ))
+                        if edge_rows:
+                            await conn.executemany(
+                                """INSERT INTO knowledge_edges (id, collection_id, source_concept_id, target_concept_id, relation_type, weight, metadata)
+                                   VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+                                   ON CONFLICT (collection_id, source_concept_id, target_concept_id, relation_type) DO UPDATE
+                                   SET weight = EXCLUDED.weight""",
+                                edge_rows,
+                            )
 
+                        link_rows = []
                         for link in graph.chunk_links:
                             c_id = concept_id_map.get(link.concept_name.lower())
                             if c_id:
-                                await conn.execute(
-                                    """SELECT link_chunk_to_concept($1, $2, $3, $4, $5::jsonb)""",
+                                link_rows.append((
                                     document_id,
                                     link.chunk_index,
                                     c_id,
                                     link.confidence,
                                     json.dumps(link.metadata),
-                                )
+                                ))
+                        if link_rows:
+                            await conn.executemany(
+                                """SELECT link_chunk_to_concept($1, $2, $3, $4, $5::jsonb)""",
+                                link_rows,
+                            )
                     except Exception as g_exc:
                         log.warning("Concept graph upsert skipped or encountered error: %s", g_exc)
 
