@@ -32,7 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from api.services.rag.embeddings import embed_texts, get_local_transformer
+from api.services.rag.embeddings import DEFAULT_LOCAL_MODEL, embed_texts, get_local_transformer
 from api.services.rag.graph.concept_extractor import extract_concepts_and_edges
 
 
@@ -121,7 +121,7 @@ def download_and_extract_dataset(dataset_name: str, cache_dir: Path) -> Path:
 
 def load_beir_data(
     data_dir: Path, limit_docs: int | None = None, limit_queries: int | None = None
-) -> tuple[dict[str, str], dict[str, str], dict[str, dict[str, int]]]:
+) -> tuple[dict[str, str], dict[str, str], dict[str, dict[str, int]], dict[str, str]]:
     """Load queries with ground truth and their relevant docs + distractors."""
     # 1. Load qrels
     all_qrels: dict[str, dict[str, int]] = {}
@@ -264,6 +264,15 @@ def evaluate(
             corpus_emb_matrix = None
 
     model = get_local_transformer(resolved_model)
+    if (
+        model is None
+        and get_settings().embedding_provider.lower() == "local"
+        and get_local_transformer(DEFAULT_LOCAL_MODEL) is None
+    ):
+        raise RuntimeError(
+            "No local embedding model available (is sentence-transformers installed?); "
+            "refusing to benchmark with hash embeddings."
+        )
     if corpus_emb_matrix is None:
         corpus_texts = [corpus[did] for did in doc_ids]
         t0 = time.perf_counter()

@@ -88,9 +88,14 @@ async def _process_and_store_document(
                 pre_existing = await pre_conn.fetchrow(
                     """SELECT id FROM knowledge_documents
                        WHERE collection_id = $1 AND content_hash = $2
+                         AND EXISTS (
+                             SELECT 1 FROM knowledge_collections
+                             WHERE id = $1 AND api_key_id = $3
+                         )
                        LIMIT 1""",
                     collection_id,
                     content_hash,
+                    owner_id,
                 )
                 if pre_existing is not None:
                     doc_id_str = str(pre_existing["id"])
@@ -321,6 +326,7 @@ async def ingest(
 
 
 MAX_FILE_BYTES = 75 * 1024 * 1024  # 75 MB limit
+MAX_EXTRACTED_CHARS = 2_000_000  # bounds chunking + embedding work per request
 
 
 @router.post("/ingest/file", response_model=IngestResponse)
@@ -386,6 +392,8 @@ async def ingest_file(
 
     if not raw_text.strip():
         raise HTTPException(400, "No readable text content extracted from file")
+    if len(raw_text) > MAX_EXTRACTED_CHARS:
+        raise HTTPException(413, f"Extracted text exceeds the {MAX_EXTRACTED_CHARS:,} character limit")
 
     try:
         col_uuid = UUID(collection_id) if collection_id else uuid4()

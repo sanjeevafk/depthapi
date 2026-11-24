@@ -375,26 +375,13 @@ async def _retrieve(
 
     # Negative query algebra: penalize candidates containing negative terms
     if negative_terms and contexts:
-        cid_to_ctx = {str(i): ctx for i, ctx in enumerate(contexts)}
-        candidate_ids = list(cid_to_ctx.keys())
-        candidate_texts = {cid: ctx.get("content", "") for cid, ctx in cid_to_ctx.items()}
+        # Penalize in place so each context keeps its native score scale
+        # (cosine for dense, RRF for hybrid); confidence gating depends on it.
         norm_negs = [t.lower() for t in negative_terms]
-        scores: list[tuple[str, float]] = []
-        for idx, cid in enumerate(candidate_ids):
-            score = 2.0 / (60.0 + idx)
-            text_lower = candidate_texts[cid].lower()
-            if any(neg in text_lower for neg in norm_negs):
-                score *= 0.5
-            scores.append((cid, score))
-        scores.sort(key=lambda x: x[1], reverse=True)
-        fused = scores
-
-        reordered = []
-        for cid, score in fused:
-            ctx = cid_to_ctx[cid]
-            ctx["score"] = score
-            reordered.append(ctx)
-        contexts = reordered
+        for ctx in contexts:
+            if any(neg in ctx.get("content", "").lower() for neg in norm_negs):
+                ctx["score"] = (ctx.get("score") or 0.0) * 0.5
+        contexts = sorted(contexts, key=lambda c: c.get("score") or 0.0, reverse=True)
 
     # Reranking: depths 1-2 skip for sub-200ms latency; depth 5 forces it.
     # At depths 3-4 the cross-encoder runs as a rescue for marginal hits, but
