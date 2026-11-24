@@ -66,6 +66,17 @@ DATASET_URLS = {
     "nfcorpus": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/nfcorpus.zip",
     "fiqa": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/fiqa.zip",
     "hotpotqa": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/hotpotqa.zip",
+    "arguana": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/arguana.zip",
+    "quora": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/quora.zip",
+    "scidocs": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scidocs.zip",
+    "trec-covid": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/trec-covid.zip",
+    "webis-touche2020": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/webis-touche2020.zip",
+    "fever": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/fever.zip",
+    "climate-fever": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/climate-fever.zip",
+    "dbpedia-entity": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/dbpedia-entity.zip",
+    "nq": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/nq.zip",
+    "msmarco": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/msmarco.zip",
+    "cqadupstack": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/cqadupstack.zip",
 }
 
 
@@ -81,10 +92,14 @@ def download_and_extract_dataset(dataset_name: str, cache_dir: Path) -> Path:
     cache_dir.mkdir(parents=True, exist_ok=True)
     zip_path = cache_dir / f"{dataset_name}.zip"
 
+    if zip_path.exists() and not zipfile.is_zipfile(zip_path):
+        zip_path.unlink()
+
     if not zip_path.exists():
         print(f"Downloading {dataset_name} from {url}...")
         req = urllib.request.Request(url, headers={"User-Agent": "DepthAPI-Benchmark/1.0"})
-        with urllib.request.urlopen(req, timeout=600) as resp, open(zip_path, "wb") as f_out:
+        tmp_path = zip_path.with_suffix(".zip.part")
+        with urllib.request.urlopen(req, timeout=60) as resp, open(tmp_path, "wb") as f_out:
             downloaded = 0
             while True:
                 chunk = resp.read(2 * 1024 * 1024)
@@ -94,13 +109,12 @@ def download_and_extract_dataset(dataset_name: str, cache_dir: Path) -> Path:
                 downloaded += len(chunk)
                 if downloaded % (20 * 1024 * 1024) == 0:
                     print(f"Downloaded {downloaded // (1024 * 1024)} MB...")
+        tmp_path.replace(zip_path)
         print(f"Finished downloading {dataset_name} ({downloaded // (1024 * 1024)} MB).")
 
     print(f"Extracting {zip_path} to {cache_dir}...")
     with zipfile.ZipFile(zip_path) as z:
         z.extractall(cache_dir)
-
-    return target_dir
 
     return target_dir
 
@@ -230,6 +244,8 @@ def evaluate(
     enable_rerank: bool = False,
     model_name: str | None = None,
     dim: int | None = None,
+    fp16: bool = False,
+    skip_graph: bool = False,
 ) -> dict[str, Any]:
     from api.config import get_settings
 
@@ -252,42 +268,48 @@ def evaluate(
         corpus_texts = [corpus[did] for did in doc_ids]
         t0 = time.perf_counter()
         corpus_emb_matrix = _encode_texts(corpus_texts, model, batch_size=32, dim=dim)
+        if fp16:
+            corpus_emb_matrix = corpus_emb_matrix.astype(np.float16)
         mode_label = "local SentenceTransformer" if model is not None else "API/fallback embed_texts"
         print(f"Corpus embedded via {mode_label} in {time.perf_counter() - t0:.2f}s (Shape: {corpus_emb_matrix.shape})")
         if cache_path:
             np.savez_compressed(cache_path, doc_ids=doc_ids, embeddings=corpus_emb_matrix)
             print(f"Saved embedding cache to {cache_path}")
+    elif fp16 and corpus_emb_matrix.dtype != np.float16:
+        corpus_emb_matrix = corpus_emb_matrix.astype(np.float16)
 
     print("Building lexical BM25 index...")
     bm25, bm25_doc_ids = build_lexical_index(corpus)
 
-    print("Extracting relational concept graph from corpus...")
     doc_concepts: dict[str, set[str]] = defaultdict(set)
     concept_docs: dict[str, set[str]] = defaultdict(set)
     concept_edges: dict[str, set[str]] = defaultdict(set)
 
-    # Known entities are the document titles with length >= 3
-    entity_catalog = [t for t in (titles or {}).values() if len(t) >= 3]
+    if not skip_graph:
+        print("Extracting relational concept graph from corpus...")
+        # Avoid O(N^2) substring scans on large corpora
+        raw_entities = [t for t in (titles or {}).values() if len(t) >= 3]
+        entity_catalog = raw_entities if len(raw_entities) <= 500 else None
 
-    for did, doc_text in corpus.items():
-        doc_title = (titles or {}).get(did)
-        graph = extract_concepts_and_edges(
-            raw_text=doc_text,
-            document_title=doc_title,
-            known_entities=entity_catalog,
-        )
-        for c in graph.concepts:
-            c_name = c.name.lower()
-            doc_concepts[did].add(c_name)
-            concept_docs[c_name].add(did)
-        for e in graph.edges:
-            s = e.source_concept.lower()
-            t = e.target_concept.lower()
-            concept_edges[s].add(t)
-            concept_edges[t].add(s)
+        for did, doc_text in corpus.items():
+            doc_title = (titles or {}).get(did)
+            graph = extract_concepts_and_edges(
+                raw_text=doc_text,
+                document_title=doc_title,
+                known_entities=entity_catalog,
+            )
+            for c in graph.concepts:
+                c_name = c.name.lower()
+                doc_concepts[did].add(c_name)
+                concept_docs[c_name].add(did)
+            for e in graph.edges:
+                s = e.source_concept.lower()
+                t = e.target_concept.lower()
+                concept_edges[s].add(t)
+                concept_edges[t].add(s)
 
-    total_edges = sum(len(v) for v in concept_edges.values()) // 2
-    print(f"Extracted {len(concept_docs)} concepts and {total_edges} cross-concept edges.")
+        total_edges = sum(len(v) for v in concept_edges.values()) // 2
+        print(f"Extracted {len(concept_docs)} concepts and {total_edges} cross-concept edges.")
 
     reranker = None
     if enable_rerank:
@@ -295,7 +317,9 @@ def evaluate(
 
         reranker = get_reranker_service()
 
-    strategies = ["dense", "lexical", "hybrid_rrf", "hybrid_graph_1hop", "hybrid_graph_2hop"]
+    strategies = ["dense", "lexical", "hybrid_rrf"]
+    if not skip_graph:
+        strategies.extend(["hybrid_graph_1hop", "hybrid_graph_2hop"])
     if enable_rerank:
         strategies.append("hybrid_rrf_rerank")
 
@@ -338,42 +362,42 @@ def evaluate(
         latencies_by_strategy["hybrid_rrf"].append(time.perf_counter() - t_start)
         metrics_by_strategy["hybrid_rrf"].append(compute_metrics(hybrid_ranked, truth))
 
-        # 4. Hybrid Graph 1-hop
-        t_start = time.perf_counter()
-        graph_1hop_scores = dict(rrf_scores)
-        seed_docs = hybrid_ranked[:5]
-        seed_concepts = set()
-        for sdid in seed_docs:
-            seed_concepts.update(doc_concepts[sdid])
+        # 4. Hybrid Graph 1-hop & 2-hop
+        if not skip_graph:
+            t_start = time.perf_counter()
+            graph_1hop_scores = dict(rrf_scores)
+            seed_docs = hybrid_ranked[:5]
+            seed_concepts = set()
+            for sdid in seed_docs:
+                seed_concepts.update(doc_concepts[sdid])
 
-        traversed_1hop = set()
-        for sc in seed_concepts:
-            traversed_1hop.update(concept_edges[sc])
+            traversed_1hop = set()
+            for sc in seed_concepts:
+                traversed_1hop.update(concept_edges[sc])
 
-        for c in traversed_1hop:
-            for target_did in concept_docs[c]:
-                graph_1hop_scores[target_did] = graph_1hop_scores.get(target_did, 0.0) + (1.0 / (60.0 + 1)) * 0.25
+            for c in traversed_1hop:
+                for target_did in concept_docs[c]:
+                    graph_1hop_scores[target_did] = graph_1hop_scores.get(target_did, 0.0) + (1.0 / (60.0 + 1)) * 0.25
 
-        ranked_1hop = sorted(graph_1hop_scores.keys(), key=lambda d: graph_1hop_scores[d], reverse=True)
-        latencies_by_strategy["hybrid_graph_1hop"].append(time.perf_counter() - t_start)
-        metrics_by_strategy["hybrid_graph_1hop"].append(compute_metrics(ranked_1hop, truth))
+            ranked_1hop = sorted(graph_1hop_scores.keys(), key=lambda d: graph_1hop_scores[d], reverse=True)
+            latencies_by_strategy["hybrid_graph_1hop"].append(time.perf_counter() - t_start)
+            metrics_by_strategy["hybrid_graph_1hop"].append(compute_metrics(ranked_1hop, truth))
 
-        # 5. Hybrid Graph 2-hop
-        t_start = time.perf_counter()
-        graph_2hop_scores = dict(graph_1hop_scores)
-        traversed_2hop = set()
-        for c in traversed_1hop:
-            traversed_2hop.update(concept_edges[c])
-        traversed_2hop.difference_update(seed_concepts)
-        traversed_2hop.difference_update(traversed_1hop)
+            t_start = time.perf_counter()
+            graph_2hop_scores = dict(graph_1hop_scores)
+            traversed_2hop = set()
+            for c in traversed_1hop:
+                traversed_2hop.update(concept_edges[c])
+            traversed_2hop.difference_update(seed_concepts)
+            traversed_2hop.difference_update(traversed_1hop)
 
-        for c in traversed_2hop:
-            for target_did in concept_docs[c]:
-                graph_2hop_scores[target_did] = graph_2hop_scores.get(target_did, 0.0) + (1.0 / (60.0 + 2)) * 0.25
+            for c in traversed_2hop:
+                for target_did in concept_docs[c]:
+                    graph_2hop_scores[target_did] = graph_2hop_scores.get(target_did, 0.0) + (1.0 / (60.0 + 2)) * 0.25
 
-        ranked_2hop = sorted(graph_2hop_scores.keys(), key=lambda d: graph_2hop_scores[d], reverse=True)
-        latencies_by_strategy["hybrid_graph_2hop"].append(time.perf_counter() - t_start)
-        metrics_by_strategy["hybrid_graph_2hop"].append(compute_metrics(ranked_2hop, truth))
+            ranked_2hop = sorted(graph_2hop_scores.keys(), key=lambda d: graph_2hop_scores[d], reverse=True)
+            latencies_by_strategy["hybrid_graph_2hop"].append(time.perf_counter() - t_start)
+            metrics_by_strategy["hybrid_graph_2hop"].append(compute_metrics(ranked_2hop, truth))
 
         # 6. Hybrid RRF + Reranker (optional)
         if enable_rerank and reranker:
@@ -414,6 +438,8 @@ def main():
     parser.add_argument("--rerank", action="store_true", help="Include cross-encoder reranker")
     parser.add_argument("--model", type=str, default=None, help="Embedding model name (defaults to EMBEDDING_MODEL setting)")
     parser.add_argument("--dim", type=int, default=None, help="Optional Matryoshka truncation dimension (e.g. 256)")
+    parser.add_argument("--fp16", action="store_true", help="Store corpus embedding matrix in float16 to halve RAM")
+    parser.add_argument("--skip-graph", action="store_true", help="Skip concept graph extraction for faster large-corpus runs")
     parser.add_argument("--output", type=str, default="datasets/benchmarks/results.json")
     args = parser.parse_args()
 
@@ -459,6 +485,8 @@ def main():
             enable_rerank=args.rerank,
             model_name=args.model,
             dim=args.dim,
+            fp16=args.fp16,
+            skip_graph=args.skip_graph,
         )
 
         print("\n" + "=" * 65)

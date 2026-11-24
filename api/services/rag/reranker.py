@@ -21,8 +21,8 @@ class RerankerService:
             try:
                 from sentence_transformers import CrossEncoder
 
-                self.model = CrossEncoder(self.model_name, device="cpu")
-                logger.info("Loaded reranker model %s on cpu", self.model_name)
+                self.model = CrossEncoder(self.model_name)
+                logger.info("Loaded reranker model %s", self.model_name)
             except Exception as exc:
                 logger.warning("Failed to load reranker model %s: %s", self.model_name, exc)
                 return None
