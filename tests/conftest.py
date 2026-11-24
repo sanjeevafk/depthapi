@@ -35,6 +35,19 @@ class FakeRedis:
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_settings(monkeypatch):
+    """Keep unit tests isolated from .env.local provider credentials."""
+    from api.config import get_settings
+
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "local")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    monkeypatch.setenv("OPENAI_BASE_URL", "")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
 def _isolated_query_cache(monkeypatch):
     """Every test gets a fresh fake Redis; prod code paths unchanged."""
     fake = FakeRedis()

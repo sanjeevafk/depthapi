@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import math
 import sys
@@ -31,8 +32,26 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from api.services.rag.embeddings import get_local_transformer
+from api.services.rag.embeddings import embed_texts, get_local_transformer
 from api.services.rag.graph.concept_extractor import extract_concepts_and_edges
+
+
+def _encode_texts(texts: list[str], model: Any | None, batch_size: int = 32) -> np.ndarray:
+    """Embed texts using local SentenceTransformer when available, else API/hash embed_texts."""
+    if model is not None:
+        embs = model.encode(texts, batch_size=batch_size, show_progress_bar=len(texts) > 32, normalize_embeddings=True)
+        return np.array(embs, dtype=np.float32)
+
+    vectors: list[list[float]] = []
+
+    async def _run() -> None:
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            literals = await embed_texts(batch)
+            vectors.extend(json.loads(lit) for lit in literals)
+
+    asyncio.run(_run())
+    return np.array(vectors, dtype=np.float32)
 
 DATASET_URLS = {
     "scifact": "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip",
@@ -215,22 +234,16 @@ def evaluate(
         except Exception:
             corpus_emb_matrix = None
 
+    model = get_local_transformer("BAAI/bge-base-en-v1.5")
     if corpus_emb_matrix is None:
-        model = get_local_transformer("BAAI/bge-base-en-v1.5")
-        if model is None:
-            raise RuntimeError("Failed to load local SentenceTransformer model")
         corpus_texts = [corpus[did] for did in doc_ids]
         t0 = time.perf_counter()
-        corpus_embeddings = model.encode(
-            corpus_texts, batch_size=16, show_progress_bar=True, normalize_embeddings=True
-        )
-        corpus_emb_matrix = np.array(corpus_embeddings, dtype=np.float32)
-        print(f"Corpus embedded in {time.perf_counter() - t0:.2f}s (Shape: {corpus_emb_matrix.shape})")
+        corpus_emb_matrix = _encode_texts(corpus_texts, model, batch_size=32)
+        mode_label = "local SentenceTransformer" if model is not None else "API/fallback embed_texts"
+        print(f"Corpus embedded via {mode_label} in {time.perf_counter() - t0:.2f}s (Shape: {corpus_emb_matrix.shape})")
         if cache_path:
             np.savez_compressed(cache_path, doc_ids=doc_ids, embeddings=corpus_emb_matrix)
             print(f"Saved embedding cache to {cache_path}")
-    else:
-        model = get_local_transformer("BAAI/bge-base-en-v1.5")
 
     print("Building lexical BM25 index...")
     bm25, bm25_doc_ids = build_lexical_index(corpus)
@@ -283,7 +296,7 @@ def evaluate(
 
         # 1. Dense retrieval
         t_start = time.perf_counter()
-        q_emb = model.encode([query_text], normalize_embeddings=True)[0]
+        q_emb = _encode_texts([query_text], model, batch_size=1)[0]
         # Cosine similarity is dot product because vectors are normalized
         dense_scores = np.dot(corpus_emb_matrix, q_emb)
         dense_top_indices = np.argsort(-dense_scores)[:40]

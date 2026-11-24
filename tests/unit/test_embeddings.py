@@ -18,16 +18,24 @@ def _cosine_similarity(v1: list[float], v2: list[float]) -> float:
 
 
 @pytest.mark.asyncio
-async def test_embed_texts_produces_768_dim_normalized_vectors():
-    texts = ["Database indexing with PostgreSQL", "Machine learning inference"]
-    results = await emb_module.embed_texts(texts)
+async def test_embed_texts_produces_768_dim_normalized_vectors(monkeypatch):
+    from api.config import get_settings
 
-    assert len(results) == 2
-    for r in results:
-        vec = _parse_vector(r)
-        assert len(vec) == 768
-        norm = math.sqrt(sum(x * x for x in vec))
-        assert abs(norm - 1.0) < 1e-4
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "local")
+    get_settings.cache_clear()
+    try:
+        texts = ["Database indexing with PostgreSQL", "Machine learning inference"]
+        results = await emb_module.embed_texts(texts)
+
+        assert len(results) == 2
+        for r in results:
+            vec = _parse_vector(r)
+            assert len(vec) == 768
+            norm = math.sqrt(sum(x * x for x in vec))
+            assert abs(norm - 1.0) < 1e-4
+    finally:
+        monkeypatch.delenv("EMBEDDING_PROVIDER", raising=False)
+        get_settings.cache_clear()
 
 
 @pytest.mark.asyncio
@@ -50,13 +58,21 @@ async def test_semantic_similarity_ranking():
 
 @pytest.mark.asyncio
 async def test_hash_fallback_when_model_is_none(monkeypatch):
+    from api.config import get_settings
+
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "local")
+    get_settings.cache_clear()
     monkeypatch.setattr(emb_module, "get_local_transformer", lambda *args, **kwargs: None)
 
-    texts = ["fallback text test"]
-    results = await emb_module.embed_texts(texts)
+    try:
+        texts = ["fallback text test"]
+        results = await emb_module.embed_texts(texts)
 
-    assert len(results) == 1
-    vec = _parse_vector(results[0])
-    assert len(vec) == 768
-    norm = math.sqrt(sum(x * x for x in vec))
-    assert abs(norm - 1.0) < 1e-4
+        assert len(results) == 1
+        vec = _parse_vector(results[0])
+        assert len(vec) == 768
+        norm = math.sqrt(sum(x * x for x in vec))
+        assert abs(norm - 1.0) < 1e-4
+    finally:
+        monkeypatch.delenv("EMBEDDING_PROVIDER", raising=False)
+        get_settings.cache_clear()

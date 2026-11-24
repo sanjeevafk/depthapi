@@ -52,25 +52,29 @@ def _vector_literal(vector: Sequence[float]) -> str:
 
 async def embed_texts(texts: Sequence[str]) -> list[str]:
     settings = get_settings()
+    provider = settings.embedding_provider.lower()
 
-    # 1. Cloud OpenAI provider if configured
-    if settings.embedding_provider.lower() == "openai" and settings.openai_api_key.get_secret_value():
-        from openai import AsyncOpenAI
+    # 1. Cloud OpenAI-compatible provider (explicit "openai" or "auto" when API key is set)
+    if provider in {"openai", "auto"} and settings.openai_api_key.get_secret_value():
+        try:
+            from openai import AsyncOpenAI
 
-        client_kwargs: dict[str, Any] = {"api_key": settings.openai_api_key.get_secret_value()}
-        if settings.openai_base_url:
-            client_kwargs["base_url"] = settings.openai_base_url
-        client = AsyncOpenAI(**client_kwargs)
-        response = await client.embeddings.create(
-            model=settings.embedding_model,
-            input=list(texts),
-            dimensions=settings.embedding_dimension,
-        )
-        if any(len(item.embedding) != settings.embedding_dimension for item in response.data):
-            raise ValueError("Embedding provider returned an unexpected vector dimension")
-        return [_vector_literal(item.embedding) for item in response.data]
+            client_kwargs: dict[str, Any] = {"api_key": settings.openai_api_key.get_secret_value()}
+            if settings.openai_base_url:
+                client_kwargs["base_url"] = settings.openai_base_url
+            client = AsyncOpenAI(**client_kwargs)
+            response = await client.embeddings.create(
+                model=settings.embedding_model,
+                input=list(texts),
+                dimensions=settings.embedding_dimension,
+            )
+            if any(len(item.embedding) != settings.embedding_dimension for item in response.data):
+                raise ValueError("Embedding provider returned an unexpected vector dimension")
+            return [_vector_literal(item.embedding) for item in response.data]
+        except Exception as exc:
+            log.warning("API embedding failed, falling back to local/hash: %s", exc)
 
-    # 2. Real local neural embeddings via sentence-transformers
+    # 2. Local neural embeddings via sentence-transformers (if installed)
     local_model = (
         settings.embedding_model
         if settings.embedding_model and settings.embedding_model != "text-embedding-3-small"
