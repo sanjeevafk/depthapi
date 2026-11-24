@@ -166,10 +166,8 @@ async def test_multi_chunk_ingestion_preserves_metadata_and_provenance(monkeypat
         assert chunk_hash is not None and len(chunk_hash) == 64
 
         meta = json.loads(meta_json)
-        assert meta["schema_version"] == "1.0.0"
-        assert meta["parser_version"] == "MarkdownParser@1.0.0"
-        assert meta["chunker_version"] == "SemanticChunker@1.0.0"
-        assert "quality_score" in meta
+        assert "source_content_hash" in meta
+        assert meta["content_hash"] == chunk_hash
         assert meta["project"] == "depthapi"
 
 

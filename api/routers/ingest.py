@@ -13,18 +13,9 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from pydantic import BaseModel, Field
 
 from api.adapters.pg_adapter import get_pool
+from api.services.rag.chunker import ChunkData, chunk_markdown, normalize_urls, strip_toc
 from api.services.rag.embeddings import embed_texts
 from api.services.rag.graph.concept_extractor import extract_concepts_and_edges
-from api.services.rag.pipeline.chunkers.semantic_chunker import SemanticChunker
-from api.services.rag.pipeline.middleware.toc_stripper import TocStripper
-from api.services.rag.pipeline.middleware.url_normalizer import UrlNormalizer
-from api.services.rag.pipeline.models import (
-    SCHEMA_VERSION,
-    Chunk,
-    Document,
-    QualityScoreInputs,
-)
-from api.services.rag.pipeline.parsers.markdown_parser import MarkdownParser
 from api.services.security.api_key_auth import ApiKeyRecord, verify_api_key
 
 log = logging.getLogger(__name__)
@@ -51,93 +42,27 @@ class IngestResponse(BaseModel):
     status: str
 
 
-PARSER = MarkdownParser()
-TOC_STRIPPER = TocStripper()
-URL_NORMALIZER = UrlNormalizer()
-CHUNKER = SemanticChunker(config={"min_tokens": 1, "max_tokens": 480})
-
-
-def _run_pipeline(
+def _chunk_document(
     raw_text: str,
-    document_id: UUID,
-    filename: str | None,
     source_url: str | None,
-    collection_name: str | None,
-    user_metadata: dict[str, Any],
-    engine: str | None = None,
-) -> tuple[Document, list[Chunk]]:
-    """Process raw text through the declarative Python pipeline."""
-    source_uri = source_url or filename or f"direct://upload/{document_id}"
-
-    raw_bytes = raw_text.encode("utf-8")
-    content_hash = hashlib.sha256(raw_bytes).hexdigest()
-
-
-    doc = Document.from_bytes(
-        source_uri=source_uri,
-        raw_content=raw_bytes,
-        mime_type="text/markdown",
-        metadata=user_metadata,
-    )
-
-    parsed_doc = PARSER.parse(doc)
-    parsed_doc = TOC_STRIPPER.process(parsed_doc)
-
+) -> list[ChunkData]:
+    """Normalize Markdown and split into chunks."""
+    cleaned = strip_toc(raw_text)
     if source_url:
-        parsed_doc = URL_NORMALIZER.process(parsed_doc)
-
-    chunks = CHUNKER.chunk(
-        doc=parsed_doc,
-        dataset_version="api-v1",
-        source_name=filename or "api_upload",
-        source_url=source_url,
-        dataset_namespace=collection_name or "default",
-    )
-
-    if not chunks:
-        clean_content = (
-            parsed_doc.markdown_content.strip()
-            if parsed_doc.markdown_content.strip()
-            else raw_text.strip()
-        )
-        c_hash = hashlib.sha256(clean_content.encode("utf-8")).hexdigest()
-        c_id = Chunk.build_chunk_id(str(document_id), 0, c_hash)
-        token_count = max(1, len(clean_content.split()))
-        quality_inputs = QualityScoreInputs(
-            extraction_confidence=parsed_doc.extraction_confidence,
-            markdown_cleanliness=1.0,
-            header_continuity=1.0,
-            token_validity=1.0,
-        )
-        fallback_chunk = Chunk(
-            chunk_id=c_id,
-            doc_id=str(document_id),
-            content=clean_content,
-            token_count=token_count,
-            chunk_order=0,
-            schema_version=SCHEMA_VERSION,
-            parser_version=PARSER.version,
-            chunker_version=f"{CHUNKER.name}@{CHUNKER.version}",
-            middleware_versions=dict(parsed_doc.middleware_versions),
-            source_name=filename or "api_upload",
-            source_url=source_url,
-            dataset_version="api-v1",
-            dataset_namespace=collection_name or "default",
-            source_content_hash=content_hash,
-            content_hash=c_hash,
-            quality_inputs=quality_inputs,
-            quality_score=quality_inputs.compute_score(),
-            extraction_method="direct_parse",
-            is_fallback_result=True,
-            metadata={
-                "fallback": True,
-                "applied_middleware": parsed_doc.applied_middleware,
-                **user_metadata,
-            },
-        )
-        chunks = [fallback_chunk]
-
-    return doc, chunks
+        cleaned = normalize_urls(cleaned, source_url)
+    chunks = chunk_markdown(cleaned, max_tokens=480, min_tokens=1)
+    if not chunks and raw_text.strip():
+        fallback = cleaned or raw_text.strip()
+        chunks = [
+            ChunkData(
+                content=fallback,
+                token_count=max(1, len(fallback.split())),
+                chunk_order=0,
+                content_hash=hashlib.sha256(fallback.encode("utf-8")).hexdigest(),
+                section_title=None,
+            )
+        ]
+    return chunks
 
 
 async def _process_and_store_document(
@@ -183,16 +108,7 @@ async def _process_and_store_document(
     resolved_collection_id = collection_id
 
     # CPU-bound chunking + network-bound embeddings run outside the transaction.
-    doc, chunks = await asyncio.to_thread(
-        _run_pipeline,
-        raw_text=raw_text,
-        document_id=document_id,
-        filename=filename,
-        source_url=source_url,
-        collection_name=collection_name,
-        user_metadata=user_metadata,
-        engine=engine,
-    )
+    chunks = await asyncio.to_thread(_chunk_document, raw_text, source_url)
 
     embeddings = await embed_texts([c.content for c in chunks])
     if len(embeddings) != len(chunks):
@@ -263,22 +179,9 @@ async def _process_and_store_document(
                 for chunk, embedding in zip(chunks, embeddings):
                     chunk_metadata = {
                         **user_metadata,
-                        **(chunk.metadata or {}),
-                        "schema_version": chunk.schema_version,
-                        "parser_version": chunk.parser_version,
-                        "chunker_version": chunk.chunker_version,
-                        "middleware_versions": chunk.middleware_versions,
-                        "quality_score": chunk.quality_score,
-                        "source_content_hash": chunk.source_content_hash,
+                        "source_content_hash": content_hash,
                         "content_hash": chunk.content_hash,
-                        "chunk_id": chunk.chunk_id,
                     }
-                    hierarchy = chunk.metadata.get("hierarchy")
-                    section_title = (
-                        hierarchy[-1]
-                        if isinstance(hierarchy, list) and hierarchy
-                        else None
-                    )
                     chunk_rows.append((
                         document_id,
                         chunk.chunk_order,
@@ -286,7 +189,7 @@ async def _process_and_store_document(
                         chunk.token_count,
                         embedding,
                         json.dumps(chunk_metadata),
-                        section_title,
+                        chunk.section_title,
                         chunk.content_hash,
                     ))
 
