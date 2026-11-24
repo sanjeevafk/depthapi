@@ -36,12 +36,63 @@ from api.services.rag.embeddings import DEFAULT_LOCAL_MODEL, embed_texts, get_lo
 from api.services.rag.graph.concept_extractor import extract_concepts_and_edges
 
 
+class _PplxContextEmbedder:
+    """Adapter for perplexity-ai/pplx-embed-v2-context-* (transformers custom code).
+
+    Queries go through `encode_queries`, documents through `encode` (each as a
+    single-chunk list). The model does not truncate, so inputs are cut to
+    `max_seq_length` tokens here.
+    """
+
+    def __init__(self, model_name: str, max_seq_length: int | None = 512):
+        import torch
+        from transformers import AutoModel, AutoTokenizer
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(device).eval()
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+        except Exception:
+            self.tokenizer = None
+        self.max_seq_length = max_seq_length
+
+    def half(self) -> None:
+        self.model.half()
+
+    def _truncate(self, text: str) -> str:
+        limit = self.max_seq_length
+        if not limit:
+            return text
+        if self.tokenizer is None:
+            return text[: limit * 4]
+        ids = self.tokenizer(text, add_special_tokens=False, truncation=True, max_length=limit)["input_ids"]
+        return self.tokenizer.decode(ids) if len(ids) >= limit else text
+
+    def encode(self, texts: list[str], batch_size: int = 16, show_progress_bar: bool = False,
+               normalize_embeddings: bool = True, is_query: bool = False) -> np.ndarray:
+        import torch
+
+        chunks = [[self._truncate(t) or " "] for t in texts]
+        fn = self.model.encode_queries if is_query else self.model.encode
+        with torch.inference_mode():
+            out = fn(chunks, batch_size=batch_size, normalize_embeddings=normalize_embeddings,
+                     show_progress_bar=show_progress_bar)
+        return np.stack([np.asarray(o, dtype=np.float32)[0] for o in out])
+
+
 def _encode_texts(
-    texts: list[str], model: Any | None, batch_size: int = 32, dim: int | None = None
+    texts: list[str],
+    model: Any | None,
+    batch_size: int = 32,
+    dim: int | None = None,
+    is_query: bool = False,
 ) -> np.ndarray:
     """Embed texts using local SentenceTransformer when available, else API/hash embed_texts."""
     if model is not None:
-        embs = model.encode(texts, batch_size=batch_size, show_progress_bar=len(texts) > 32, normalize_embeddings=True)
+        kwargs = {"is_query": is_query} if isinstance(model, _PplxContextEmbedder) else {}
+        embs = model.encode(
+            texts, batch_size=batch_size, show_progress_bar=len(texts) > 32, normalize_embeddings=True, **kwargs
+        )
         arr = np.array(embs, dtype=np.float32)
     else:
         vectors: list[list[float]] = []
@@ -131,7 +182,9 @@ def _download_from_huggingface(dataset_name: str, target_dir: Path) -> Path:
 
 def download_and_extract_dataset(dataset_name: str, cache_dir: Path) -> Path:
     target_dir = cache_dir / dataset_name
-    if (target_dir / "corpus.jsonl").exists() and (target_dir / "qrels" / "test.tsv").exists():
+    if (target_dir / "corpus.jsonl").exists() and (
+        (target_dir / "qrels" / "test.tsv").exists() or (target_dir / "qrels" / "dev.tsv").exists()
+    ):
         return target_dir
 
     if dataset_name not in DATASET_URLS:
@@ -178,7 +231,10 @@ def load_beir_data(
     """Load queries with ground truth and their relevant docs + distractors."""
     # 1. Load qrels
     all_qrels: dict[str, dict[str, int]] = {}
-    with open(data_dir / "qrels" / "test.tsv", "r", encoding="utf-8") as f:
+    qrels_path = data_dir / "qrels" / "test.tsv"
+    if not qrels_path.exists():
+        qrels_path = data_dir / "qrels" / "dev.tsv"  # msmarco ships dev qrels only
+    with open(qrels_path, "r", encoding="utf-8") as f:
         header = True
         for line in f:
             if header:
@@ -276,16 +332,28 @@ def compute_metrics(
 def build_lexical_index(corpus: dict[str, str]):
     """Build lightweight token-based BM25 index.
 
-    Tokenization is intentionally plain lowercase whitespace splitting so
-    lexical scores stay comparable across runs (no stemming).
+    Uses bm25s' regex word tokenizer with English stopwords, plus Porter-style
+    stemming when PyStemmer is installed (closer to published BM25 baselines
+    than whitespace splitting).
     """
     import bm25s
 
     doc_ids = list(corpus.keys())
-    tokenized_corpus = [corpus[did].lower().split() for did in doc_ids]
     bm25 = bm25s.BM25()
-    bm25.index(tokenized_corpus)
+    bm25.index(bm25_tokenize([corpus[did] for did in doc_ids]))
     return bm25, doc_ids
+
+
+def bm25_tokenize(texts: list[str]) -> list[list[str]]:
+    import bm25s
+
+    try:
+        import Stemmer
+
+        stemmer = Stemmer.Stemmer("english")
+    except ImportError:
+        stemmer = None
+    return bm25s.tokenize(texts, stopwords="en", stemmer=stemmer, return_ids=False, show_progress=False)
 
 
 def evaluate(
@@ -321,7 +389,12 @@ def evaluate(
         except Exception:
             corpus_emb_matrix = None
 
-    model = get_local_transformer(resolved_model)
+    if "pplx-embed" in resolved_model:
+        model = _PplxContextEmbedder(resolved_model, max_seq_length)
+    else:
+        model = get_local_transformer(resolved_model)
+    if model is None and model_name:
+        raise RuntimeError(f"Could not load requested --model {model_name!r}; refusing to fall back silently.")
     if (
         model is None
         and get_settings().embedding_provider.lower() == "local"
@@ -410,7 +483,7 @@ def evaluate(
 
         # 1. Dense retrieval
         t_start = time.perf_counter()
-        q_emb = _encode_texts([query_text], model, batch_size=1, dim=dim)[0]
+        q_emb = _encode_texts([query_text], model, batch_size=1, dim=dim, is_query=True)[0]
         # Cosine similarity is dot product because vectors are normalized
         dense_scores = np.dot(corpus_emb_matrix, q_emb)
         dense_top_indices = np.argsort(-dense_scores)[:40]
@@ -420,7 +493,7 @@ def evaluate(
 
         # 2. Lexical retrieval
         t_start = time.perf_counter()
-        tokenized_query = query_text.lower().split()
+        tokenized_query = bm25_tokenize([query_text])[0]
         lex_scores = bm25.get_scores(tokenized_query)
         lex_top_indices = np.argsort(-lex_scores)[:40]
         lex_top_ids = [bm25_doc_ids[idx] for idx in lex_top_indices]
@@ -535,7 +608,7 @@ def main():
     cache_dir = REPO_ROOT / "datasets" / "benchmarks" / "beir_cache"
 
     if args.dataset.strip().lower() == "all":
-        datasets_to_run = ["scifact", "fiqa", "hotpotqa", "nfcorpus"]
+        datasets_to_run = list(DATASET_URLS)
     else:
         datasets_to_run = [d.strip() for d in args.dataset.split(",") if d.strip()]
 
@@ -556,10 +629,15 @@ def main():
         print("\n" + "#" * 65)
         print(f"BENCHMARKING DATASET: {ds.upper()}")
         print("#" * 65)
-        data_dir = download_and_extract_dataset(ds, cache_dir)
-        corpus, queries, qrels, titles = load_beir_data(
-            data_dir, limit_docs=limit_docs, limit_queries=limit_queries
-        )
+        try:
+            data_dir = download_and_extract_dataset(ds, cache_dir)
+            corpus, queries, qrels, titles = load_beir_data(
+                data_dir, limit_docs=limit_docs, limit_queries=limit_queries
+            )
+        except Exception as exc:
+            print(f"SKIPPING {ds}: could not download/load ({type(exc).__name__}: {exc})")
+            all_manifest[ds] = {"error": f"{type(exc).__name__}: {exc}"}
+            continue
         print(f"Loaded {len(corpus)} documents and {len(queries)} evaluated test queries.")
 
         model_tag = (args.model or "default").replace("/", "_")
@@ -620,6 +698,8 @@ def main():
         print(header)
         print("-" * 75)
         for ds, data in all_manifest.items():
+            if "results" not in data:
+                continue
             r = data["results"]
             bm25 = f"{r.get('lexical', {}).get('ndcg@10', 0):.4f}"
             dense = f"{r.get('dense', {}).get('ndcg@10', 0):.4f}"
