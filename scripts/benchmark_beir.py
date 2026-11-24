@@ -299,6 +299,7 @@ def evaluate(
     dim: int | None = None,
     fp16: bool = False,
     skip_graph: bool = False,
+    batch_size: int = 16,
 ) -> dict[str, Any]:
     from api.config import get_settings
 
@@ -326,10 +327,18 @@ def evaluate(
             "No local embedding model available (is sentence-transformers installed?); "
             "refusing to benchmark with hash embeddings."
         )
+    if model is not None and fp16:
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                model.half()
+        except Exception:
+            pass
     if corpus_emb_matrix is None:
         corpus_texts = [corpus[did] for did in doc_ids]
         t0 = time.perf_counter()
-        corpus_emb_matrix = _encode_texts(corpus_texts, model, batch_size=32, dim=dim)
+        corpus_emb_matrix = _encode_texts(corpus_texts, model, batch_size=batch_size, dim=dim)
         if fp16:
             corpus_emb_matrix = corpus_emb_matrix.astype(np.float16)
         mode_label = "local SentenceTransformer" if model is not None else "API/fallback embed_texts"
@@ -500,6 +509,7 @@ def main():
     parser.add_argument("--rerank", action="store_true", help="Include cross-encoder reranker")
     parser.add_argument("--model", type=str, default=None, help="Embedding model name (defaults to EMBEDDING_MODEL setting)")
     parser.add_argument("--dim", type=int, default=None, help="Optional Matryoshka truncation dimension (e.g. 256)")
+    parser.add_argument("--batch-size", type=int, default=16, help="Embedding batch size")
     parser.add_argument("--fp16", action="store_true", help="Store corpus embedding matrix in float16 to halve RAM")
     parser.add_argument("--skip-graph", action="store_true", help="Skip concept graph extraction for faster large-corpus runs")
     parser.add_argument("--output", type=str, default="datasets/benchmarks/results.json")
@@ -549,6 +559,7 @@ def main():
             dim=args.dim,
             fp16=args.fp16,
             skip_graph=args.skip_graph,
+            batch_size=args.batch_size,
         )
 
         print("\n" + "=" * 65)
@@ -567,6 +578,18 @@ def main():
             "queries_evaluated": len(queries),
             "results": summary,
         }
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump({"datasets": all_manifest}, f, indent=2)
+
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
 
     if len(datasets_to_run) > 1:
         print("\n" + "=" * 75)
