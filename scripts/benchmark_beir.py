@@ -50,10 +50,10 @@ class _PplxContextEmbedder:
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True).to(device).eval()
-        try:
-            self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-        except Exception:
-            self.tokenizer = None
+        # The model's lazy `tokenizer` property fails on some transformers versions
+        # (surfacing as a misleading AttributeError), so load and inject it explicitly.
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, padding_side="right")
+        self.model.tokenizer = self.tokenizer
         self.max_seq_length = max_seq_length
 
     def half(self) -> None:
@@ -494,9 +494,12 @@ def evaluate(
         # 2. Lexical retrieval
         t_start = time.perf_counter()
         tokenized_query = bm25_tokenize([query_text])[0]
-        lex_scores = bm25.get_scores(tokenized_query)
-        lex_top_indices = np.argsort(-lex_scores)[:40]
-        lex_top_ids = [bm25_doc_ids[idx] for idx in lex_top_indices]
+        if tokenized_query:
+            lex_scores = bm25.get_scores(tokenized_query)
+            lex_top_indices = np.argsort(-lex_scores)[:40]
+            lex_top_ids = [bm25_doc_ids[idx] for idx in lex_top_indices]
+        else:
+            lex_top_ids = []
         latencies_by_strategy["lexical"].append(time.perf_counter() - t_start)
         metrics_by_strategy["lexical"].append(compute_metrics(lex_top_ids, truth))
 
