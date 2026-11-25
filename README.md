@@ -94,11 +94,7 @@ Measured on Google Colab T4 GPU with `google/embeddinggemma-2` (`--max-seq-lengt
 docker compose up -d
 ```
 
-`docker-compose.yml` mounts migrations `001`–`006` and the dev API key seed (`db/seed/001_dev_api_key.sql`) automatically. To enable weighted RRF (`v7`) SQL functions, apply `db/migrations/007_weighted_rrf.sql`:
-
-```bash
-docker compose exec -T postgres psql -U depthapi -d depthapi < db/migrations/007_weighted_rrf.sql
-```
+`docker-compose.yml` mounts migrations `001`–`007` and the dev API key seed (`db/seed/001_dev_api_key.sql`) automatically.
 
 ### 2. Install & Start the API
 

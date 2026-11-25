@@ -23,6 +23,7 @@ else
       -v "$ROOT_DIR/db/migrations/004_dense_search.sql:/docker-entrypoint-initdb.d/004_dense_search.sql:ro" \
       -v "$ROOT_DIR/db/migrations/005_rank_by_attribute.sql:/docker-entrypoint-initdb.d/005_rank_by_attribute.sql:ro" \
       -v "$ROOT_DIR/db/migrations/006_halfvec_hnsw.sql:/docker-entrypoint-initdb.d/006_halfvec_hnsw.sql:ro" \
+      -v "$ROOT_DIR/db/migrations/007_weighted_rrf.sql:/docker-entrypoint-initdb.d/007_weighted_rrf.sql:ro" \
       -v "$ROOT_DIR/db/seed/001_dev_api_key.sql:/docker-entrypoint-initdb.d/099_dev_api_key.sql:ro" \
       pgvector/pgvector:pg17
   else
