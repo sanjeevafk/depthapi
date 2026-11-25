@@ -142,10 +142,11 @@ base_fused AS (
     FULL OUTER JOIN lexical_matches l ON d.id = l.id
 ),
 top_seed_concepts AS (
-    SELECT DISTINCT cc.concept_id
+    SELECT cc.concept_id
     FROM base_fused bf
     JOIN knowledge_chunk_concepts cc ON cc.chunk_id = bf.id
-    ORDER BY bf.base_score DESC
+    GROUP BY cc.concept_id
+    ORDER BY MAX(bf.base_score) DESC
     LIMIT 5
 ),
 related_concepts AS (

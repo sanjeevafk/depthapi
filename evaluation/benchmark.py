@@ -217,15 +217,13 @@ def validate_generation_row(row: dict[str, Any]) -> bool:
     if not any(context_texts):
         return False
 
-    if not any(isinstance(c, dict) and (c.get("chunk_id") or c.get("doc_id")) for c in contexts):
-        return False
-
-    # Reject rows where duplicate retrievals dominate.
     ids = [
-        str(c.get("chunk_id") or c.get("doc_id"))
+        str(c.get("chunk_id") or c.get("doc_id") or c.get("document_id") or c.get("id"))
         for c in contexts
-        if isinstance(c, dict) and (c.get("chunk_id") or c.get("doc_id"))
+        if isinstance(c, dict) and (c.get("chunk_id") or c.get("doc_id") or c.get("document_id") or c.get("id"))
     ]
+    if not ids:
+        return False
     if ids:
         dup_ratio = 1.0 - (len(set(ids)) / len(ids))
         if dup_ratio > 0.6:

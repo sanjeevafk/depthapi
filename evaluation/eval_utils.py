@@ -38,7 +38,18 @@ def call_evaluator_model(
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
 
-    if provider == "openrouter":
+    if provider == "meta":
+        key = os.environ.get("MODEL_API_KEY")
+        if not key:
+            raise RuntimeError("MODEL_API_KEY is required when EVALUATOR_PROVIDER=meta")
+        url = "https://api.meta.ai/v1/responses"
+        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+        payload = {
+            "model": model_name,
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
+            "stream": False,
+        }
+    elif provider == "openrouter":
         key = os.environ.get("OPENROUTER_API_KEY")
         if not key:
             raise RuntimeError("OPENROUTER_API_KEY is required when EVALUATOR_PROVIDER=openrouter")
@@ -85,6 +96,15 @@ def call_evaluator_model(
             continue
         resp.raise_for_status()
         data = resp.json()
+        if provider == "meta":
+            parts = [
+                part.get("text", "")
+                for item in data.get("output", [])
+                if item.get("type") == "message"
+                for part in item.get("content", [])
+                if part.get("type") == "output_text"
+            ]
+            return "".join(parts)
         return data["choices"][0]["message"]["content"] or ""
     raise RuntimeError("Evaluator request failed after retries")
 
